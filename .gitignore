@@ -9,3 +9,5 @@ out/
 /public/**
 !/public/
 !/public/.gitkeep
+/data/migration/runs/run_*.json
+tsconfig.tsbuildinfo
