@@ -1,5 +1,11 @@
 import { MySQLTable, MigrationConfig, TableMapping, ColumnMapping, IndexStrategy } from './types';
 
+// ─── Storage key helpers ──────────────────────────────────────────────────
+
+export function tableStorageKey(database: string, tableName: string): string {
+  return `table_mappings_${database}_${tableName}`;
+}
+
 // ─── MySQL → PostgreSQL type mapping table ─────────────────────────────────
 
 const TYPE_MAP: Record<string, string> = {
@@ -61,37 +67,44 @@ export function mapMySQLTypeToPg(mysqlType: string): string {
 }
 
 export function initializeMigrationConfig(
-  inspectionResult: { database: string; tables: MySQLTable[]; inspectedAt: string }
+  inspectionResult: { database: string; tables: MySQLTable[]; inspectedAt: string } | { database: string; tables: MySQLTable[]; inspectedAt: string }[]
 ): MigrationConfig {
-  const tables: TableMapping[] = inspectionResult.tables.map((t) => ({
-    mysqlName: t.name,
-    pgName: t.name,
-    pgSchema: 'public',
-    include: true,
-    description: t.comment || '',
-    columns: t.columns.map((c): ColumnMapping => {
-      const strategy: IndexStrategy = c.isPrimaryKey ? 'sequential' : 'none';
-      return {
-        mysqlName: c.name,
-        pgName: c.name,
-        mysqlType: c.type,
-        pgType: mapMySQLTypeToPg(c.type),
-        nullable: c.nullable,
-        defaultValue: c.defaultValue,
-        isPrimaryKey: c.isPrimaryKey,
-        isUnique: c.isUnique,
-        indexStrategy: strategy,
-        description: c.comment || '',
-        include: true,
-      };
-    }),
-  }));
+  const results = Array.isArray(inspectionResult) ? inspectionResult : [inspectionResult];
+  const tables: TableMapping[] = results.flatMap((r) =>
+    r.tables.map((t) => ({
+      mysqlName: t.name,
+      pgName: t.name,
+      pgSchema: 'public',
+      include: true,
+      description: t.comment || '',
+      sourceDatabase: r.database,
+      columns: t.columns.map((c): ColumnMapping => {
+        const strategy: IndexStrategy = c.isPrimaryKey ? 'sequential' : 'none';
+        return {
+          mysqlName: c.name,
+          pgName: c.name,
+          mysqlType: c.type,
+          pgType: mapMySQLTypeToPg(c.type),
+          nullable: c.nullable,
+          defaultValue: c.defaultValue,
+          isPrimaryKey: c.isPrimaryKey,
+          isUnique: c.isUnique,
+          indexStrategy: strategy,
+          description: c.comment || '',
+          include: true,
+        };
+      }),
+    }))
+  );
+
+  const databases = [...new Set(results.map((r) => r.database))];
+  const sourceName = databases.join('+');
 
   return {
     id: `migration_${Date.now()}`,
-    name: `${inspectionResult.database}_migration`,
-    sourceDatabase: inspectionResult.database,
-    targetDatabase: inspectionResult.database,
+    name: `${sourceName}_migration`,
+    sourceDatabase: databases[0],
+    targetDatabase: databases[0],
     status: 'draft',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -105,4 +118,108 @@ export function validateColumnName(name: string): boolean {
 
 export function validateTableName(name: string): boolean {
   return /^[a-z_][a-z0-9_]*$/i.test(name) && name.length <= 63;
+}
+
+/**
+ * Merges per-table localStorage column mappings (saved in Phase 1) into a
+ * MigrationConfig.  Handles both old ColumnMapping[] format and new
+ * { pgName, columns } format.  Updates pgName if saved.
+ */
+export function mergePhase1Mappings(config: MigrationConfig): MigrationConfig {
+  if (typeof window === 'undefined') return config;
+  const tables = config.tables.map((t) => {
+    const db = (t as { sourceDatabase?: string }).sourceDatabase ?? config.sourceDatabase;
+    const key = tableStorageKey(db, t.mysqlName);
+    const raw = localStorage.getItem(key);
+    if (!raw) return t;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        // Backward compat: old format was ColumnMapping[]
+        return { ...t, columns: parsed as ColumnMapping[] };
+      } else {
+        const stored = parsed as { pgName: string; columns: ColumnMapping[]; tableDescription?: string };
+        return {
+          ...t,
+          pgName: stored.pgName || t.pgName,
+          columns: stored.columns,
+          description: stored.tableDescription ?? t.description,
+        };
+      }
+    } catch {
+      return t;
+    }
+  });
+  return { ...config, tables };
+}
+
+/**
+ * Generates CREATE TABLE SQL DDL from a MigrationConfig.
+ * Handles the UUID id column pattern when pkHandling is set.
+ */
+export function generateMappingSQL(config: MigrationConfig): string {
+  const out: string[] = [
+    '-- MySQL → PostgreSQL Migration DDL',
+    `-- Generated: ${new Date().toISOString()}`,
+    `-- Source: ${config.sourceDatabase}  →  Target: ${config.targetDatabase}`,
+    '--',
+    '-- NOTE: For PostgreSQL < 13, enable uuid support first:',
+    `-- CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
+    '',
+  ];
+
+  const schemas = [
+    ...new Set(
+      config.tables
+        .filter((t) => t.include)
+        .map((t) => t.pgSchema)
+        .filter((s) => s !== 'public')
+    ),
+  ];
+  for (const s of schemas) out.push(`CREATE SCHEMA IF NOT EXISTS "${s}";`);
+  if (schemas.length) out.push('');
+
+  for (const t of config.tables) {
+    if (!t.include) continue;
+
+    const pkCol = t.columns.find((c) => c.isPrimaryKey);
+    const addUuidId =
+      pkCol != null &&
+      (pkCol.pkHandling === 'migrate_to_id' || pkCol.pkHandling === 'keep');
+
+    out.push(`-- ${t.mysqlName}  →  ${t.pgSchema}.${t.pgName}`);
+    out.push(`CREATE TABLE IF NOT EXISTS "${t.pgSchema}"."${t.pgName}" (`);
+
+    const defs: string[] = [];
+
+    if (addUuidId || !pkCol) {
+      defs.push(`  "id" UUID NOT NULL DEFAULT gen_random_uuid()`);
+    }
+
+    for (const c of t.columns) {
+      if (!c.include) continue;
+      let line = `  "${c.pgName}" ${c.pgType}`;
+      if (!c.nullable) line += ' NOT NULL';
+      defs.push(line);
+    }
+
+    if (addUuidId || !pkCol) {
+      defs.push(`  CONSTRAINT "pk_${t.pgName}" PRIMARY KEY ("id")`);
+    } else {
+      const pkCols = t.columns.filter((c) => c.isPrimaryKey && c.include);
+      if (pkCols.length) {
+        defs.push(
+          `  CONSTRAINT "pk_${t.pgName}" PRIMARY KEY (${pkCols
+            .map((c) => `"${c.pgName}"`)
+            .join(', ')})`
+        );
+      }
+    }
+
+    out.push(defs.join(',\n'));
+    out.push(');');
+    out.push('');
+  }
+
+  return out.join('\n');
 }

@@ -4,7 +4,7 @@ import { X, Copy, Download, Check } from 'lucide-react';
 interface Props {
   title: string;
   content: string;
-  format: 'markdown' | 'csv' | 'sql';
+  format: 'markdown' | 'csv' | 'sql' | 'svg' | 'canvas';
   onClose: () => void;
 }
 
@@ -19,8 +19,14 @@ export default function DocumentationViewer({ title, content, format, onClose }:
   };
 
   const handleDownload = () => {
-    const ext = { markdown: 'md', csv: 'csv', sql: 'sql' }[format];
-    const mime = { markdown: 'text/markdown', csv: 'text/csv', sql: 'text/plain' }[format];
+    const ext = { markdown: 'md', csv: 'csv', sql: 'sql', svg: 'svg', canvas: 'json' }[format];
+    const mime = {
+      markdown: 'text/markdown',
+      csv: 'text/csv',
+      sql: 'text/plain',
+      svg: 'image/svg+xml',
+      canvas: 'application/json',
+    }[format];
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

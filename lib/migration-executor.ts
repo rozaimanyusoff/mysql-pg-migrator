@@ -10,6 +10,7 @@ import {
 import {
   generateCreateSchemasSQL,
   generateCreateTableSQL,
+  generateCommentsSQL,
   generateIndexesSQL,
 } from './postgres-migrator';
 
@@ -90,7 +91,21 @@ export async function executeMigration(
       }
     }
 
-    // ── Step 3: Migrate Data ───────────────────────────────────────────────
+    // ── Step 3: Add Comments ───────────────────────────────────────────────
+    addLog('Adding table and column comments...');
+    for (const table of config.tables.filter((t) => t.include)) {
+      const commentSQLs = generateCommentsSQL(table);
+      for (const sql of commentSQLs) {
+        try {
+          await pgClient.query(sql);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          warnings.push(`Comment creation warning for "${table.pgName}": ${msg}`);
+        }
+      }
+    }
+
+    // ── Step 4: Migrate Data ───────────────────────────────────────────────
     addLog('Migrating data...');
     for (const table of config.tables.filter((t) => t.include)) {
       const result = await migrateTableData(table, mysqlConn, pgClient, addLog);
@@ -104,7 +119,7 @@ export async function executeMigration(
       }
     }
 
-    // ── Step 4: Create Indexes ─────────────────────────────────────────────
+    // ── Step 5: Create Indexes ─────────────────────────────────────────────
     addLog('Creating indexes...');
     for (const table of config.tables.filter((t) => t.include)) {
       const idxSQLs = generateIndexesSQL(table);
@@ -120,7 +135,7 @@ export async function executeMigration(
     }
     addLog(`  ✓ ${indexesCreated} index(es) created`);
 
-    // ── Step 5: Verify Row Counts ──────────────────────────────────────────
+    // ── Step 6: Verify Row Counts ──────────────────────────────────────────
     addLog('Verifying row counts...');
     for (const result of tableResults) {
       if (!result.success) continue;
@@ -173,9 +188,22 @@ async function migrateTableData(
   addLog: (msg: string) => void
 ): Promise<TableMigrationResult> {
   const includedCols = table.columns.filter((c) => c.include);
-  const mysqlCols = includedCols.map((c) => `\`${c.mysqlName}\``).join(', ');
-  const pgCols = includedCols.map((c) => `"${c.pgName}"`).join(', ');
-  const placeholders = includedCols.map((_, i) => `$${i + 1}`).join(', ');
+  const sourceCols = includedCols.filter((c) => !c.isTargetOnly);
+  if (sourceCols.length === 0) {
+    return {
+      tableName: table.mysqlName,
+      pgTable: table.pgName,
+      pgSchema: table.pgSchema,
+      rowsMigrated: 0,
+      rowsInSource: 0,
+      success: false,
+      error: 'No source-mapped columns left. Keep at least one MySQL source column included.',
+    };
+  }
+
+  const mysqlCols = sourceCols.map((c) => `\`${c.mysqlName}\``).join(', ');
+  const pgCols = sourceCols.map((c) => `"${c.pgName}"`).join(', ');
+  const placeholders = sourceCols.map((_, i) => `$${i + 1}`).join(', ');
 
   try {
     const [rows] = await mysqlConn.execute<mysql.RowDataPacket[]>(
@@ -201,7 +229,7 @@ async function migrateTableData(
     for (let i = 0; i < rows.length; i += BATCH) {
       const chunk = rows.slice(i, i + BATCH);
       for (const row of chunk) {
-        const values = includedCols.map((c) => {
+        const values = sourceCols.map((c) => {
           const val = (row as Record<string, unknown>)[c.mysqlName];
           if (val instanceof Date) return val.toISOString();
           if (Buffer.isBuffer(val)) return val;

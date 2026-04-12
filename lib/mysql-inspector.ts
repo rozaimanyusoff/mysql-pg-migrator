@@ -1,6 +1,23 @@
 import mysql from 'mysql2/promise';
 import { InspectionResult, MySQLTable, MySQLColumn, MySQLIndex, MySQLForeignKey } from './types';
 
+export async function listDatabases(
+  host: string,
+  port: number,
+  user: string,
+  password: string
+): Promise<string[]> {
+  const conn = await mysql.createConnection({ host, port, user, password, multipleStatements: false });
+  try {
+    const [rows] = await conn.execute<mysql.RowDataPacket[]>('SHOW DATABASES');
+    return rows.map((r) => r.Database as string).filter(
+      (db) => !['information_schema', 'performance_schema', 'mysql', 'sys'].includes(db)
+    );
+  } finally {
+    await conn.end();
+  }
+}
+
 export async function inspectMySQL(
   host: string,
   port: number,

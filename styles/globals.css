@@ -3,3 +3,58 @@
 @tailwind utilities;
 
 html { scroll-behavior: smooth; }
+
+@layer base {
+  body {
+    @apply bg-white text-gray-900 transition-colors duration-200;
+  }
+
+  html.dark body {
+    @apply bg-slate-900 text-slate-100;
+  }
+
+  html.dark .bg-white {
+    @apply bg-slate-900;
+  }
+
+  html.dark .bg-gray-50 {
+    @apply bg-slate-800;
+  }
+
+  html.dark .bg-gray-100 {
+    @apply bg-slate-700;
+  }
+
+  html.dark .text-gray-900 {
+    @apply text-slate-100;
+  }
+
+  html.dark .text-gray-800 {
+    @apply text-slate-200;
+  }
+
+  html.dark .text-gray-700 {
+    @apply text-slate-300;
+  }
+
+  html.dark .text-gray-600,
+  html.dark .text-gray-500 {
+    @apply text-slate-400;
+  }
+
+  html.dark .text-gray-400 {
+    @apply text-slate-500;
+  }
+
+  html.dark .border-gray-200,
+  html.dark .border-gray-100,
+  html.dark .border-gray-50 {
+    @apply border-slate-700;
+  }
+
+  html.dark input,
+  html.dark select,
+  html.dark textarea {
+    @apply bg-slate-800 text-slate-100 border-slate-700;
+  }
+}

@@ -1,7 +1,14 @@
-import { MigrationConfig, MigrationSummary } from './types';
+import { MigrationConfig, ExportViewOptions } from './types';
 import { buildSummary, generateMigrationSQL } from './postgres-migrator';
 
-export function generateMarkdownDocumentation(config: MigrationConfig): string {
+const DEFAULT_VIEW: ExportViewOptions = { includeSource: true, includeTarget: true };
+
+export function generateMarkdownDocumentation(
+  config: MigrationConfig,
+  view: ExportViewOptions = DEFAULT_VIEW
+): string {
+  const includeSource = view.includeSource;
+  const includeTarget = view.includeTarget;
   const summary = buildSummary(config);
   const date = new Date().toISOString().split('T')[0];
   const included = config.tables.filter((t) => t.include);
@@ -28,12 +35,29 @@ export function generateMarkdownDocumentation(config: MigrationConfig): string {
     ``,
     `## Table Mapping Summary`,
     ``,
-    `| MySQL Table | PostgreSQL Schema | PostgreSQL Table | Include |`,
-    `|-------------|-------------------|------------------|---------|`,
+    `| ${[
+      ...(includeSource ? ['MySQL Table'] : []),
+      ...(includeTarget ? ['PostgreSQL Schema', 'PostgreSQL Table'] : []),
+      'Include',
+    ].join(' | ')} |`,
+    `| ${[
+      ...(includeSource ? ['-------------'] : []),
+      ...(includeTarget ? ['-------------------', '------------------'] : []),
+      '---------',
+    ].join(' | ')} |`,
     ...config.tables.map(
-      (t) =>
-        `| \`${t.mysqlName}\` | \`${t.pgSchema}\` | \`${t.pgName}\` | ${t.include ? '✓' : '✗'} |`
+      (t) => {
+        const cells: string[] = [];
+        if (includeSource) cells.push(`\`${t.mysqlName}\``);
+        if (includeTarget) cells.push(`\`${t.pgSchema}\``, `\`${t.pgName}\``);
+        cells.push(t.include ? '✓' : '✗');
+        return `| ${cells.join(' | ')} |`;
+      }
     ),
+    ``,
+    `## Confirmed Tables`,
+    ``,
+    ...included.map((t) => `- \`${t.mysqlName}\` → \`${t.pgSchema}.${t.pgName}\``),
     ``,
     `## Detailed Table Mappings`,
   ];
@@ -45,14 +69,27 @@ export function generateMarkdownDocumentation(config: MigrationConfig): string {
       ``,
       t.description ? `**Purpose:** ${t.description}` : '',
       ``,
-      `| MySQL Column | MySQL Type | PostgreSQL Column | PG Type | PK | Nullable |`,
-      `|-------------|-----------|------------------|---------|-----|----------|`,
+      `| ${[
+        ...(includeSource ? ['MySQL Column', 'MySQL Type'] : []),
+        ...(includeTarget ? ['PostgreSQL Column', 'PG Type'] : []),
+        'PK',
+        'Nullable',
+      ].join(' | ')} |`,
+      `| ${[
+        ...(includeSource ? ['-------------', '-----------'] : []),
+        ...(includeTarget ? ['------------------', '---------'] : []),
+        '-----',
+        '----------',
+      ].join(' | ')} |`,
       ...t.columns
         .filter((c) => c.include)
-        .map(
-          (c) =>
-            `| \`${c.mysqlName}\` | ${c.mysqlType} | \`${c.pgName}\` | ${c.pgType} | ${c.isPrimaryKey ? 'YES' : ''} | ${c.nullable ? 'YES' : 'NO'} |`
-        )
+        .map((c) => {
+          const cells: string[] = [];
+          if (includeSource) cells.push(`\`${c.mysqlName}\``, c.mysqlType);
+          if (includeTarget) cells.push(`\`${c.pgName}\``, c.pgType);
+          cells.push(c.isPrimaryKey ? 'YES' : '', c.nullable ? 'YES' : 'NO');
+          return `| ${cells.join(' | ')} |`;
+        })
     );
   }
 
@@ -83,6 +120,151 @@ export function generateMarkdownDocumentation(config: MigrationConfig): string {
   return lines.filter((l) => l !== undefined).join('\n');
 }
 
-export function generateSQLDocumentation(config: MigrationConfig): string {
-  return generateMigrationSQL(config);
+export function generateSQLDocumentation(
+  config: MigrationConfig,
+  view: ExportViewOptions = DEFAULT_VIEW
+): string {
+  return generateMigrationSQL(config, view);
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export function generateSVGDocumentation(
+  config: MigrationConfig,
+  view: ExportViewOptions = DEFAULT_VIEW
+): string {
+  const includeSource = view.includeSource;
+  const includeTarget = view.includeTarget;
+  const included = config.tables.filter((t) => t.include);
+  const width = 1280;
+  const rowHeight = 120;
+  const topOffset = 90;
+  const height = Math.max(240, topOffset + included.length * rowHeight + 40);
+  const timestamp = new Date().toISOString();
+
+  const rows = included.map((t, idx) => {
+    const y = topOffset + idx * rowHeight;
+    const includedCols = t.columns.filter((c) => c.include).length;
+    const mysqlLabel = `${t.sourceDatabase}.${t.mysqlName}`;
+    const pgLabel = `${t.pgSchema}.${t.pgName}`;
+    const sourceBox = includeSource
+      ? `
+    <rect x="40" y="${y}" width="520" height="88" rx="10" fill="#f8fafc" stroke="#cbd5e1" />
+    <text x="58" y="${y + 32}" font-size="16" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">${escapeXml(mysqlLabel)}</text>
+    <text x="58" y="${y + 58}" font-size="12" font-family="Inter, system-ui, sans-serif" fill="#64748b">${t.columns.length} columns</text>`
+      : '';
+    const targetBox = includeTarget
+      ? `
+    <rect x="710" y="${y}" width="520" height="88" rx="10" fill="#eff6ff" stroke="#93c5fd" />
+    <text x="728" y="${y + 32}" font-size="16" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1e3a8a">${escapeXml(pgLabel)}</text>
+    <text x="728" y="${y + 58}" font-size="12" font-family="Inter, system-ui, sans-serif" fill="#475569">${includedCols} columns mapped</text>`
+      : '';
+    const arrow = includeSource && includeTarget
+      ? `
+    <line x1="560" y1="${y + 44}" x2="710" y2="${y + 44}" stroke="#3b82f6" stroke-width="2" />
+    <polygon points="710,44 700,38 700,50" transform="translate(0 ${y})" fill="#3b82f6" />`
+      : '';
+    return `${sourceBox}${arrow}${targetBox}`;
+  }).join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>
+  <text x="40" y="40" font-size="24" font-family="Inter, system-ui, sans-serif" fill="#0f172a" font-weight="700">
+    MySQL → PostgreSQL Mapping Diagram
+  </text>
+  <text x="40" y="64" font-size="12" font-family="Inter, system-ui, sans-serif" fill="#64748b">
+    Migration: ${escapeXml(config.name)} • Generated: ${escapeXml(timestamp)}
+  </text>
+  ${rows}
+</svg>`;
+}
+
+export function generateCanvasDocumentation(
+  config: MigrationConfig,
+  view: ExportViewOptions = DEFAULT_VIEW
+): string {
+  const includeSource = view.includeSource;
+  const includeTarget = view.includeTarget;
+  const included = config.tables.filter((t) => t.include);
+  const nodes: Array<Record<string, unknown>> = [];
+  const edges: Array<Record<string, unknown>> = [];
+
+  included.forEach((t, idx) => {
+    const y = 80 + idx * 180;
+    const sourceId = `mysql_${t.sourceDatabase}_${t.mysqlName}`;
+    const targetId = `pg_${t.pgSchema}_${t.pgName}`;
+
+    if (includeSource) {
+      nodes.push({
+        id: sourceId,
+        kind: 'table',
+        side: 'source',
+        database: t.sourceDatabase,
+        table: t.mysqlName,
+        x: 80,
+        y,
+        width: 420,
+        height: 120,
+        columns: t.columns.map((c) => ({
+          mysqlName: c.mysqlName,
+          mysqlType: c.mysqlType,
+          include: c.include,
+        })),
+      });
+    }
+
+    if (includeTarget) {
+      nodes.push({
+        id: targetId,
+        kind: 'table',
+        side: 'target',
+        schema: t.pgSchema,
+        table: t.pgName,
+        x: 760,
+        y,
+        width: 420,
+        height: 120,
+        columns: t.columns
+          .filter((c) => c.include)
+          .map((c) => ({
+            mysqlName: c.mysqlName,
+            pgName: c.pgName,
+            pgType: c.pgType,
+          })),
+      });
+    }
+
+    if (includeSource && includeTarget) {
+      edges.push({
+        id: `edge_${sourceId}_${targetId}`,
+        from: sourceId,
+        to: targetId,
+        label: 'maps_to',
+      });
+    }
+  });
+
+  const model = {
+    meta: {
+      format: 'canvas-json',
+      generatedAt: new Date().toISOString(),
+      migrationName: config.name,
+      sourceDatabase: config.sourceDatabase,
+      targetDatabase: config.targetDatabase,
+      includedTables: included.length,
+    },
+    viewport: { width: 1280, height: Math.max(720, included.length * 220) },
+    nodes,
+    edges,
+  };
+
+  return JSON.stringify(model, null, 2);
 }

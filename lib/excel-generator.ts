@@ -1,7 +1,11 @@
-import { MigrationConfig } from './types';
+import { MigrationConfig, ExportViewOptions } from './types';
 import { buildSummary } from './postgres-migrator';
 
-export function generateExcelCSV(config: MigrationConfig): string {
+const DEFAULT_VIEW: ExportViewOptions = { includeSource: true, includeTarget: true };
+
+export function generateExcelCSV(config: MigrationConfig, view: ExportViewOptions = DEFAULT_VIEW): string {
+  const includeSource = view.includeSource;
+  const includeTarget = view.includeTarget;
   const summary = buildSummary(config);
   const rows: string[] = [];
 
@@ -24,22 +28,22 @@ export function generateExcelCSV(config: MigrationConfig): string {
 
   // Mappings sheet
   rows.push('TABLE AND COLUMN MAPPINGS');
-  rows.push('MySQL Table,PostgreSQL Schema,PostgreSQL Table,MySQL Column,PostgreSQL Column,PostgreSQL Type,PK,Nullable,Include');
+  const headers: string[] = [];
+  if (includeSource) headers.push('MySQL Table');
+  if (includeTarget) headers.push('PostgreSQL Schema', 'PostgreSQL Table');
+  if (includeSource) headers.push('MySQL Column', 'MySQL Type');
+  if (includeTarget) headers.push('PostgreSQL Column', 'PostgreSQL Type');
+  headers.push('PK', 'Nullable', 'Include');
+  rows.push(headers.join(','));
   for (const t of config.tables) {
     for (const c of t.columns) {
-      rows.push(
-        [
-          t.mysqlName,
-          t.pgSchema,
-          t.pgName,
-          c.mysqlName,
-          c.pgName,
-          c.pgType,
-          c.isPrimaryKey ? 'YES' : '',
-          c.nullable ? 'YES' : 'NO',
-          c.include && t.include ? 'YES' : 'NO',
-        ].join(',')
-      );
+      const values: string[] = [];
+      if (includeSource) values.push(t.mysqlName);
+      if (includeTarget) values.push(t.pgSchema, t.pgName);
+      if (includeSource) values.push(c.mysqlName, c.mysqlType);
+      if (includeTarget) values.push(c.pgName, c.pgType);
+      values.push(c.isPrimaryKey ? 'YES' : '', c.nullable ? 'YES' : 'NO', c.include && t.include ? 'YES' : 'NO');
+      rows.push(values.join(','));
     }
   }
   rows.push('');

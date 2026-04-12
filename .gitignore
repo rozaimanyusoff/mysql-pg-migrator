@@ -4,3 +4,8 @@ node_modules/
 .next/
 out/
 *.log
+
+# Runtime/generated artifacts
+/public/**
+!/public/
+!/public/.gitkeep
