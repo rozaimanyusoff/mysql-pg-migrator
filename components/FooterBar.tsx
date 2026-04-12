@@ -32,6 +32,7 @@ export default function FooterBar() {
   const [logSearch, setLogSearch] = useState('');
   const [logStart, setLogStart] = useState('');
   const [logEnd, setLogEnd] = useState('');
+  const isTemplateSnapshotFile = (file: string) => /^template_\d{14}\.json$/.test(file);
 
   useEffect(() => {
     setMounted(true);
@@ -60,14 +61,20 @@ export default function FooterBar() {
     document.documentElement.classList.toggle('dark', nextTheme === 'dark');
   };
 
-  const loadFiles = async () => {
+  const loadFiles = async (mode: 'config' | 'template' = restoreMode) => {
     try {
-      const { data } = await axios.get('/api/schema-config-list', { params: { module: 'migration' } });
+      const params = mode === 'template' ? undefined : { module: 'migration' };
+      const { data } = await axios.get('/api/schema-config-list', { params });
       const list = (data.files ?? []) as string[];
       setFiles(list);
-      if (!selectedFile && list.length > 0) setSelectedFile(list[0]);
+      const available = mode === 'template' ? list.filter(isTemplateSnapshotFile) : list;
+      setSelectedFile((prev) => {
+        if (prev && available.includes(prev)) return prev;
+        return available[0] ?? '';
+      });
     } catch {
       setFiles([]);
+      setSelectedFile('');
     }
   };
 
@@ -76,7 +83,7 @@ export default function FooterBar() {
     setSelectedFile('');
     setShowRestore(true);
     setMessage(null);
-    void loadFiles();
+    void loadFiles(mode);
   };
 
   const logClientActivity = async (
@@ -187,7 +194,7 @@ export default function FooterBar() {
 
   const handleRestore = async () => {
     if (!selectedFile) return;
-    if (restoreMode === 'template' && !/^template_\d{14}\.json$/.test(selectedFile)) return;
+    if (restoreMode === 'template' && !isTemplateSnapshotFile(selectedFile)) return;
     setLoading(true);
     setMessage(null);
     await logClientActivity(
@@ -304,7 +311,7 @@ export default function FooterBar() {
   }).length;
 
   const filteredFiles = restoreMode === 'template'
-    ? files.filter((f) => /^template_\d{14}\.json$/.test(f))
+    ? files.filter((f) => isTemplateSnapshotFile(f))
     : files;
 
   return (
@@ -392,7 +399,7 @@ export default function FooterBar() {
                 </button>
                 <button
                   onClick={handleRestore}
-                  disabled={!selectedFile || loading || (restoreMode === 'template' && !/^template_\d{14}\.json$/.test(selectedFile))}
+                  disabled={!selectedFile || loading || (restoreMode === 'template' && !isTemplateSnapshotFile(selectedFile))}
                   className="text-xs px-2.5 py-2 rounded-md bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 disabled:opacity-50 whitespace-nowrap"
                 >
                   {loading ? 'Restoring…' : 'Restore'}
