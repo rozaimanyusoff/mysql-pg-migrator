@@ -75,16 +75,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const client = await pool.connect();
   try {
-    // Optional but useful for UUID default generation.
-    try {
-      await client.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
-      addLog('pgcrypto extension ensured');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      result.warnings.push(`Unable to ensure pgcrypto extension: ${msg}`);
-      addLog(`warning: ${msg}`);
-    }
-
     const schemas = new Set<string>();
     for (const t of config.tables) {
       if (t.include && t.pgSchema !== 'public') schemas.add(t.pgSchema);

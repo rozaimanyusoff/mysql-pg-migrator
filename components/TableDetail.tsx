@@ -77,11 +77,6 @@ export default function TableDetail({ table, database, isDone, isExcluded, onDon
         <ColumnMappingTable
           table={table}
           database={database}
-          isDone={isDone}
-          isExcluded={isExcluded}
-          onDone={onDone}
-          onExcludeTable={onExcludeTable}
-          onUndoStatus={onUndoStatus}
         />
       </div>
 

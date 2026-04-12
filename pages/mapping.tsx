@@ -56,8 +56,6 @@ function TablePreview({
     patch: Partial<MigrationConfig['tables'][0]['columns'][number]>
   ) => void;
 }) {
-  const pkCol = table.columns.find((c) => c.isPrimaryKey);
-  const showUuidId = pkCol != null;
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
   const [activeEditRow, setActiveEditRow] = useState<number | null>(null);
@@ -76,22 +74,6 @@ function TablePreview({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {showUuidId && (
-            <tr className="bg-emerald-50">
-              <td className="px-3 py-2 text-xs text-emerald-600 italic">
-                <span className="flex items-center gap-1"><Plus size={11} /> new column</span>
-              </td>
-              <td className="px-3 py-2 font-mono font-semibold text-emerald-800">id</td>
-              <td className="px-3 py-2">
-                <span className="font-mono text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">UUID</span>
-              </td>
-              <td className="px-3 py-2 text-xs text-gray-500">NOT NULL</td>
-              <td className="px-3 py-2">
-                <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">PK · added</span>
-              </td>
-              <td className="px-3 py-2 text-right text-xs text-gray-400">auto</td>
-            </tr>
-          )}
           {table.columns.map((c, idx) => (
             <tr
               key={c.mysqlName}
@@ -132,7 +114,7 @@ function TablePreview({
                   )}
                   {c.isPrimaryKey && (
                     <span className="ml-1 text-xs bg-gray-100 text-gray-500 px-1 rounded">
-                      {c.pkHandling === 'migrate_to_id' ? '→ id' : 'kept'}
+                      PK
                     </span>
                   )}
                 </span>
@@ -290,6 +272,7 @@ export default function Phase2() {
   const [helpPos, setHelpPos] = useState({ top: 0, left: 0 });
   const helpBtnRef = useRef<HTMLButtonElement>(null);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [removeTableDialogKey, setRemoveTableDialogKey] = useState<string | null>(null);
 
   useEffect(() => {
     // Load config
@@ -659,6 +642,67 @@ export default function Phase2() {
     localStorage.setItem('migration_config', JSON.stringify(updated));
   };
 
+  const handleRemoveTableFromPhase2 = (tableKey: string) => {
+    if (!config) return;
+    const target = config.tables.find((t) => matchByKey(t, tableKey));
+    if (!target) return;
+    setRemoveTableDialogKey(null);
+
+    const fullKey = tKey(target);
+    const mysqlName = target.mysqlName;
+
+    const nextDone = new Set(phase1Done);
+    nextDone.delete(fullKey);
+    nextDone.delete(mysqlName);
+
+    const nextExcluded = new Set(phase1Excluded);
+    nextExcluded.add(fullKey);
+
+    const nextReviewed = new Set(reviewed);
+    nextReviewed.delete(fullKey);
+    nextReviewed.delete(mysqlName);
+
+    const nextReviewedState = { ...reviewedState };
+    delete nextReviewedState[fullKey];
+    delete nextReviewedState[mysqlName];
+
+    const nextConfig: MigrationConfig = {
+      ...config,
+      tables: config.tables.map((t) =>
+        matchByKey(t, tableKey) ? { ...t, include: false } : t
+      ),
+      phase3TemplateReady: false,
+      phase3TemplateReadyAt: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const statusSnapshot = {
+      done: [...nextDone],
+      excluded: [...nextExcluded],
+    };
+
+    setPhase1Done(nextDone);
+    setPhase1Excluded(nextExcluded);
+    setReviewed(nextReviewed);
+    setReviewedState(nextReviewedState);
+    setPhase3TemplateReady(null);
+    setConfig(nextConfig);
+
+    const nextDoneTables = nextConfig.tables.filter(
+      (t) => nextDone.has(tKey(t)) || nextDone.has(t.mysqlName)
+    );
+    const fallback = nextDoneTables[0];
+    setSelectedTable(fallback ? tKey(fallback) : null);
+
+    localStorage.setItem(TABLE_STATUS_KEY, JSON.stringify(statusSnapshot));
+    localStorage.setItem(PHASE2_REVIEWED_KEY, JSON.stringify([...nextReviewed]));
+    localStorage.setItem(PHASE2_REVIEWED_STATE_KEY, JSON.stringify(nextReviewedState));
+    localStorage.removeItem(PHASE3_TEMPLATE_READY_KEY);
+    localStorage.setItem('migration_config', JSON.stringify(nextConfig));
+
+    toast.success(`Removed "${target.mysqlName}" from Phase 2.`);
+  };
+
   const handleConfirmAndSaveTemplate = async () => {
     if (!config) return;
     setSavingConfig(true);
@@ -968,8 +1012,7 @@ export default function Phase2() {
                   const key = tKey(t);
                   const isReviewed = reviewed.has(key) || reviewed.has(t.mysqlName);
                   const isDirty = isReviewedDirty(t);
-                  const pkCol = t.columns.find((c) => c.isPrimaryKey);
-                  const newColCount = t.columns.filter((c) => c.include).length + (pkCol ? 1 : 0);
+                  const newColCount = t.columns.filter((c) => c.include).length;
                   const oldColCount = t.columns.length;
 
                   return (
@@ -1158,7 +1201,7 @@ export default function Phase2() {
                           placeholder="table_name"
                         />
                         <span className="text-xs text-gray-400">
-                          {selectedTableData.columns.filter((c) => c.include).length + (selectedTableData.columns.find((c) => c.isPrimaryKey) ? 1 : 0)} columns
+                          {selectedTableData.columns.filter((c) => c.include).length} columns
                         </span>
                       </div>
                     </div>
@@ -1186,11 +1229,6 @@ export default function Phase2() {
                             {selectedTableData.columns.filter((c) => c.include).length}
                           </strong>{' '}columns included
                         </span>
-                        {selectedTableData.columns.some(
-                          (c) => c.isPrimaryKey && (c.pkHandling === 'migrate_to_id' || c.pkHandling === 'keep')
-                        ) && (
-                            <span className="text-emerald-600 font-medium">+ id UUID added</span>
-                          )}
                         {selectedTableData.columns.some((c) => !c.include) && (
                           <span className="text-red-400">
                             {selectedTableData.columns.filter((c) => !c.include).length} excluded
@@ -1202,14 +1240,25 @@ export default function Phase2() {
                         Final changes can be made here: include/exclude, rename PG column, type, nullable, comment, add, and reorder columns.
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAddTargetColumn(tKey(selectedTableData))}
-                      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100"
-                    >
-                      <PlusCircle size={12} />
-                      Add PG Column
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRemoveTableDialogKey(tKey(selectedTableData))}
+                        className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-red-200 text-red-700 bg-red-50 hover:bg-red-100"
+                        title="Remove this table from Phase 2"
+                      >
+                        <X size={12} />
+                        Remove Table
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddTargetColumn(tKey(selectedTableData))}
+                        className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100"
+                      >
+                        <PlusCircle size={12} />
+                        Add PG Column
+                      </button>
+                    </div>
                   </div>
                   <TablePreview
                     table={selectedTableData}
@@ -1246,6 +1295,51 @@ export default function Phase2() {
           onClose={() => setShowHelp(false)}
         />
       )}
+
+      {removeTableDialogKey && config && (() => {
+        const tableToRemove = config.tables.find((t) => matchByKey(t, removeTableDialogKey));
+        if (!tableToRemove) return null;
+        return (
+          <div className="fixed inset-0 z-[600] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setRemoveTableDialogKey(null)}
+            />
+            <div className="relative w-full max-w-md rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl p-5">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 w-8 h-8 rounded-full bg-red-100 dark:bg-rose-900/40 text-red-600 dark:text-rose-300 flex items-center justify-center">
+                  <AlertTriangle size={16} />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Remove Table From Phase 2?</h3>
+                  <p className="mt-1 text-xs text-gray-600 dark:text-slate-300">
+                    <span className="font-mono font-semibold">{tableToRemove.mysqlName}</span> will be removed from the Phase 2 list and excluded from current template scope.
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                    You can re-include it later from Phase 1.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRemoveTableDialogKey(null)}
+                  className="text-xs px-3 py-1.5 rounded-md border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveTableFromPhase2(removeTableDialogKey)}
+                  className="text-xs px-3 py-1.5 rounded-md border border-red-200 dark:border-rose-800 text-red-700 dark:text-rose-300 bg-red-50 dark:bg-rose-950/30 hover:bg-red-100 dark:hover:bg-rose-900/40"
+                >
+                  Yes, Remove Table
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }

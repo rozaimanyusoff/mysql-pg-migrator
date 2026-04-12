@@ -120,6 +120,16 @@ export function validateTableName(name: string): boolean {
   return /^[a-z_][a-z0-9_]*$/i.test(name) && name.length <= 63;
 }
 
+function normalizeLegacyPk(columns: ColumnMapping[]): ColumnMapping[] {
+  return columns.map((c) => {
+    if (!c.isPrimaryKey) return c;
+    if (c.pkHandling === 'migrate_to_id' || !c.include) {
+      return { ...c, include: true, pkHandling: 'keep' };
+    }
+    return { ...c, pkHandling: 'keep' };
+  });
+}
+
 /**
  * Merges per-table localStorage column mappings (saved in Phase 1) into a
  * MigrationConfig.  Handles both old ColumnMapping[] format and new
@@ -136,13 +146,13 @@ export function mergePhase1Mappings(config: MigrationConfig): MigrationConfig {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         // Backward compat: old format was ColumnMapping[]
-        return { ...t, columns: parsed as ColumnMapping[] };
+        return { ...t, columns: normalizeLegacyPk(parsed as ColumnMapping[]) };
       } else {
         const stored = parsed as { pgName: string; columns: ColumnMapping[]; tableDescription?: string };
         return {
           ...t,
           pgName: stored.pgName || t.pgName,
-          columns: stored.columns,
+          columns: normalizeLegacyPk(stored.columns),
           description: stored.tableDescription ?? t.description,
         };
       }
@@ -155,16 +165,13 @@ export function mergePhase1Mappings(config: MigrationConfig): MigrationConfig {
 
 /**
  * Generates CREATE TABLE SQL DDL from a MigrationConfig.
- * Handles the UUID id column pattern when pkHandling is set.
+ * Preserves source primary key columns when included.
  */
 export function generateMappingSQL(config: MigrationConfig): string {
   const out: string[] = [
     '-- MySQL → PostgreSQL Migration DDL',
     `-- Generated: ${new Date().toISOString()}`,
     `-- Source: ${config.sourceDatabase}  →  Target: ${config.targetDatabase}`,
-    '--',
-    '-- NOTE: For PostgreSQL < 13, enable uuid support first:',
-    `-- CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
     '',
   ];
 
@@ -182,19 +189,10 @@ export function generateMappingSQL(config: MigrationConfig): string {
   for (const t of config.tables) {
     if (!t.include) continue;
 
-    const pkCol = t.columns.find((c) => c.isPrimaryKey);
-    const addUuidId =
-      pkCol != null &&
-      (pkCol.pkHandling === 'migrate_to_id' || pkCol.pkHandling === 'keep');
-
     out.push(`-- ${t.mysqlName}  →  ${t.pgSchema}.${t.pgName}`);
     out.push(`CREATE TABLE IF NOT EXISTS "${t.pgSchema}"."${t.pgName}" (`);
 
     const defs: string[] = [];
-
-    if (addUuidId || !pkCol) {
-      defs.push(`  "id" UUID NOT NULL DEFAULT gen_random_uuid()`);
-    }
 
     for (const c of t.columns) {
       if (!c.include) continue;
@@ -203,17 +201,13 @@ export function generateMappingSQL(config: MigrationConfig): string {
       defs.push(line);
     }
 
-    if (addUuidId || !pkCol) {
-      defs.push(`  CONSTRAINT "pk_${t.pgName}" PRIMARY KEY ("id")`);
-    } else {
-      const pkCols = t.columns.filter((c) => c.isPrimaryKey && c.include);
-      if (pkCols.length) {
-        defs.push(
-          `  CONSTRAINT "pk_${t.pgName}" PRIMARY KEY (${pkCols
-            .map((c) => `"${c.pgName}"`)
-            .join(', ')})`
-        );
-      }
+    const pkCols = t.columns.filter((c) => c.isPrimaryKey && c.include);
+    if (pkCols.length) {
+      defs.push(
+        `  CONSTRAINT "pk_${t.pgName}" PRIMARY KEY (${pkCols
+          .map((c) => `"${c.pgName}"`)
+          .join(', ')})`
+      );
     }
 
     out.push(defs.join(',\n'));

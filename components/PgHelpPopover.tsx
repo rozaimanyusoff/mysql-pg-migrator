@@ -58,13 +58,6 @@ GRANT ALL ON DATABASE mydb TO myrole;
 GRANT ALL ON SCHEMA myschema TO myrole;
 GRANT ALL ON ALL TABLES IN SCHEMA myschema TO myrole;`}</pre>
             </div>
-
-            <div>
-               <p className="font-semibold text-blue-600 mb-1.5">⑥ Enable UUID extension</p>
-               <pre className="bg-gray-50 border border-gray-100 rounded px-2 py-1.5 font-mono text-gray-700 whitespace-pre-wrap">{`CREATE EXTENSION IF NOT EXISTS "pgcrypto";
--- then use: gen_random_uuid()`}</pre>
-            </div>
-
          </div>
       </div>
    );

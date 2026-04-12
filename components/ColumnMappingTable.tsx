@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { MySQLTable, ColumnMapping, PkHandling } from '../lib/types';
+import { MySQLTable, ColumnMapping } from '../lib/types';
 import { mapMySQLTypeToPg, tableStorageKey } from '../lib/mapping-utils';
-import { Key, CheckCircle, Plus, PlusCircle, BadgeCheck, XCircle, RotateCcw, Trash2 } from 'lucide-react';
+import { Key, CheckCircle, Plus, PlusCircle, Trash2 } from 'lucide-react';
 
 const PG_TYPES = [
    'SMALLINT', 'INTEGER', 'BIGINT', 'SERIAL', 'BIGSERIAL',
@@ -26,8 +26,18 @@ function withAutoRemarks(columns: ColumnMapping[]): ColumnMapping[] {
    });
 }
 
+function normalizeLegacyPkMappings(columns: ColumnMapping[]): ColumnMapping[] {
+   return columns.map((c) => {
+      if (!c.isPrimaryKey) return c;
+      if (c.pkHandling === 'migrate_to_id' || !c.include) {
+         return { ...c, include: true, pkHandling: 'keep' };
+      }
+      return { ...c, pkHandling: 'keep' };
+   });
+}
+
 function initMappings(table: MySQLTable): ColumnMapping[] {
-   return withAutoRemarks(table.columns.map((c): ColumnMapping => ({
+   return normalizeLegacyPkMappings(withAutoRemarks(table.columns.map((c): ColumnMapping => ({
       mysqlName: c.name,
       pgName: c.name,
       mysqlType: c.type,
@@ -38,29 +48,22 @@ function initMappings(table: MySQLTable): ColumnMapping[] {
       isUnique: c.isUnique,
       indexStrategy: c.isPrimaryKey ? 'sequential' : 'none',
       description: c.comment || '',
-      include: c.isPrimaryKey ? false : true, // PK excluded by default when using migrate_to_id
-      pkHandling: c.isPrimaryKey ? 'migrate_to_id' : undefined,
+      include: true,
+      pkHandling: c.isPrimaryKey ? 'keep' : undefined,
       isTargetOnly: false,
-   })));
+   }))));
 }
 
 interface Props {
    table: MySQLTable;
    database: string;
-   isDone?: boolean;
-   isExcluded?: boolean;
-   onDone?: () => void;
-   onExcludeTable?: () => void;
-   onUndoStatus?: () => void;
 }
 
-export default function ColumnMappingTable({ table, database, isDone, isExcluded, onDone, onExcludeTable, onUndoStatus }: Props) {
+export default function ColumnMappingTable({ table, database }: Props) {
    const [mappings, setMappings] = useState<ColumnMapping[]>([]);
    const [pgTableName, setPgTableName] = useState(table.name);
    const [tableDescription, setTableDescription] = useState('');
    const [saved, setSaved] = useState(false);
-
-   const hasPk = table.columns.some((c) => c.isPrimaryKey);
 
    // Load saved mappings from localStorage on mount or table change
    useEffect(() => {
@@ -71,11 +74,11 @@ export default function ColumnMappingTable({ table, database, isDone, isExcluded
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) {
                // Backward compat: old format was ColumnMapping[]
-               setMappings(withAutoRemarks(parsed as ColumnMapping[]));
+               setMappings(normalizeLegacyPkMappings(withAutoRemarks(parsed as ColumnMapping[])));
                setPgTableName(table.name);
             } else {
                const stored = parsed as Phase1TableStorage;
-               setMappings(withAutoRemarks(stored.columns));
+               setMappings(normalizeLegacyPkMappings(withAutoRemarks(stored.columns)));
                setPgTableName(stored.pgName || table.name);
                setTableDescription(stored.tableDescription || '');
             }
@@ -179,22 +182,6 @@ export default function ColumnMappingTable({ table, database, isDone, isExcluded
                <div className="px-4 py-2.5 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700">PostgreSQL (Target)</div>
             </div>
 
-            {/* Virtual UUID id row — always shown when table has a PK */}
-            {hasPk && (
-               <div className="grid grid-cols-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-100 dark:border-emerald-900">
-                  <div className="px-4 py-3 text-xs text-emerald-600 dark:text-emerald-300 italic flex items-center gap-2">
-                     <Plus size={12} className="flex-shrink-0" />
-                     <span>New column — no MySQL equivalent</span>
-                  </div>
-                  <div className="px-4 py-3 border-l border-emerald-100 dark:border-emerald-900 flex items-center gap-2 flex-wrap">
-                     <span className="font-mono text-sm font-semibold text-emerald-800 dark:text-emerald-200">id</span>
-                     <span className="text-xs bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded font-mono">UUID</span>
-                     <span className="text-xs bg-yellow-100 dark:bg-amber-900/40 text-yellow-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-medium">PRIMARY KEY</span>
-                     <span className="text-xs text-emerald-500 dark:text-emerald-300 font-mono">DEFAULT gen_random_uuid()</span>
-                  </div>
-               </div>
-            )}
-
             {/* Column rows */}
             <div className="divide-y divide-gray-100 dark:divide-slate-700">
                {mappings.map((m, idx) => {
@@ -225,62 +212,31 @@ export default function ColumnMappingTable({ table, database, isDone, isExcluded
 
                            {/* RIGHT: PK handling options */}
                            <div className="px-4 py-3 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 space-y-2.5">
-                              <p className="text-xs font-semibold text-gray-600 dark:text-slate-300">Original PK strategy:</p>
-                              <div className="space-y-2">
-                                 <label className="flex items-start gap-2 text-xs cursor-pointer group">
-                                    <input
-                                       type="radio"
-                                       name={`pk_${table.name}_${m.mysqlName}`}
-                                       value="migrate_to_id"
-                                       checked={(m.pkHandling ?? 'migrate_to_id') === 'migrate_to_id'}
-                                       onChange={() => updateMapping(idx, { pkHandling: 'migrate_to_id', include: false })}
-                                       className="w-3 h-3 mt-0.5 flex-shrink-0"
-                                    />
-                                    <span className="leading-snug">
-                                       Migrate PK to <code className="bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 px-1 rounded">id</code>
-                                       <span className="block text-gray-400 dark:text-slate-500 mt-0.5">Exclude this column — use new UUID id as PK</span>
-                                    </span>
-                                 </label>
-                                 <label className="flex items-start gap-2 text-xs cursor-pointer group">
-                                    <input
-                                       type="radio"
-                                       name={`pk_${table.name}_${m.mysqlName}`}
-                                       value="keep"
-                                       checked={m.pkHandling === 'keep'}
-                                       onChange={() => updateMapping(idx, { pkHandling: 'keep', include: true })}
-                                       className="w-3 h-3 mt-0.5 flex-shrink-0"
-                                    />
-                                    <span className="leading-snug">
-                                       Keep this column (maintain value)
-                                       <span className="block text-gray-400 dark:text-slate-500 mt-0.5">Include alongside new UUID id column</span>
-                                    </span>
-                                 </label>
+                              <p className="text-xs font-semibold text-gray-600 dark:text-slate-300">Primary key mapping:</p>
+                              <p className="text-xs text-gray-400 dark:text-slate-500">
+                                 Original identifier is preserved as the primary key.
+                              </p>
+                              <div className="pt-1 space-y-1.5 border-t border-gray-100 dark:border-slate-700">
+                                 <input
+                                    type="text"
+                                    className="w-full text-sm font-mono border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100"
+                                    value={m.pgName}
+                                    onChange={(e) => updateMapping(idx, { pgName: e.target.value, pkHandling: 'keep', include: true })}
+                                    placeholder="Column name"
+                                 />
+                                 <select
+                                    className="w-full text-xs border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500"
+                                    value={m.pgType}
+                                    onChange={(e) => updateMapping(idx, { pgType: e.target.value, pkHandling: 'keep', include: true })}
+                                 >
+                                    {PG_TYPES.map((t) => (
+                                       <option key={t} value={t}>{t}</option>
+                                    ))}
+                                    {!PG_TYPES.includes(m.pgType) && (
+                                       <option value={m.pgType}>{m.pgType}</option>
+                                    )}
+                                 </select>
                               </div>
-
-                              {/* If 'keep' — show rename + type editors */}
-                              {m.pkHandling === 'keep' && (
-                                 <div className="pt-1 space-y-1.5 border-t border-gray-100 dark:border-slate-700">
-                                    <input
-                                       type="text"
-                                       className="w-full text-sm font-mono border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100"
-                                       value={m.pgName}
-                                       onChange={(e) => updateMapping(idx, { pgName: e.target.value })}
-                                       placeholder="Column name"
-                                    />
-                                    <select
-                                       className="w-full text-xs border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500"
-                                       value={m.pgType}
-                                       onChange={(e) => updateMapping(idx, { pgType: e.target.value })}
-                                    >
-                                       {PG_TYPES.map((t) => (
-                                          <option key={t} value={t}>{t}</option>
-                                       ))}
-                                       {!PG_TYPES.includes(m.pgType) && (
-                                          <option value={m.pgType}>{m.pgType}</option>
-                                       )}
-                                    </select>
-                                 </div>
-                              )}
                            </div>
                         </div>
                      );
