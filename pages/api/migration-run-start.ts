@@ -11,12 +11,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { templateId, config, source, target, options } = req.body as {
+  const { templateId, config, source, target, options, forceFreshKeys } = req.body as {
     templateId?: string;
     config?: MigrationConfig;
     source?: SourceConnectionConfig;
     target?: PgConnectionConfig;
     options?: Partial<MigrationRunOptions>;
+    forceFreshKeys?: string[];
   };
 
   if (!source || !target) {
@@ -50,6 +51,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
 
     const completedSnapshotByKey: Record<string, { rowsCopied?: number; rowsSource?: number | null; finishedAt?: string }> = {};
+    const forceFreshKeySet = new Set((forceFreshKeys ?? []).map((k) => String(k)));
     let resumeFromRunId: string | null = null;
     try {
       const runs = await listRuns(50);
@@ -60,7 +62,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (templateId && !prev.templateId) continue;
         if (!templateId && prev.templateId) continue;
 
-        const completed = prev.tables.filter((t) => t.status === 'completed' && includedKeySet.has(t.key));
+        const completed = prev.tables.filter((t) =>
+          t.status === 'completed' &&
+          includedKeySet.has(t.key) &&
+          !forceFreshKeySet.has(t.key)
+        );
         if (completed.length === 0) continue;
 
         for (const t of completed) {
@@ -94,6 +100,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       tables: advanced.tables.length,
       resumedFromRunId: resumeFromRunId,
       skippedCompleted: Object.keys(completedSnapshotByKey).length,
+      forcedFresh: forceFreshKeySet.size,
     });
 
     return res.status(200).json({
@@ -101,6 +108,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       run: advanced,
       resumedFromRunId: resumeFromRunId,
       skippedCompleted: Object.keys(completedSnapshotByKey).length,
+      forcedFresh: forceFreshKeySet.size,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

@@ -44,6 +44,7 @@ export default function Phase4() {
   const [advancing, setAdvancing] = useState(false);
   const [loadingRun, setLoadingRun] = useState(false);
   const [regeneratingSchema, setRegeneratingSchema] = useState(false);
+  const [selectedRerunKeys, setSelectedRerunKeys] = useState<Set<string>>(new Set());
 
   const [run, setRun] = useState<MigrationRunState | null>(null);
   const [phase1Done, setPhase1Done] = useState<Set<string>>(new Set());
@@ -185,6 +186,17 @@ export default function Phase4() {
     return m;
   }, [run]);
 
+  useEffect(() => {
+    const validKeys = new Set(templateTables.map((t) => tableKey(t)));
+    setSelectedRerunKeys((prev) => {
+      const next = new Set<string>();
+      for (const key of prev) {
+        if (validKeys.has(key)) next.add(key);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [templateTables]);
+
   const handleStartRun = async () => {
     if (!config) return;
     if (templateTables.length === 0) {
@@ -215,6 +227,56 @@ export default function Phase4() {
       } else {
         toast.success(`Run started: ${data.run.id}`);
       }
+    } catch (err: unknown) {
+      notifyError(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
+    } finally {
+      setStartingRun(false);
+    }
+  };
+
+  const toggleRerunKey = (key: string) => {
+    setSelectedRerunKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const clearRerunSelection = () => setSelectedRerunKeys(new Set());
+
+  const selectAllCompleted = () => {
+    const completedKeys = templateTables
+      .map((t) => tableKey(t))
+      .filter((key) => runTableByKey.get(key)?.status === 'completed');
+    setSelectedRerunKeys(new Set(completedKeys));
+  };
+
+  const handleRerunSelected = async () => {
+    if (!config) return;
+    if (selectedRerunKeys.size === 0) {
+      notifyError('Select at least one table to rerun.');
+      return;
+    }
+
+    const scopedConfig = buildTemplateConfigForKeys(selectedRerunKeys);
+    if (!scopedConfig) return;
+
+    setStartingRun(true);
+    try {
+      const { data } = await axios.post('/api/migration-run-start', {
+        config: scopedConfig,
+        source,
+        target,
+        options: {
+          chunkSize: 1000,
+          maxSecondsPerAdvance: 8,
+        },
+        forceFreshKeys: [...selectedRerunKeys],
+      });
+      setRun(data.run as MigrationRunState);
+      clearRerunSelection();
+      toast.success(`Rerun started for ${selectedRerunKeys.size} table${selectedRerunKeys.size > 1 ? 's' : ''}: ${data.run.id}`);
     } catch (err: unknown) {
       notifyError(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
     } finally {
@@ -465,6 +527,14 @@ export default function Phase4() {
               >
                 <Play size={14} /> {startingRun ? 'Starting...' : 'Start Run'}
               </button>
+              <button
+                onClick={handleRerunSelected}
+                disabled={startingRun || selectedRerunKeys.size === 0}
+                className="inline-flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600 text-white disabled:opacity-50"
+              >
+                <RotateCcw size={14} className={startingRun ? 'animate-spin' : ''} />
+                {startingRun ? 'Starting...' : `Rerun Selected (${selectedRerunKeys.size})`}
+              </button>
               {run && run.status !== 'completed' && run.status !== 'failed' && (
                 <button
                   onClick={handleAdvance}
@@ -499,7 +569,23 @@ export default function Phase4() {
           <section className="bg-white dark:bg-slate-900/70 border border-gray-200 dark:border-slate-700 rounded-2xl p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Template Tables (Migration Status)</h3>
-              {run?.id && <span className="text-xs text-gray-500 dark:text-slate-400">Run: {run.id}</span>}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllCompleted}
+                  className="text-xs px-2 py-1 rounded border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/70"
+                >
+                  Select Completed
+                </button>
+                <button
+                  type="button"
+                  onClick={clearRerunSelection}
+                  className="text-xs px-2 py-1 rounded border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/70"
+                >
+                  Clear Selection
+                </button>
+                {run?.id && <span className="text-xs text-gray-500 dark:text-slate-400">Run: {run.id}</span>}
+              </div>
             </div>
             {templateTables.length === 0 ? (
               <p className="text-sm text-gray-500 dark:text-slate-400">No template tables found. Complete “Confirmed & Save as Template” in Phase 2.</p>
@@ -509,6 +595,7 @@ export default function Phase4() {
                   const key = tableKey(t);
                   const rt = runTableByKey.get(key);
                   const status = rt?.status ?? 'pending';
+                  const isSelected = selectedRerunKeys.has(key);
                   const statusClass =
                     status === 'completed'
                       ? 'text-emerald-700 dark:text-emerald-300'
@@ -517,9 +604,17 @@ export default function Phase4() {
                         : 'text-blue-700 dark:text-blue-300';
 
                   return (
-                    <li key={key} className="text-sm text-gray-700 dark:text-slate-200 bg-gray-50 dark:bg-slate-800/70 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2">
+                    <li key={key} className={`text-sm text-gray-700 dark:text-slate-200 bg-gray-50 dark:bg-slate-800/70 border rounded-lg px-3 py-2 ${isSelected ? 'border-amber-400 dark:border-amber-600' : 'border-gray-200 dark:border-slate-700'}`}>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium">{t.mysqlName}</span>
+                        <label className="inline-flex items-center gap-2 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleRerunKey(key)}
+                            className="rounded border-gray-300 dark:border-slate-600 text-amber-600 focus:ring-amber-500"
+                          />
+                          {t.mysqlName}
+                        </label>
                         <span className="text-gray-500 dark:text-slate-400">→ {t.pgSchema}.{t.pgName}</span>
                         <span className={`text-xs font-semibold ${statusClass}`}>{status}</span>
                       </div>
