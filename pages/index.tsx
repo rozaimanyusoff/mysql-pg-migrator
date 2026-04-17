@@ -1,7 +1,7 @@
 import Head from 'next/head';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Database, ArrowRight, UploadCloud, Wand2 } from 'lucide-react';
+import { Database, ArrowRight, UploadCloud, Wand2, SlidersHorizontal } from 'lucide-react';
 
 const modules = [
   {
@@ -11,6 +11,14 @@ const modules = [
     href: '/migration',
     available: true,
     Icon: Database,
+  },
+  {
+    key: 'schema-config',
+    title: 'Schema Config',
+    desc: 'Configure PostgreSQL schema, tables, PK/FK reassignment, and UUID generation.',
+    href: '/schema-config',
+    available: true,
+    Icon: SlidersHorizontal,
   },
   {
     key: 'export-import',
@@ -59,7 +67,7 @@ export default function ModuleMenu() {
             <p className="text-sm text-gray-500 mt-1">Choose the module you want to work on.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
             {modules.map(({ key, title, desc, href, available, Icon }) => {
               const content = (
                 <div

@@ -46,13 +46,17 @@ export default function ConnectionBadges() {
 
    if (!mysql && !pg) return null;
 
+   const isSchemaConfigPage = router.pathname === '/schema-config' || router.pathname === '/schema-generate';
+   const badges = isSchemaConfigPage ? [pg] : [mysql, pg];
+
    const goToConnectionPanel = (panel: 'mysql' | 'pg') => {
-      router.push({ pathname: '/migration', query: { openConn: panel } });
+      const pathname = isSchemaConfigPage ? '/schema-config' : '/migration';
+      router.push({ pathname, query: { openConn: panel } });
    };
 
    return (
       <div className="flex items-center gap-2">
-         {[mysql, pg].map(
+         {badges.map(
             (b) =>
                b && (
                   <button

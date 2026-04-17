@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Clock3, FileText, Moon, RotateCcw, Sun, X } from 'lucide-react';
+import { useRouter } from 'next/router';
 import axios from 'axios';
 import { tableStorageKey } from '../lib/mapping-utils';
 
@@ -13,6 +14,7 @@ interface AuditLogEntry {
 }
 
 export default function FooterBar() {
+  const router = useRouter();
   const [now, setNow] = useState(new Date());
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -33,6 +35,7 @@ export default function FooterBar() {
   const [logStart, setLogStart] = useState('');
   const [logEnd, setLogEnd] = useState('');
   const isTemplateSnapshotFile = (file: string) => /^template_\d{14}\.json$/.test(file);
+  const activeConfigModule = router.pathname === '/schema-config' ? 'schema-config' : 'migration';
 
   useEffect(() => {
     setMounted(true);
@@ -63,7 +66,7 @@ export default function FooterBar() {
 
   const loadFiles = async (mode: 'config' | 'template' = restoreMode) => {
     try {
-      const params = mode === 'template' ? undefined : { module: 'migration' };
+      const params = mode === 'template' ? undefined : { module: activeConfigModule };
       const { data } = await axios.get('/api/schema-config-list', { params });
       const list = (data.files ?? []) as string[];
       setFiles(list);
@@ -93,7 +96,7 @@ export default function FooterBar() {
   ) => {
     try {
       await axios.post('/api/audit-event', {
-        module: 'migration',
+        module: activeConfigModule,
         action,
         source: 'client',
         level,
@@ -205,6 +208,11 @@ export default function FooterBar() {
     try {
       const { data } = await axios.get('/api/schema-config-load', { params: { file: selectedFile } });
       const snapshot = data.snapshot as Record<string, unknown>;
+      if (restoreMode === 'config' && activeConfigModule === 'schema-config') {
+        setMessage(`Restored from ${selectedFile}`);
+        window.location.href = `/schema-config?restoreFile=${encodeURIComponent(selectedFile)}`;
+        return;
+      }
       applySnapshotToLocalStorage(snapshot);
       await logClientActivity(
         restoreMode === 'template' ? 'restore_template_success' : 'restore_config_success',
@@ -378,7 +386,7 @@ export default function FooterBar() {
             <p className="text-xs text-gray-500 dark:text-slate-400">
               {restoreMode === 'template'
                 ? 'Load template snapshot (`template_yyyymmddHHmmss.json`) from `/public/uploads/schema`.'
-                : 'Load migration config snapshot from `/public/uploads/schema`.'}
+                : `Load ${activeConfigModule} config snapshot from \`/public/uploads/schema\`.`}
             </p>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               <div className="min-w-0 flex-1">
@@ -410,7 +418,7 @@ export default function FooterBar() {
             <p className="text-xs text-gray-400 dark:text-slate-500">
               {restoreMode === 'template'
                 ? 'This restores complete Phase 1-3 template snapshot state and opens Phase 4.'
-                : 'This will overwrite current local session values for Migration module.'}
+                : `This will overwrite current local session values for ${activeConfigModule} module.`}
             </p>
           </div>
         </div>
