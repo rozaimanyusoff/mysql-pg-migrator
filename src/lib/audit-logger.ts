@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { LOGS_DIR as _LOGS_DIR } from './paths';
 
 export interface AuditLogEntry {
   timestamp: string;
@@ -10,7 +11,7 @@ export interface AuditLogEntry {
   details?: Record<string, unknown>;
 }
 
-const LOG_DIR = path.join(process.cwd(), 'public', 'uploads', 'logs');
+const LOG_DIR = _LOGS_DIR;
 
 function pad2(value: number): string {
   return value.toString().padStart(2, '0');

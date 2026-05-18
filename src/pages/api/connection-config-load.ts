@@ -1,8 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import fs from 'fs/promises';
 import path from 'path';
-
-const CONFIG_DIR = path.join(process.cwd(), 'public', 'uploads', 'config');
+import { CONFIG_DIR } from '../../lib/paths';
 
 function safeFile(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, '');

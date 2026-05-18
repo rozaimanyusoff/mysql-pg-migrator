@@ -1,8 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import fs from 'fs/promises';
-import path from 'path';
-
-const CONFIG_DIR = path.join(process.cwd(), 'public', 'uploads', 'config');
+import { CONFIG_DIR } from '../../lib/paths';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

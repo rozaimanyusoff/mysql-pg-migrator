@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { PgConnectionConfig } from '../../lib/types';
 import { logApiActivity } from '../../lib/audit-api';
+import { CONFIG_DIR } from '../../lib/paths';
 
 interface ModuleDbConfig {
   module: string;
@@ -23,7 +24,6 @@ interface ModuleDbConfig {
   };
 }
 
-const CONFIG_DIR = path.join(process.cwd(), 'public', 'uploads', 'config');
 
 function safeModuleName(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_');

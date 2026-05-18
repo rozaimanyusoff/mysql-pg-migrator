@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import { Toaster } from 'sonner';
 import FooterBar from '../components/FooterBar';
+import { AuthProvider } from '../lib/auth-context';
 import '../styles/globals.css';
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -24,18 +25,18 @@ export default function App({ Component, pageProps }: AppProps) {
     };
 
     void logRoute(window.location.pathname);
-    const handler = (url: string) => {
-      void logRoute(url);
-    };
+    const handler = (url: string) => { void logRoute(url); };
     router.events.on('routeChangeComplete', handler);
     return () => router.events.off('routeChangeComplete', handler);
   }, [router.events]);
 
   return (
-    <div className="min-h-screen pb-12">
-      <Component {...pageProps} />
-      <Toaster position="top-right" richColors closeButton />
-      <FooterBar />
-    </div>
+    <AuthProvider>
+      <div className="min-h-screen pb-12">
+        <Component {...pageProps} />
+        <Toaster position="top-right" richColors closeButton />
+        <FooterBar />
+      </div>
+    </AuthProvider>
   );
 }

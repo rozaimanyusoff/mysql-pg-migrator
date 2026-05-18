@@ -2,8 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import fs from 'fs/promises';
 import path from 'path';
 import { PgConnectionConfig } from '../../lib/types';
-
-const CONFIG_DIR = path.join(process.cwd(), 'public', 'uploads', 'config');
+import { CONFIG_DIR } from '../../lib/paths';
 
 function sanitize(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
