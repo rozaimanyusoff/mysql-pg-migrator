@@ -2,6 +2,36 @@
 
 ---
 
+## 2026-05-19
+- **implement** — Migration module v2: full replacement for old multi-page migration flow
+  - New lib layer `src/lib/migv2/`: `types.ts`, `type-map.ts`, `job-store.ts`, `run-store.ts`, `runner.ts`
+  - Cross-DB support: MySQL ↔ PostgreSQL in both directions (source and target are independently configurable)
+  - Serial → UUID conversion: deterministic UUID derived from `sha256(tableNamespace||sourceId)` — no pre-pass needed; FK columns resolved on-the-fly using `fkRef` config
+  - Job management: save/load named jobs (JSON in `data/migv2/jobs/`); jobs store connection meta (no passwords) + full table map
+  - Chunked streaming execution via advance loop (8s per advance, 500 rows/chunk); run state persisted to `data/migv2/runs/`
+  - Rollback: DELETE by stored inserted PKs (up to 5K/table) or TRUNCATE fallback when overflow
+  - Export to `migration.md`: full run report with table mapping, column details, rollback SQL
+  - API routes under `src/pages/api/migv2/`: `tables.ts`, `columns.ts`, `jobs/index.ts`, `jobs/[id].ts`, `run/start.ts`, `run/advance.ts`, `run/status.ts`, `run/rollback.ts`, `export-md.ts`
+  - Page `src/pages/migration.tsx` complete rewrite — connection panel (source + target), source table tree with schema grouping, column mapping editor (per-column type/conversion/FK-ref), Jobs tab, Execute tab with per-table progress bars + live log stream
+  - `src/pages/mapping.tsx` and `src/pages/migrate.tsx` → redirect to `/migration`
+  - `src/pages/index.tsx` nav card description updated
+  - Status: done
+
+- **implement** — Schema Explorer: full replacement for Schema Config module
+  - New page `src/pages/schema-explorer.tsx` — connect to any PostgreSQL or MySQL DB; 3-panel layout (connection bar, schema/table tree, tabbed right panel)
+  - Left panel: schema tree with table count, row count badges, per-table ERD toggle (Network icon), per-schema "add all to ERD" action, live search filter
+  - Columns tab: full column table with type, nullable, default, PK/FK/UNI badges, FK reference, comment
+  - ERD tab: `@xyflow/react` canvas with custom `TableNode` nodes (columns listed inline), animated FK edges, Controls + MiniMap + fit-view
+  - Export tab: pick SQL (CREATE TABLE migration) or XLSX (data model, one sheet per table + summary); downloads via blob
+  - API routes under `src/pages/api/schema-explorer/`: `schemas.ts`, `tables.ts`, `columns.ts`, `export.ts`
+  - Shared connection helper `src/lib/explorer-db.ts` — `withPg` / `withMysql` wrappers for ad-hoc connections
+  - `src/pages/schema-config.tsx` replaced with redirect to `/schema-explorer`
+  - `src/pages/index.tsx` nav card updated (Schema Explorer, Network icon, new href)
+  - Dependency added: `@xyflow/react`
+  - Status: done
+
+---
+
 ## 2026-04-10
 - **implement** — Initial commit: MySQL to PostgreSQL migration tool
   - Base Next.js project scaffold

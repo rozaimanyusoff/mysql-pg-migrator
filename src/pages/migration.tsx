@@ -1,1679 +1,914 @@
-import React, { useState, useEffect, useRef } from 'react';
+'use client';
 import Head from 'next/head';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { toast } from 'sonner';
-import { InspectionResult, MigrationConfig, PgConnectionConfig } from '../lib/types';
-import { initializeMigrationConfig, mergePhase1Mappings } from '../lib/mapping-utils';
-import { LoadingSpinner } from '../components/StateComponents';
-import PgHelpPopover from '../components/PgHelpPopover';
-import { Database, ChevronRight, Plug, PlugZap, RotateCcw, ServerCrash, HelpCircle, X, Trash2, PlusCircle, BadgeCheck } from 'lucide-react';
+import { randomUUID } from 'crypto';
+import {
+  ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight,
+  Database, Download, Eye, EyeOff, FileText, Layers, Loader2,
+  Play, Plus, RefreshCw, RotateCcw, Save, Search, Settings2,
+  Table2, Trash2, X, AlertTriangle, CheckCircle2, Clock,
+  Plug, Unplug, Network,
+} from 'lucide-react';
+import { useAuth } from '../lib/auth-context';
+import { suggestTargetType, isPkLikeSerial } from '../lib/migv2/type-map';
+import type { MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigRun, DbType, IdConversion } from '../lib/migv2/types';
+import type { MigTableInfo } from './api/migv2/tables';
+import type { MigColumnInfo } from './api/migv2/columns';
 
-interface ConnForm {
-  host: string; port: string; user: string; password: string; database: string;
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function newId(): string {
+  return Math.random().toString(36).slice(2, 10);
 }
 
-const DEFAULT_FORM: ConnForm = {
-  host: process.env.NEXT_PUBLIC_MYSQL_HOST || 'localhost',
-  port: '3306',
-  user: '',
-  password: '',
-  database: '',
+function getToken(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem('auth_token') ?? '';
+}
+
+function authHeaders() {
+  return { Authorization: `Bearer ${getToken()}` };
+}
+
+const EMPTY_CONN: MigConn = {
+  type: 'postgresql', host: 'localhost', port: 5432, database: '', username: '', password: '',
 };
 
-const CREDS_KEY = 'mysql_connection_creds';
-const CONN_STATE_KEY = 'mysql_connection_state';
-const INSPECT_RESULT_KEY = 'inspection_result';
-const TABLE_STATUS_KEY = 'mysql_table_status';
-const PG_CONN_KEY = 'pg_connection';
-const PHASE2_REVIEWED_KEY = 'phase2_schema_reviewed';
-const PHASE2_REVIEWED_STATE_KEY = 'phase2_schema_reviewed_state';
-const PHASE3_TEMPLATE_READY_KEY = 'phase3_template_ready';
-const HIDDEN_DBS_KEY = 'phase1_hidden_databases';
+// ── Sub-components ────────────────────────────────────────────────────────────
 
-const DEFAULT_PG: PgConnectionConfig = {
-  host: 'localhost',
-  port: 5432,
-  user: 'postgres',
-  password: '',
-  database: '',
-  ssl: false,
-};
+function ConnForm({
+  label, conn, onChange, connected, onConnect, onDisconnect, connecting, error,
+}: {
+  label: string;
+  conn: MigConn;
+  onChange: (c: MigConn) => void;
+  connected: boolean;
+  onConnect: () => void;
+  onDisconnect: () => void;
+  connecting: boolean;
+  error: string;
+}) {
+  const [showPw, setShowPw] = useState(false);
 
-export default function Phase1() {
-  const router = useRouter();
-  const [form, setForm] = useState<ConnForm>(DEFAULT_FORM);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [results, setResults] = useState<InspectionResult[]>([]);
-  const [selectedTable, setSelectedTable] = useState<string | null>(null); // "database::tableName"
-  const [databases, setDatabases] = useState<string[]>([]);
-  const [dbLoading, setDbLoading] = useState(false);
-  const [dbError, setDbError] = useState<string | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [doneTables, setDoneTables] = useState<Set<string>>(new Set());
-  const [excludedTables, setExcludedTables] = useState<Set<string>>(new Set());
-  const [phase2Reviewed, setPhase2Reviewed] = useState<Set<string>>(new Set());
-  const [phase2ReviewedState, setPhase2ReviewedState] = useState<Record<string, string>>({});
-  const [phase3TemplateReady, setPhase3TemplateReady] = useState<{ ready?: boolean; readyAt?: string; confirmedCount?: number; assignedKeys?: string[] } | null>(null);
-  const [migrateCompletedKeys, setMigrateCompletedKeys] = useState<Set<string>>(new Set());
-  const [mappingConfig, setMappingConfig] = useState<MigrationConfig | null>(null);
-  const [hiddenDatabases, setHiddenDatabases] = useState<Set<string>>(new Set());
-  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  return (
+    <div className="flex-1 min-w-0 p-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">{label}</span>
+        {connected
+          ? <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium"><Check size={10} /> Connected</span>
+          : error ? <span className="text-[11px] text-rose-500 truncate max-w-[120px]" title={error}>{error}</span> : null}
+      </div>
 
-  // PostgreSQL connection
-  const [pgForm, setPgForm] = useState<PgConnectionConfig>(DEFAULT_PG);
-  const [pgConnected, setPgConnected] = useState(false);
-  const [pgSchemas, setPgSchemas] = useState<string[]>([]);
-  const [pgConnecting, setPgConnecting] = useState(false);
-  const [pgConnError, setPgConnError] = useState<string | null>(null);
+      {/* DB type toggle */}
+      <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-600 mb-2 w-fit">
+        {(['postgresql', 'mysql'] as DbType[]).map(t => (
+          <button key={t} disabled={connected}
+            onClick={() => onChange({ ...conn, type: t, port: t === 'postgresql' ? 5432 : 3306 })}
+            className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${conn.type === t ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-700 text-gray-500 dark:text-slate-400'} disabled:cursor-default`}>
+            {t === 'postgresql' ? 'PG' : 'MySQL'}
+          </button>
+        ))}
+      </div>
 
-  // PG help popover
-  const [showPgHelp, setShowPgHelp] = useState(false);
-  const [pgHelpPos, setPgHelpPos] = useState({ top: 0, left: 0 });
-  const pgHelpBtnRef = useRef<HTMLButtonElement>(null);
+      <div className="grid grid-cols-2 gap-1.5 mb-1.5">
+        <input value={conn.host} disabled={connected} placeholder="host"
+          onChange={e => onChange({ ...conn, host: e.target.value })}
+          className="col-span-2 px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
+        <input value={conn.port} disabled={connected} placeholder="port" type="number"
+          onChange={e => onChange({ ...conn, port: Number(e.target.value) })}
+          className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
+        <input value={conn.database} disabled={connected} placeholder="database"
+          onChange={e => onChange({ ...conn, database: e.target.value })}
+          className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
+        <input value={conn.username} disabled={connected} placeholder="user"
+          onChange={e => onChange({ ...conn, username: e.target.value })}
+          className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
+        <div className="relative">
+          <input type={showPw ? 'text' : 'password'} value={conn.password} disabled={connected} placeholder="password"
+            onChange={e => onChange({ ...conn, password: e.target.value })}
+            className="w-full pl-2 pr-7 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
+          <button type="button" onClick={() => setShowPw(v => !v)} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400">
+            {showPw ? <EyeOff size={11} /> : <Eye size={11} />}
+          </button>
+        </div>
+      </div>
 
-  // Connection panel (badge click)
-  const [showConnPanel, setShowConnPanel] = useState<'mysql' | 'pg' | null>(null);
-  const connPanelRef = useRef<HTMLDivElement>(null);
-  const headerRef = useRef<HTMLElement>(null);
-  const mysqlBadgeRef = useRef<HTMLButtonElement>(null);
-  const pgBadgeRef = useRef<HTMLButtonElement>(null);
-  const [connPanelPos, setConnPanelPos] = useState({ left: 0, top: 0 });
-
-  // Reset confirmation dialog
-  const [showResetDialog, setShowResetDialog] = useState(false);
-  const [connConfigFiles, setConnConfigFiles] = useState<string[]>([]);
-  const [selectedConnConfigFile, setSelectedConnConfigFile] = useState('');
-  const [connConfigName, setConnConfigName] = useState('default');
-  const [connConfigLoading, setConnConfigLoading] = useState(false);
-  const [connConfigMessage, setConnConfigMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!error) return;
-    window.alert(error);
-    setError(null);
-  }, [error]);
-
-  useEffect(() => {
-    if (!dbError) return;
-    window.alert(dbError);
-    setDbError(null);
-  }, [dbError]);
-
-  useEffect(() => {
-    if (!pgConnError) return;
-    window.alert(pgConnError);
-    setPgConnError(null);
-  }, [pgConnError]);
-
-  useEffect(() => {
-    if (!connConfigMessage) return;
-    if (connConfigMessage.startsWith('Saved:') || connConfigMessage.startsWith('Loaded:')) {
-      toast.success(connConfigMessage);
-    } else {
-      window.alert(connConfigMessage);
-    }
-    setConnConfigMessage(null);
-  }, [connConfigMessage]);
-
-  const syncModuleConfig = async (
-    mysqlOverride?: {
-      host: string;
-      port: string;
-      user: string;
-      password: string;
-      database: string;
-      connected: boolean;
-      databases: string[];
-    },
-    pgOverride?: {
-      form: PgConnectionConfig;
-      connected: boolean;
-      schemas: string[];
-    }
-  ) => {
-    try {
-      await axios.post('/api/module-config?module=migration', {
-        module: 'migration',
-        mysql: mysqlOverride ?? {
-          host: form.host,
-          port: form.port,
-          user: form.user,
-          password: form.password,
-          database: form.database,
-          connected,
-          databases,
-        },
-        pg: pgOverride ?? {
-          form: pgForm,
-          connected: pgConnected,
-          schemas: pgSchemas,
-        },
-      });
-    } catch {
-      // non-blocking
-    }
-  };
-
-  const loadConnectionConfigFiles = async () => {
-    try {
-      const { data } = await axios.get('/api/connection-config-list', { params: { module: 'migration' } });
-      const files = (data.files ?? []) as string[];
-      setConnConfigFiles(files);
-      if (!selectedConnConfigFile && files.length > 0) setSelectedConnConfigFile(files[0]);
-    } catch {
-      // ignore
-    }
-  };
-
-  const handleSaveConnectionConfig = async () => {
-    setConnConfigLoading(true);
-    setConnConfigMessage(null);
-    try {
-      const { data } = await axios.post('/api/connection-config-save', {
-        module: 'migration',
-        name: connConfigName,
-        mysql: {
-          host: form.host,
-          port: form.port,
-          user: form.user,
-          password: form.password,
-          database: form.database,
-          connected,
-          databases,
-        },
-        pg: {
-          form: pgForm,
-          connected: pgConnected,
-          schemas: pgSchemas,
-        },
-      });
-      setConnConfigMessage(`Saved: ${data.fileName}`);
-      await loadConnectionConfigFiles();
-    } catch (err: unknown) {
-      setConnConfigMessage(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
-    } finally {
-      setConnConfigLoading(false);
-    }
-  };
-
-  const handleLoadConnectionConfig = async () => {
-    if (!selectedConnConfigFile) return;
-    setConnConfigLoading(true);
-    setConnConfigMessage(null);
-    try {
-      const { data } = await axios.get('/api/connection-config-load', { params: { file: selectedConnConfigFile } });
-      const cfg = data.config as {
-        mysql?: { host?: string; port?: string; user?: string; password?: string; database?: string; connected?: boolean; databases?: string[] };
-        pg?: { form?: PgConnectionConfig; connected?: boolean; schemas?: string[] };
-      };
-
-      if (cfg.mysql) {
-        const mysqlForm = {
-          host: cfg.mysql.host ?? DEFAULT_FORM.host,
-          port: cfg.mysql.port ?? DEFAULT_FORM.port,
-          user: cfg.mysql.user ?? '',
-          password: cfg.mysql.password ?? '',
-          database: cfg.mysql.database ?? '',
-        };
-        setForm(mysqlForm);
-        setConnected(Boolean(cfg.mysql.connected));
-        setDatabases(cfg.mysql.databases ?? []);
-        localStorage.setItem(CREDS_KEY, JSON.stringify({
-          host: mysqlForm.host,
-          port: mysqlForm.port,
-          user: mysqlForm.user,
-          password: mysqlForm.password,
-        }));
-        localStorage.setItem(CONN_STATE_KEY, JSON.stringify({
-          databases: cfg.mysql.databases ?? [],
-          database: mysqlForm.database,
-        }));
-      }
-      if (cfg.pg?.form) {
-        setPgForm(cfg.pg.form);
-        setPgConnected(Boolean(cfg.pg.connected));
-        setPgSchemas(cfg.pg.schemas ?? []);
-        localStorage.setItem(PG_CONN_KEY, JSON.stringify({
-          form: cfg.pg.form,
-          connected: Boolean(cfg.pg.connected),
-          schemas: cfg.pg.schemas ?? [],
-        }));
-      }
-      setConnConfigMessage(`Loaded: ${selectedConnConfigFile}`);
-      void syncModuleConfig(
-        {
-          host: cfg.mysql?.host ?? form.host,
-          port: cfg.mysql?.port ?? form.port,
-          user: cfg.mysql?.user ?? form.user,
-          password: cfg.mysql?.password ?? form.password,
-          database: cfg.mysql?.database ?? form.database,
-          connected: Boolean(cfg.mysql?.connected ?? connected),
-          databases: cfg.mysql?.databases ?? databases,
-        },
-        {
-          form: cfg.pg?.form ?? pgForm,
-          connected: Boolean(cfg.pg?.connected ?? pgConnected),
-          schemas: cfg.pg?.schemas ?? pgSchemas,
-        }
-      );
-    } catch (err: unknown) {
-      setConnConfigMessage(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
-    } finally {
-      setConnConfigLoading(false);
-    }
-  };
-
-  // Restore saved credentials + connection state on mount
-  useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (connPanelRef.current && !connPanelRef.current.contains(e.target as Node)) {
-        setShowConnPanel(null);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, []);
-
-  const positionConnPanel = (panel: 'mysql' | 'pg') => {
-    const headerEl = headerRef.current;
-    const badgeEl = panel === 'mysql' ? mysqlBadgeRef.current : pgBadgeRef.current;
-    if (!headerEl || !badgeEl) return;
-
-    const headerRect = headerEl.getBoundingClientRect();
-    const badgeRect = badgeEl.getBoundingClientRect();
-    const panelWidth = Math.min(window.innerWidth * 0.92, 560);
-    const margin = 8;
-    const top = badgeRect.bottom - headerRect.top + 8;
-    const preferredLeft =
-      panel === 'mysql'
-        ? badgeRect.left - headerRect.left
-        : badgeRect.right - headerRect.left - panelWidth;
-    const left = Math.max(margin, Math.min(preferredLeft, headerRect.width - panelWidth - margin));
-
-    setConnPanelPos({ left, top });
-  };
-
-  const toggleConnPanel = (panel: 'mysql' | 'pg') => {
-    setShowConnPanel((current) => {
-      if (current === panel) return null;
-      positionConnPanel(panel);
-      return panel;
-    });
-  };
-
-  useEffect(() => {
-    if (!showConnPanel) return;
-    const onResize = () => positionConnPanel(showConnPanel);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [showConnPanel]);
-
-  useEffect(() => {
-    if (!router.isReady) return;
-    const openConn = router.query.openConn;
-    if (openConn !== 'mysql' && openConn !== 'pg') return;
-
-    requestAnimationFrame(() => {
-      positionConnPanel(openConn);
-      setShowConnPanel(openConn);
-    });
-
-    router.replace('/migration', undefined, { shallow: true });
-  }, [router.isReady, router.query.openConn]);
-
-  useEffect(() => {
-    const restore = async () => {
-      try {
-        const rawCreds = localStorage.getItem(CREDS_KEY);
-        if (rawCreds) {
-          const saved = JSON.parse(rawCreds) as Partial<ConnForm>;
-          setForm((f) => ({ ...f, ...saved }));
-        }
-
-        const rawState = localStorage.getItem(CONN_STATE_KEY);
-        if (rawState) {
-          const state = JSON.parse(rawState) as { databases: string[]; database: string };
-          setDatabases(state.databases ?? []);
-          setConnected(state.databases?.length > 0);
-          setForm((f) => ({ ...f, database: state.database ?? '' }));
-        }
-
-        const rawResult = localStorage.getItem(INSPECT_RESULT_KEY);
-        if (rawResult) {
-          const parsed = JSON.parse(rawResult);
-          // Support both old single-result format and new array format
-          const loaded: InspectionResult[] = Array.isArray(parsed) ? parsed : [parsed];
-          setResults(loaded);
-          if (loaded[0]?.tables.length > 0) {
-            setSelectedTable(`${loaded[0].database}::${loaded[0].tables[0].name}`);
-          }
-        }
-
-        const rawHiddenDbs = localStorage.getItem(HIDDEN_DBS_KEY);
-        if (rawHiddenDbs) {
-          try {
-            setHiddenDatabases(new Set(JSON.parse(rawHiddenDbs) as string[]));
-          } catch {
-            setHiddenDatabases(new Set());
-          }
-        }
-
-        const rawStatus = localStorage.getItem(TABLE_STATUS_KEY);
-        if (rawStatus) {
-          const status = JSON.parse(rawStatus) as { done: string[]; excluded: string[] };
-          setDoneTables(new Set(status.done ?? []));
-          setExcludedTables(new Set(status.excluded ?? []));
-        }
-
-        const rawReviewed = localStorage.getItem(PHASE2_REVIEWED_KEY);
-        if (rawReviewed) {
-          try {
-            const reviewed = JSON.parse(rawReviewed) as string[];
-            setPhase2Reviewed(new Set(reviewed));
-          } catch {
-            setPhase2Reviewed(new Set());
-          }
-        }
-        const rawReviewedState = localStorage.getItem(PHASE2_REVIEWED_STATE_KEY);
-        if (rawReviewedState) {
-          try {
-            setPhase2ReviewedState(JSON.parse(rawReviewedState) as Record<string, string>);
-          } catch {
-            setPhase2ReviewedState({});
-          }
-        }
-        const rawTemplateReady = localStorage.getItem(PHASE3_TEMPLATE_READY_KEY);
-        if (rawTemplateReady) {
-          try {
-            setPhase3TemplateReady(JSON.parse(rawTemplateReady) as { ready?: boolean; readyAt?: string; confirmedCount?: number; assignedKeys?: string[] });
-          } catch {
-            setPhase3TemplateReady(null);
-          }
-        }
-
-        const rawConfig = localStorage.getItem('migration_config');
-        if (rawConfig) {
-          try {
-            setMappingConfig(JSON.parse(rawConfig) as MigrationConfig);
-          } catch {
-            setMappingConfig(null);
-          }
-        }
-
-        const rawPg = localStorage.getItem(PG_CONN_KEY);
-        if (rawPg) {
-          const saved = JSON.parse(rawPg) as { form: PgConnectionConfig; connected: boolean; schemas?: string[] };
-          setPgForm(saved.form);
-          if (saved.connected) {
-            setPgConnected(true);
-            setPgSchemas(saved.schemas ?? []);
-          }
-        }
-      } catch { /* ignore */ }
-
-      // Restore from persisted module config file (server-side) if exists
-      try {
-        const { data } = await axios.get('/api/module-config?module=migration');
-        const cfg = data?.config as {
-          mysql: { host: string; port: string; user: string; password: string; database: string; connected: boolean; databases: string[] };
-          pg: { form: PgConnectionConfig; connected: boolean; schemas: string[] };
-        };
-        if (!cfg) return;
-
-        setForm({
-          host: cfg.mysql.host || DEFAULT_FORM.host,
-          port: cfg.mysql.port || DEFAULT_FORM.port,
-          user: cfg.mysql.user || '',
-          password: cfg.mysql.password || '',
-          database: cfg.mysql.database || '',
-        });
-        setConnected(Boolean(cfg.mysql.connected));
-        setDatabases(cfg.mysql.databases ?? []);
-
-        const rawPgLocal = localStorage.getItem(PG_CONN_KEY);
-        let localPgSchemas: string[] = [];
-        if (rawPgLocal) {
-          try {
-            const localPg = JSON.parse(rawPgLocal) as { schemas?: string[] };
-            localPgSchemas = localPg.schemas ?? [];
-          } catch {
-            localPgSchemas = [];
-          }
-        }
-        const rawConfig = localStorage.getItem('migration_config');
-        let configSchemas: string[] = [];
-        if (rawConfig) {
-          try {
-            const parsed = JSON.parse(rawConfig) as MigrationConfig;
-            configSchemas = parsed.tables.map((t) => t.pgSchema).filter(Boolean);
-          } catch {
-            configSchemas = [];
-          }
-        }
-        const mergedSchemas = [...new Set([...(cfg.pg?.schemas ?? []), ...localPgSchemas, ...configSchemas])];
-        const nextPgForm = cfg.pg?.form ?? DEFAULT_PG;
-        const nextPgConnected = Boolean(cfg.pg?.connected);
-        setPgForm(nextPgForm);
-        setPgConnected(nextPgConnected);
-        setPgSchemas(mergedSchemas);
-
-        localStorage.setItem(
-          CREDS_KEY,
-          JSON.stringify({
-            host: cfg.mysql.host || DEFAULT_FORM.host,
-            port: cfg.mysql.port || DEFAULT_FORM.port,
-            user: cfg.mysql.user || '',
-            password: cfg.mysql.password || '',
-          })
-        );
-        localStorage.setItem(
-          CONN_STATE_KEY,
-          JSON.stringify({
-            databases: cfg.mysql.databases ?? [],
-            database: cfg.mysql.database || '',
-          })
-        );
-        localStorage.setItem(
-          PG_CONN_KEY,
-          JSON.stringify({
-            form: nextPgForm,
-            connected: nextPgConnected,
-            schemas: mergedSchemas,
-          })
-        );
-      } catch {
-        // no persisted config file yet
-      }
-    };
-
-    void restore();
-    void loadConnectionConfigFiles();
-    void loadLatestRunStatus();
-  }, []);
-
-  const loadLatestRunStatus = async () => {
-    try {
-      const { data } = await axios.get('/api/migration-run-status');
-      const runs = (data?.runs ?? []) as Array<{ id: string }>;
-      if (!runs.length) {
-        setMigrateCompletedKeys(new Set());
-        return;
-      }
-      const { data: runData } = await axios.get('/api/migration-run-status', { params: { id: runs[0].id } });
-      const run = runData?.run as { tables?: Array<{ key: string; status: 'pending' | 'running' | 'completed' | 'failed' }> } | undefined;
-      const next = new Set<string>();
-      for (const t of run?.tables ?? []) {
-        if (t.status === 'completed') next.add(t.key);
-      }
-      setMigrateCompletedKeys(next);
-    } catch {
-      // non-blocking
-    }
-  };
-
-  const handleConnect = async () => {
-    if (!form.host || !form.user) return;
-    setDbLoading(true);
-    setDbError(null);
-    setDatabases([]);
-    setForm((f) => ({ ...f, database: '' }));
-    try {
-      const { data } = await axios.post('/api/list-databases', {
-        host: form.host,
-        port: Number(form.port),
-        user: form.user,
-        password: form.password,
-      });
-      const dbs = data.databases ?? [];
-      setDatabases(dbs);
-      setConnected(true);
-      // Persist credentials + connection state
-      localStorage.setItem(
-        CREDS_KEY,
-        JSON.stringify({ host: form.host, port: form.port, user: form.user, password: form.password })
-      );
-      localStorage.setItem(
-        CONN_STATE_KEY,
-        JSON.stringify({ databases: dbs, database: '' })
-      );
-      void syncModuleConfig(
-        {
-          host: form.host,
-          port: form.port,
-          user: form.user,
-          password: form.password,
-          database: '',
-          connected: true,
-          databases: dbs,
-        },
-        undefined
-      );
-    } catch (err: unknown) {
-      const msg = axios.isAxiosError(err)
-        ? (err.response?.data?.error ?? err.message)
-        : String(err);
-      setDbError(msg);
-    } finally {
-      setDbLoading(false);
-    }
-  };
-
-  const handleDisconnect = () => {
-    setConnected(false);
-    setDatabases([]);
-    setResults([]);
-    setSelectedTable(null);
-    setForm((f) => ({ ...f, database: '' }));
-    setDbError(null);
-    localStorage.removeItem(CREDS_KEY);
-    localStorage.removeItem(CONN_STATE_KEY);
-    localStorage.removeItem(INSPECT_RESULT_KEY);
-    localStorage.removeItem(TABLE_STATUS_KEY);
-    localStorage.removeItem('migration_config');
-    setDoneTables(new Set());
-    setExcludedTables(new Set());
-    void syncModuleConfig(
-      {
-        host: form.host,
-        port: form.port,
-        user: form.user,
-        password: form.password,
-        database: '',
-        connected: false,
-        databases: [],
-      },
-      undefined
-    );
-  };
-
-  const handleInspect = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      const { data } = await axios.post('/api/inspect', {
-        host: form.host,
-        port: Number(form.port),
-        user: form.user,
-        password: form.password,
-        database: form.database,
-      });
-      const newResult = data.result as InspectionResult;
-      // Upsert: replace existing result for same database, add new otherwise
-      setResults((prev) => {
-        const filtered = prev.filter((r) => r.database !== newResult.database);
-        const updated = [...filtered, newResult];
-        localStorage.setItem(INSPECT_RESULT_KEY, JSON.stringify(updated));
-        return updated;
-      });
-      // Auto-select first table of the newly inspected database
-      if (newResult.tables.length > 0) {
-        setSelectedTable(`${newResult.database}::${newResult.tables[0].name}`);
-      }
-    } catch (err: unknown) {
-      const msg = axios.isAxiosError(err)
-        ? (err.response?.data?.error ?? err.message)
-        : String(err);
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const saveTableStatus = (done: Set<string>, excluded: Set<string>) => {
-    localStorage.setItem(
-      TABLE_STATUS_KEY,
-      JSON.stringify({ done: [...done], excluded: [...excluded] })
-    );
-  };
-
-  const handleAddToSelection = (compositeKey: string) => {
-    setDoneTables((prev) => {
-      const next = new Set(prev);
-      next.add(compositeKey);
-      const excl = new Set(excludedTables);
-      excl.delete(compositeKey);
-      setExcludedTables(excl);
-      saveTableStatus(next, excl);
-      return next;
-    });
-  };
-
-  const handleRemoveFromSelection = (compositeKey: string) => {
-    setDoneTables((prev) => {
-      const next = new Set(prev);
-      next.delete(compositeKey);
-      const excl = new Set(excludedTables);
-      excl.delete(compositeKey);
-      setExcludedTables(excl);
-      saveTableStatus(next, excl);
-      return next;
-    });
-  };
-
-  const handleRemoveDatabase = (database: string) => {
-    const updatedResults = results.filter((r) => r.database !== database);
-    localStorage.setItem(INSPECT_RESULT_KEY, JSON.stringify(updatedResults));
-    setResults(updatedResults);
-    // Keep done/excluded/reviewed status in storage.
-    // Removing a DB from current Phase 1 view should not erase prior mapping progress.
-    const prefix = `${database}::`;
-    // Move selection away if it was in the removed database
-    if (selectedTable?.startsWith(prefix)) {
-      const first = updatedResults[0];
-      setSelectedTable(first?.tables[0] ? `${first.database}::${first.tables[0].name}` : null);
-    }
-    setHiddenDatabases((prev) => {
-      if (!prev.has(database)) return prev;
-      const next = new Set(prev);
-      next.delete(database);
-      localStorage.setItem(HIDDEN_DBS_KEY, JSON.stringify([...next]));
-      return next;
-    });
-  };
-
-  const handleToggleDatabaseVisibility = (database: string) => {
-    setHiddenDatabases((prev) => {
-      const next = new Set(prev);
-      const isHidden = next.has(database);
-
-      if (isHidden) {
-        next.delete(database);
-      } else {
-        const currentlyVisible = results.filter((r) => !prev.has(r.database)).length;
-        // Keep at least one DB visible so table panel never becomes empty by accident.
-        if (currentlyVisible <= 1) return prev;
-        next.add(database);
-      }
-
-      localStorage.setItem(HIDDEN_DBS_KEY, JSON.stringify([...next]));
-      return next;
-    });
-  };
-
-  const handleConnectPG = async () => {
-    setPgConnecting(true);
-    setPgConnError(null);
-    try {
-      const { data } = await axios.post<{ schemas: string[] }>('/api/pg-schemas', pgForm);
-      setPgSchemas(data.schemas);
-      setPgConnected(true);
-      localStorage.setItem(PG_CONN_KEY, JSON.stringify({ form: pgForm, connected: true, schemas: data.schemas }));
-      void syncModuleConfig(undefined, { form: pgForm, connected: true, schemas: data.schemas });
-    } catch (err: unknown) {
-      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err);
-      setPgConnError(msg);
-      setPgConnected(false);
-    } finally {
-      setPgConnecting(false);
-    }
-  };
-
-  const handleDisconnectPG = () => {
-    setPgConnected(false);
-    setPgSchemas([]);
-    setPgConnError(null);
-    localStorage.removeItem(PG_CONN_KEY);
-    void syncModuleConfig(undefined, { form: pgForm, connected: false, schemas: [] });
-  };
-
-  const handleReset = () => {
-    // Clear all table_mappings_* keys
-    Object.keys(localStorage)
-      .filter((k) => k.startsWith('table_mappings_'))
-      .forEach((k) => localStorage.removeItem(k));
-    // Clear all known keys
-    [CREDS_KEY, CONN_STATE_KEY, INSPECT_RESULT_KEY, TABLE_STATUS_KEY, PG_CONN_KEY,
-      'migration_config', 'phase2_schema_reviewed', 'phase2_schema_reviewed_state'].forEach((k) => localStorage.removeItem(k));
-    // Reset all state
-    setForm(DEFAULT_FORM);
-    setConnected(false);
-    setDatabases([]);
-    setResults([]);
-    setSelectedTable(null);
-    setError(null);
-    setDbError(null);
-    setDoneTables(new Set());
-    setExcludedTables(new Set());
-    setPgForm(DEFAULT_PG);
-    setPgConnected(false);
-    setPgSchemas([]);
-    setPgConnError(null);
-    setShowResetDialog(false);
-    setShowConnPanel(null);
-    fetch('/api/module-config-reset', { method: 'POST' }).catch(() => undefined);
-  };
-
-  const handleProceedToPhase2 = () => {
-    if (results.length === 0) return;
-    const fresh = mergePhase1Mappings(initializeMigrationConfig(results));
-    const statusRaw = localStorage.getItem(TABLE_STATUS_KEY);
-    const status = statusRaw ? (JSON.parse(statusRaw) as { done?: string[]; excluded?: string[] }) : null;
-    const done = new Set(status?.done ?? []);
-    const excluded = new Set(status?.excluded ?? []);
-
-    const existingRaw = localStorage.getItem('migration_config');
-    let existing: MigrationConfig | null = null;
-    if (existingRaw) {
-      try {
-        existing = JSON.parse(existingRaw) as MigrationConfig;
-      } catch {
-        existing = null;
-      }
-    }
-    const keyOf = (t: { sourceDatabase?: string; mysqlName: string }) =>
-      t.sourceDatabase ? `${t.sourceDatabase}::${t.mysqlName}` : t.mysqlName;
-    const oldByKey = new Map<string, MigrationConfig['tables'][number]>();
-    if (existing) {
-      for (const t of existing.tables) {
-        oldByKey.set(keyOf(t), t);
-      }
-    }
-    const mergedTables = fresh.tables.map((t) => {
-      const key = keyOf(t);
-      const old = oldByKey.get(key) ?? (existing?.tables.find((x) => x.mysqlName === t.mysqlName));
-      const include = (done.has(key) || done.has(t.mysqlName)) && !(excluded.has(key) || excluded.has(t.mysqlName));
-      if (!old) return { ...t, include };
-      return {
-        ...t,
-        ...old,
-        mysqlName: t.mysqlName,
-        sourceDatabase: t.sourceDatabase,
-        include,
-      };
-    });
-
-    const config: MigrationConfig = {
-      ...(existing ?? fresh),
-      ...fresh,
-      id: existing?.id ?? fresh.id,
-      name: existing?.name ?? fresh.name,
-      sourceDatabase: existing?.sourceDatabase ?? fresh.sourceDatabase,
-      targetDatabase: existing?.targetDatabase ?? fresh.targetDatabase,
-      status: existing?.status ?? fresh.status,
-      createdAt: existing?.createdAt ?? fresh.createdAt,
-      updatedAt: new Date().toISOString(),
-      tables: mergedTables,
-    };
-
-    const pgRaw = localStorage.getItem(PG_CONN_KEY);
-    if (pgRaw) {
-      try {
-        const pg = JSON.parse(pgRaw) as { form?: PgConnectionConfig; connected?: boolean; schemas?: string[] };
-        const schemas = [...new Set([...(pg.schemas ?? []), ...config.tables.map((t) => t.pgSchema).filter(Boolean)])];
-        localStorage.setItem(PG_CONN_KEY, JSON.stringify({ ...pg, schemas }));
-      } catch {
-        // non-blocking
-      }
-    }
-
-    localStorage.setItem('migration_config', JSON.stringify(config));
-    setMappingConfig(config);
-    localStorage.setItem('inspection_result', JSON.stringify(results));
-    window.location.href = '/mapping';
-  };
-
-  const visibleResults = results.filter((r) => !hiddenDatabases.has(r.database));
-  const configureTotal = results.reduce((sum, r) => sum + r.tables.length, 0);
-  const allKeys = new Set<string>();
-  const allMysqlNames = new Set<string>();
-  for (const r of results) {
-    for (const t of r.tables) {
-      allKeys.add(`${r.database}::${t.name}`);
-      allMysqlNames.add(t.name);
-    }
-  }
-  const validDoneKeys = [...doneTables].filter((k) => {
-    const mysqlName = k.includes('::') ? k.split('::')[1] : k;
-    return allKeys.has(k) || allMysqlNames.has(mysqlName);
-  });
-  const resolvedSelectedKeys = [...new Set(validDoneKeys.map((k) => {
-    if (k.includes('::')) return k;
-    for (const r of results) {
-      const found = r.tables.find((t) => t.name === k);
-      if (found) return `${r.database}::${found.name}`;
-    }
-    return null;
-  }).filter((k): k is string => Boolean(k)))];
-  const configureDone = validDoneKeys.length;
-  const assignTotal = configureDone;
-  const assignDone = validDoneKeys.filter((k) => {
-    const mysqlName = k.includes('::') ? k.split('::')[1] : k;
-    return phase2Reviewed.has(k) || phase2Reviewed.has(mysqlName);
-  }).length;
-  const resolvedAssignKeys = [...new Set(
-    validDoneKeys
-      .filter((k) => {
-        const mysqlName = k.includes('::') ? k.split('::')[1] : k;
-        return phase2Reviewed.has(k) || phase2Reviewed.has(mysqlName);
-      })
-      .map((k) => {
-        if (k.includes('::')) return k;
-        for (const r of results) {
-          const found = r.tables.find((t) => t.name === k);
-          if (found) return `${r.database}::${found.name}`;
-        }
-        return null;
-      })
-      .filter((k): k is string => Boolean(k))
-  )];
-  const assignedTemplateKeySet = new Set(phase3TemplateReady?.assignedKeys ?? []);
-  const templateAssigned = phase3TemplateReady?.ready
-    ? (assignedTemplateKeySet.size > 0
-      ? resolvedAssignKeys.filter((k) => assignedTemplateKeySet.has(k)).length
-      : Math.min(phase3TemplateReady.confirmedCount ?? assignDone, assignDone))
-    : 0;
-  const templateScopeKeysForMigrate = phase3TemplateReady?.ready
-    ? (assignedTemplateKeySet.size > 0 ? resolvedAssignKeys.filter((k) => assignedTemplateKeySet.has(k)) : resolvedAssignKeys)
-    : [];
-  const migrateTotal = templateAssigned;
-  const migrateSuccess = Math.min(
-    templateScopeKeysForMigrate.filter((k) => migrateCompletedKeys.has(k)).length,
-    migrateTotal
+      {!connected
+        ? <button onClick={onConnect} disabled={connecting || !conn.host || !conn.username}
+            className="w-full inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+            {connecting ? <Loader2 size={11} className="animate-spin" /> : <Plug size={11} />}
+            {connecting ? 'Connecting…' : 'Connect'}
+          </button>
+        : <button onClick={onDisconnect}
+            className="w-full inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
+            <Unplug size={11} /> Disconnect
+          </button>}
+    </div>
   );
-  const mappingKey = (t: { sourceDatabase?: string; mysqlName: string }) =>
-    t.sourceDatabase ? `${t.sourceDatabase}::${t.mysqlName}` : t.mysqlName;
-  const mappingTableFor = (database: string, mysqlName: string) =>
-    mappingConfig?.tables.find((t) => mappingKey(t) === `${database}::${mysqlName}` || t.mysqlName === mysqlName);
-  const mappingSignature = (t: NonNullable<MigrationConfig['tables'][number]>) =>
-    JSON.stringify({
-      pgSchema: t.pgSchema,
-      pgName: t.pgName,
-      columns: t.columns.map((c) => ({
-        mysqlName: c.mysqlName,
-        pgName: c.pgName,
-        pgType: c.pgType,
-        include: c.include,
-        nullable: c.nullable,
-        isTargetOnly: c.isTargetOnly ?? false,
-        pkHandling: c.pkHandling ?? '',
-        description: c.description ?? '',
-      })),
-    });
-  const isPhase2Confirmed = (database: string, mysqlName: string) => {
-    const key = `${database}::${mysqlName}`;
-    const reviewed = phase2Reviewed.has(key) || phase2Reviewed.has(mysqlName);
-    if (!reviewed) return false;
-    const table = mappingTableFor(database, mysqlName);
-    if (!table) return reviewed;
-    const baseline = phase2ReviewedState[key] ?? phase2ReviewedState[mysqlName];
-    if (!baseline) return reviewed;
-    return baseline === mappingSignature(table);
-  };
-  const mappingDescription = (database: string, mysqlName: string) =>
-    mappingTableFor(database, mysqlName)?.description?.trim() || '';
-  const handleHomeNavigate = () => {
-    const ok = window.confirm('Return to module home and clear all local session data?');
-    if (!ok) return;
-    localStorage.clear();
-    window.location.href = '/';
-  };
-  const selectedKeySet = new Set(resolvedSelectedKeys);
-  const sourceGroups = visibleResults.map((r) => ({
-    database: r.database,
-    tables: r.tables.filter((t) => !selectedKeySet.has(`${r.database}::${t.name}`)),
-  })).filter((g) => g.tables.length > 0);
-  const selectedGroups = results.map((r) => ({
-    database: r.database,
-    tables: r.tables.filter((t) => selectedKeySet.has(`${r.database}::${t.name}`)),
-  })).filter((g) => g.tables.length > 0);
+}
 
-  useEffect(() => {
-    if (results.length === 0) return;
+// ── Status badge ──────────────────────────────────────────────────────────────
 
-    // Prune hidden dbs that no longer exist in current session.
-    const existing = new Set(results.map((r) => r.database));
-    const pruned = [...hiddenDatabases].filter((db) => existing.has(db));
-    if (pruned.length !== hiddenDatabases.size) {
-      const next = new Set(pruned);
-      setHiddenDatabases(next);
-      localStorage.setItem(HIDDEN_DBS_KEY, JSON.stringify([...next]));
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    pending: 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300',
+    running: 'bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300',
+    completed: 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300',
+    failed: 'bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300',
+    rolled_back: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
+  };
+  const Icon = status === 'running' ? Loader2
+    : status === 'completed' ? CheckCircle2
+    : status === 'failed' ? AlertTriangle
+    : status === 'rolled_back' ? RotateCcw
+    : Clock;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${map[status] ?? map.pending}`}>
+      <Icon size={10} className={status === 'running' ? 'animate-spin' : ''} />
+      {status}
+    </span>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
+type ActiveTab = 'mapping' | 'jobs' | 'execute';
+
+export default function Migration() {
+  useAuth();
+
+  // ── Connections ─────────────────────────────────────────────────────────────
+  const [srcConn, setSrcConn] = useState<MigConn>({ ...EMPTY_CONN, type: 'mysql', port: 3306 });
+  const [tgtConn, setTgtConn] = useState<MigConn>({ ...EMPTY_CONN, type: 'postgresql', port: 5432 });
+  const [srcConnected, setSrcConnected] = useState(false);
+  const [tgtConnected, setTgtConnected] = useState(false);
+  const [srcConnecting, setSrcConnecting] = useState(false);
+  const [tgtConnecting, setTgtConnecting] = useState(false);
+  const [srcError, setSrcError] = useState('');
+  const [tgtError, setTgtError] = useState('');
+
+  // ── Source tables ────────────────────────────────────────────────────────────
+  const [srcTables, setSrcTables] = useState<MigTableInfo[]>([]);
+  const [srcSearch, setSrcSearch] = useState('');
+  const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set());
+
+  // ── Mapping config ───────────────────────────────────────────────────────────
+  const [tableMaps, setTableMaps] = useState<TableMap[]>([]);
+  const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
+  const [colsCache, setColsCache] = useState<Record<string, MigColumnInfo[]>>({}); // source cols by "schema.table"
+  const [loadingCols, setLoadingCols] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  // ── Jobs ─────────────────────────────────────────────────────────────────────
+  const [jobs, setJobs] = useState<MigJobSummary[]>([]);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [saveJobName, setSaveJobName] = useState('');
+  const [saveJobDesc, setSaveJobDesc] = useState('');
+  const [savingJob, setSavingJob] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+
+  // ── Execution ────────────────────────────────────────────────────────────────
+  const [currentRun, setCurrentRun] = useState<MigRun | null>(null);
+  const [polling, setPolling] = useState(false);
+  const [rollingBack, setRollingBack] = useState(false);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // ── UI ────────────────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<ActiveTab>('mapping');
+
+  // ── Connect source ────────────────────────────────────────────────────────────
+
+  const connectSource = async () => {
+    setSrcConnecting(true); setSrcError('');
+    try {
+      const { data } = await axios.post<{ tables: MigTableInfo[] }>(
+        '/api/migv2/tables', srcConn, { headers: authHeaders() }
+      );
+      setSrcTables(data.tables);
+      setSrcConnected(true);
+      // Auto-expand first schema
+      const firstSchema = data.tables[0]?.schema;
+      if (firstSchema) setExpandedSchemas(new Set([firstSchema]));
+    } catch (err) {
+      setSrcError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Connection failed') : 'Connection failed');
+    } finally { setSrcConnecting(false); }
+  };
+
+  const disconnectSource = () => {
+    setSrcConnected(false); setSrcTables([]); setTableMaps([]); setColsCache({}); setSelectedMapId(null);
+  };
+
+  // ── Connect target ────────────────────────────────────────────────────────────
+
+  const connectTarget = async () => {
+    setTgtConnecting(true); setTgtError('');
+    try {
+      // Just test connection by fetching tables (we don't need them, but it validates creds)
+      await axios.post('/api/migv2/tables', tgtConn, { headers: authHeaders() });
+      setTgtConnected(true);
+    } catch (err) {
+      setTgtError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Connection failed') : 'Connection failed');
+    } finally { setTgtConnecting(false); }
+  };
+
+  const disconnectTarget = () => { setTgtConnected(false); };
+
+  // ── Source table selection ─────────────────────────────────────────────────────
+
+  const isTableIncluded = (schema: string, table: string) =>
+    tableMaps.some(m => m.source.schema === schema && m.source.table === table && m.include);
+
+  const toggleTable = async (schema: string, table: string) => {
+    const key = `${schema}.${table}`;
+    const existing = tableMaps.find(m => m.source.schema === schema && m.source.table === table);
+
+    if (existing) {
+      setTableMaps(prev => prev.map(m =>
+        m.source.schema === schema && m.source.table === table ? { ...m, include: !m.include } : m
+      ));
+      setDirty(true);
       return;
     }
 
-    // Ensure at least one DB remains visible.
-    if (visibleResults.length === 0) {
-      setHiddenDatabases(new Set());
-      localStorage.setItem(HIDDEN_DBS_KEY, JSON.stringify([]));
-      return;
-    }
-
-    // Keep selected table visible; if hidden, auto-select first visible table.
-    if (selectedTable) {
-      const [db] = selectedTable.split('::');
-      if (hiddenDatabases.has(db)) {
-        const firstVisible = visibleResults[0]?.tables[0];
-        setSelectedTable(firstVisible ? `${visibleResults[0].database}::${firstVisible.name}` : null);
+    // New table: load source columns and auto-map
+    setLoadingCols(true);
+    try {
+      let srcCols = colsCache[key];
+      if (!srcCols) {
+        const { data } = await axios.post<{ columns: MigColumnInfo[] }>(
+          '/api/migv2/columns', { conn: srcConn, tableKey: key }, { headers: authHeaders() }
+        );
+        srcCols = data.columns;
+        setColsCache(prev => ({ ...prev, [key]: srcCols }));
       }
-    } else {
-      const firstVisible = visibleResults[0]?.tables[0];
-      if (firstVisible) setSelectedTable(`${visibleResults[0].database}::${firstVisible.name}`);
-    }
-  }, [results, hiddenDatabases, selectedTable, visibleResults]);
+
+      const columns: ColumnMap[] = srcCols.map(c => {
+        const isPk = c.isPk;
+        const isSerial = isPk && (c.isAutoIncrement || isPkLikeSerial(c.rawType));
+        return {
+          sourceCol: c.name,
+          targetCol: c.name,
+          targetType: suggestTargetType(c.rawType, srcConn.type, tgtConn.type),
+          nullable: c.nullable,
+          defaultValue: c.defaultValue,
+          include: true,
+          conversion: isSerial ? 'serial_to_uuid' : 'keep',
+          fkRef: c.isFk && c.fkRef
+            ? c.fkRef.split('.').slice(0, 2).join('.')
+            : null,
+        };
+      });
+
+      // For UUID conversion: if PK column flagged serial_to_uuid, adjust type
+      columns.forEach(c => {
+        if (c.conversion === 'serial_to_uuid' && tgtConn.type === 'postgresql') {
+          c.targetType = 'UUID';
+        }
+      });
+
+      const newMap: TableMap = {
+        id: newId(),
+        include: true,
+        source: { schema, table },
+        target: { schema, table },
+        columns,
+        truncateBeforeMigrate: false,
+      };
+
+      setTableMaps(prev => [...prev, newMap]);
+      setSelectedMapId(newMap.id);
+      setDirty(true);
+    } catch { /* ignore */ } finally { setLoadingCols(false); }
+  };
+
+  // ── Column mapping editor helpers ──────────────────────────────────────────────
+
+  const selectedMap = tableMaps.find(m => m.id === selectedMapId) ?? null;
+
+  const updateTableMap = (id: string, patch: Partial<TableMap>) => {
+    setTableMaps(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m));
+    setDirty(true);
+  };
+
+  const updateColumn = (mapId: string, colIdx: number, patch: Partial<ColumnMap>) => {
+    setTableMaps(prev => prev.map(m => {
+      if (m.id !== mapId) return m;
+      const columns = m.columns.map((c, i) => i === colIdx ? { ...c, ...patch } : c);
+      return { ...m, columns };
+    }));
+    setDirty(true);
+  };
+
+  const addTargetOnlyColumn = (mapId: string) => {
+    setTableMaps(prev => prev.map(m => {
+      if (m.id !== mapId) return m;
+      const newCol: ColumnMap = {
+        sourceCol: null, targetCol: 'new_column',
+        targetType: tgtConn.type === 'postgresql' ? 'TEXT' : 'VARCHAR(255)',
+        nullable: true, defaultValue: null, include: true,
+        conversion: 'keep', fkRef: null,
+      };
+      return { ...m, columns: [...m.columns, newCol] };
+    }));
+    setDirty(true);
+  };
+
+  const removeColumn = (mapId: string, colIdx: number) => {
+    setTableMaps(prev => prev.map(m => {
+      if (m.id !== mapId) return m;
+      return { ...m, columns: m.columns.filter((_, i) => i !== colIdx) };
+    }));
+    setDirty(true);
+  };
+
+  // ── Source tree ─────────────────────────────────────────────────────────────────
+
+  const srcSchemas = useMemo(() => {
+    const schemas = [...new Set(srcTables.map(t => t.schema))];
+    return schemas.map(s => ({
+      schema: s,
+      tables: srcTables.filter(t => t.schema === s && (
+        !srcSearch || t.name.toLowerCase().includes(srcSearch.toLowerCase())
+      )),
+    })).filter(s => s.tables.length > 0 || !srcSearch);
+  }, [srcTables, srcSearch]);
+
+  const includedCount = tableMaps.filter(m => m.include).length;
+
+  // ── Jobs ──────────────────────────────────────────────────────────────────────
+
+  const loadJobs = async () => {
+    try {
+      const { data } = await axios.get<{ jobs: MigJobSummary[] }>('/api/migv2/jobs', { headers: authHeaders() });
+      setJobs(data.jobs);
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { void loadJobs(); }, []);
+
+  const handleSaveJob = async () => {
+    if (!saveJobName.trim()) return;
+    setSavingJob(true);
+    try {
+      const jobPayload: Partial<MigJob> = {
+        id: activeJobId ?? undefined,
+        name: saveJobName.trim(),
+        description: saveJobDesc.trim(),
+        sourceMeta: { type: srcConn.type, host: srcConn.host, port: srcConn.port, database: srcConn.database, username: srcConn.username },
+        targetMeta: { type: tgtConn.type, host: tgtConn.host, port: tgtConn.port, database: tgtConn.database, username: tgtConn.username },
+        tables: tableMaps,
+      };
+      const { data } = await axios.post<{ job: MigJob }>('/api/migv2/jobs', jobPayload, { headers: authHeaders() });
+      setActiveJobId(data.job.id);
+      setDirty(false);
+      setShowSaveDialog(false);
+      await loadJobs();
+    } catch { /* ignore */ } finally { setSavingJob(false); }
+  };
+
+  const handleLoadJob = async (id: string) => {
+    try {
+      const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${id}`, { headers: authHeaders() });
+      const job = data.job;
+      setSrcConn({ ...srcConn, type: job.sourceMeta.type, host: job.sourceMeta.host, port: job.sourceMeta.port, database: job.sourceMeta.database, username: job.sourceMeta.username });
+      setTgtConn({ ...tgtConn, type: job.targetMeta.type, host: job.targetMeta.host, port: job.targetMeta.port, database: job.targetMeta.database, username: job.targetMeta.username });
+      setTableMaps(job.tables);
+      setActiveJobId(id);
+      setSaveJobName(job.name);
+      setSaveJobDesc(job.description);
+      setDirty(false);
+      setActiveTab('mapping');
+    } catch { /* ignore */ }
+  };
+
+  const handleDeleteJob = async (id: string) => {
+    try {
+      await axios.delete(`/api/migv2/jobs/${id}`, { headers: authHeaders() });
+      await loadJobs();
+      if (activeJobId === id) { setActiveJobId(null); setSaveJobName(''); setSaveJobDesc(''); }
+    } catch { /* ignore */ }
+  };
+
+  // ── Migration execution ────────────────────────────────────────────────────────
+
+  const startMigration = async () => {
+    const includedTables = tableMaps.filter(t => t.include);
+    if (!includedTables.length) return;
+    setPolling(true);
+    try {
+      const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/start', {
+        source: srcConn,
+        target: tgtConn,
+        tables: includedTables,
+        jobId: activeJobId,
+        jobName: saveJobName || 'Migration',
+      }, { headers: authHeaders() });
+      setCurrentRun(data.run);
+      setActiveTab('execute');
+      if (data.run.status === 'running' || data.run.status === 'pending') {
+        scheduleAdvance(data.run.id);
+      } else {
+        setPolling(false);
+      }
+    } catch { setPolling(false); }
+  };
+
+  const scheduleAdvance = (runId: string) => {
+    setTimeout(() => void advanceMigration(runId), 1000);
+  };
+
+  const advanceMigration = async (runId: string) => {
+    try {
+      const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/advance', {
+        runId, source: srcConn, target: tgtConn,
+      }, { headers: authHeaders() });
+      setCurrentRun(data.run);
+      if (data.run.status === 'running') {
+        scheduleAdvance(runId);
+      } else {
+        setPolling(false);
+      }
+    } catch { setPolling(false); }
+  };
+
+  const handleRollback = async () => {
+    if (!currentRun) return;
+    setRollingBack(true);
+    try {
+      const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/rollback', {
+        runId: currentRun.id, target: tgtConn,
+      }, { headers: authHeaders() });
+      setCurrentRun(data.run);
+    } catch { /* ignore */ } finally { setRollingBack(false); }
+  };
+
+  const handleExportMd = () => {
+    if (!currentRun) return;
+    const a = document.createElement('a');
+    a.href = `/api/migv2/export-md?id=${currentRun.id}`;
+    a.setAttribute('data-auth', getToken());
+    // Use fetch to download with auth header
+    void (async () => {
+      const res = await fetch(`/api/migv2/export-md?id=${currentRun.id}`, { headers: authHeaders() });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `migration-${currentRun.id.slice(0, 8)}.md`;
+      link.click();
+      URL.revokeObjectURL(url);
+    })();
+  };
+
+  // Auto-scroll logs
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [currentRun?.logs.length]);
+
+  // ── Derived ───────────────────────────────────────────────────────────────────
+
+  const canStart = srcConnected && tgtConnected && includedCount > 0 && !polling;
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <>
-      <Head>
-        <title>Configure Mapping — Phase 1</title>
-      </Head>
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
-        {/* Header */}
-        <header ref={headerRef} className="sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center justify-between relative">
-          <div>
-            <h1 className="font-bold text-gray-900 dark:text-slate-100">Migration: Configure Mapping</h1>
-            <p className="text-xs text-gray-500 dark:text-slate-400">Phase 1: connect databases, inspect source, and select tables to include.</p>
+      <Head><title>Migration</title></Head>
+      <div className="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden">
+
+        {/* ── Header ──────────────────────────────────────────────────────── */}
+        <header className="shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 flex items-center gap-3">
+          <Link href="/" className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
+            <ArrowLeft size={16} />
+          </Link>
+          <div className="flex items-center gap-2">
+            <Database size={16} className="text-blue-500" />
+            <span className="text-sm font-semibold text-gray-800 dark:text-slate-200">Migration</span>
           </div>
-          {/* Connection badges */}
-          <div className="flex items-center gap-2" ref={connPanelRef}>
-            <button
-              ref={mysqlBadgeRef}
-              type="button"
-              onClick={() => toggleConnPanel('mysql')}
-              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium border transition-colors cursor-pointer ${connected
-                ? 'bg-green-50 dark:bg-emerald-950/30 text-green-700 dark:text-emerald-300 border-green-200 dark:border-emerald-800 hover:bg-green-100 dark:hover:bg-emerald-900/40'
-                : 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:bg-gray-200 dark:hover:bg-slate-700'
-                } ${showConnPanel === 'mysql' ? 'ring-2 ring-blue-300 dark:ring-blue-500' : ''}`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full inline-block ${connected ? 'bg-green-500 dark:bg-emerald-400' : 'bg-gray-300 dark:bg-slate-500'}`} />
-              MySQL{connected && form.database ? `: ${form.database}` : ''}
-            </button>
-            <button
-              ref={pgBadgeRef}
-              type="button"
-              onClick={() => toggleConnPanel('pg')}
-              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium border transition-colors cursor-pointer ${pgConnected
-                ? 'bg-green-50 dark:bg-emerald-950/30 text-green-700 dark:text-emerald-300 border-green-200 dark:border-emerald-800 hover:bg-green-100 dark:hover:bg-emerald-900/40'
-                : 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:bg-gray-200 dark:hover:bg-slate-700'
-                } ${showConnPanel === 'pg' ? 'ring-2 ring-blue-300 dark:ring-blue-500' : ''}`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full inline-block ${pgConnected ? 'bg-green-500 dark:bg-emerald-400' : 'bg-gray-300 dark:bg-slate-500'}`} />
-              PostgreSQL{pgConnected && pgForm.database ? `: ${pgForm.database}` : ''}
-            </button>
+          {dirty && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400">
+              unsaved changes
+            </span>
+          )}
+          <div className="flex-1" />
+          {includedCount > 0 && (
+            <span className="text-xs text-gray-400 dark:text-slate-500">{includedCount} table{includedCount > 1 ? 's' : ''} selected</span>
+          )}
+          <button onClick={() => { setSaveJobName(saveJobName || 'New Job'); setShowSaveDialog(true); }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700">
+            <Save size={12} /> Save Job
+          </button>
+          <button onClick={() => void startMigration()} disabled={!canStart}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+            {polling ? <><Loader2 size={12} className="animate-spin" /> Running…</> : <><Play size={12} /> Migrate</>}
+          </button>
+        </header>
 
-            {/* Connection dropdown panel */}
-            {showConnPanel && (
-              <div
-                className="absolute z-50 w-[min(92vw,560px)] max-w-[560px] bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xl p-5"
-                style={{ left: connPanelPos.left, top: connPanelPos.top }}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-semibold text-gray-800 dark:text-slate-100">
-                    {showConnPanel === 'mysql' ? 'MySQL Connection' : (
-                      <span className="flex items-center gap-1.5">
-                        PostgreSQL Connection
-                        <button
-                          ref={pgHelpBtnRef}
-                          type="button"
+        {/* ── Connections bar ───────────────────────────────────────────── */}
+        <div className="shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 flex items-start gap-3">
+          <ConnForm
+            label="Source"
+            conn={srcConn} onChange={setSrcConn}
+            connected={srcConnected} connecting={srcConnecting} error={srcError}
+            onConnect={() => void connectSource()} onDisconnect={disconnectSource}
+          />
+          <div className="flex items-center self-center pt-6">
+            <ArrowRight size={20} className="text-gray-300 dark:text-slate-600" />
+          </div>
+          <ConnForm
+            label="Target"
+            conn={tgtConn} onChange={setTgtConn}
+            connected={tgtConnected} connecting={tgtConnecting} error={tgtError}
+            onConnect={() => void connectTarget()} onDisconnect={disconnectTarget}
+          />
+        </div>
+
+        {/* ── Body ─────────────────────────────────────────────────────── */}
+        <div className="flex flex-1 min-h-0">
+
+          {/* ── Left panel — source tables tree ───────────────────────── */}
+          <aside className="w-56 shrink-0 flex flex-col border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+            <div className="p-2 border-b border-gray-100 dark:border-slate-800">
+              <div className="relative">
+                <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input value={srcSearch} onChange={e => setSrcSearch(e.target.value)}
+                  placeholder="Filter tables…"
+                  className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto py-1">
+              {!srcConnected && (
+                <div className="px-4 py-8 text-center">
+                  <Database size={24} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
+                  <p className="text-xs text-gray-400 dark:text-slate-500">Connect source DB</p>
+                </div>
+              )}
+
+              {srcConnected && srcSchemas.map(({ schema, tables }) => {
+                const isExpanded = expandedSchemas.has(schema);
+                return (
+                  <div key={schema}>
+                    <div className="flex items-center gap-1.5 px-2 py-1.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800"
+                      onClick={() => setExpandedSchemas(prev => {
+                        const n = new Set(prev);
+                        n.has(schema) ? n.delete(schema) : n.add(schema);
+                        return n;
+                      })}>
+                      {isExpanded ? <ChevronDown size={11} className="text-gray-400 shrink-0" /> : <ChevronRight size={11} className="text-gray-400 shrink-0" />}
+                      <Database size={11} className="text-blue-500 shrink-0" />
+                      <span className="text-xs font-medium text-gray-700 dark:text-slate-300 flex-1 truncate">{schema}</span>
+                      <span className="text-[10px] text-gray-400">{tables.length}</span>
+                    </div>
+                    {isExpanded && tables.map(t => {
+                      const included = isTableIncluded(t.schema, t.name);
+                      const mapEntry = tableMaps.find(m => m.source.schema === t.schema && m.source.table === t.name);
+                      const isSelected = mapEntry?.id === selectedMapId;
+                      return (
+                        <div key={t.name}
+                          className={`flex items-center gap-1.5 pl-6 pr-2 py-1 cursor-pointer group ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}
                           onClick={() => {
-                            if (pgHelpBtnRef.current) {
-                              const r = pgHelpBtnRef.current.getBoundingClientRect();
-                              setPgHelpPos({ top: r.bottom + 6, left: r.left });
-                            }
-                            setShowPgHelp((v) => !v);
+                            if (mapEntry) setSelectedMapId(mapEntry.id);
+                            else void toggleTable(t.schema, t.name);
                           }}
-                          className="text-gray-300 dark:text-slate-500 hover:text-blue-400 dark:hover:text-blue-300 transition-colors"
-                          title="PostgreSQL quick reference"
                         >
-                          <HelpCircle size={14} />
-                        </button>
-                      </span>
-                    )}
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => setShowConnPanel(null)}
-                    className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-
-                <div className="mb-4 p-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-800 space-y-2">
-                  <p className="text-xs font-semibold text-gray-600 dark:text-slate-300">DB Connection Config</p>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <input
-                      type="text"
-                      value={connConfigName}
-                      onChange={(e) => setConnConfigName(e.target.value)}
-                      placeholder="config name"
-                      className="flex-1 min-w-0 border border-gray-200 dark:border-slate-700 rounded-md px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleSaveConnectionConfig}
-                      disabled={connConfigLoading}
-                      className="shrink-0 text-xs px-2.5 py-1.5 rounded-md bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 disabled:opacity-50"
-                    >
-                      Save
-                    </button>
+                          <input type="checkbox" checked={included}
+                            onChange={e => { e.stopPropagation(); void toggleTable(t.schema, t.name); }}
+                            className="shrink-0 accent-blue-500"
+                            onClick={e => e.stopPropagation()}
+                          />
+                          <Table2 size={10} className="text-gray-400 shrink-0" />
+                          <span className={`text-xs flex-1 truncate ${isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-slate-400'}`}>{t.name}</span>
+                          <span className="text-[10px] text-gray-400">{t.rowCount.toLocaleString()}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <select
-                      value={selectedConnConfigFile}
-                      onChange={(e) => setSelectedConnConfigFile(e.target.value)}
-                      className="flex-1 min-w-0 border border-gray-200 dark:border-slate-700 rounded-md px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100"
-                      title={selectedConnConfigFile}
-                    >
-                      <option value="">Select saved connection</option>
-                      {connConfigFiles.map((f) => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => void loadConnectionConfigFiles()}
-                      className="shrink-0 text-xs px-2 py-1.5 rounded-md bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200"
-                    >
-                      Refresh
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleLoadConnectionConfig}
-                      disabled={!selectedConnConfigFile || connConfigLoading}
-                      className="shrink-0 text-xs px-2.5 py-1.5 rounded-md bg-green-50 hover:bg-green-100 dark:bg-emerald-900/30 dark:hover:bg-emerald-900/50 text-green-700 dark:text-emerald-300 disabled:opacity-50"
-                    >
-                      Load
-                    </button>
-                  </div>
-                </div>
+                );
+              })}
+            </div>
+          </aside>
 
-                {showConnPanel === 'mysql' && (
-                  <form onSubmit={handleInspect} className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Host</label>
-                      <input
-                        className="input"
-                        value={form.host}
-                        onChange={(e) => setForm({ ...form, host: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Port</label>
-                      <input
-                        className="input"
-                        type="number"
-                        value={form.port}
-                        onChange={(e) => setForm({ ...form, port: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">User</label>
-                      <input
-                        className="input"
-                        value={form.user}
-                        onChange={(e) => {
-                          setForm({ ...form, user: e.target.value, database: '' });
-                          setDatabases([]);
-                          setConnected(false);
-                        }}
-                        disabled={connected}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
-                      <div className="flex gap-2">
-                        <input
-                          className="input flex-1"
-                          type="password"
-                          value={form.password}
-                          onChange={(e) => {
-                            setForm({ ...form, password: e.target.value, database: '' });
-                            setDatabases([]);
-                            setConnected(false);
-                          }}
-                          disabled={connected}
-                        />
-                        {connected ? (
-                          <button
-                            type="button"
-                            onClick={handleDisconnect}
-                            title="Disconnect MySQL"
-                            className="px-2.5 py-2 bg-red-50 hover:bg-red-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-red-500 dark:text-rose-300 rounded-xl border border-red-200 dark:border-rose-800 transition-colors"
-                          >
-                            <PlugZap size={16} />
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={handleConnect}
-                            disabled={dbLoading || !form.host || !form.user}
-                            title="Connect MySQL"
-                            className="px-2.5 py-2 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 disabled:opacity-50 text-gray-600 dark:text-slate-300 rounded-xl border border-gray-300 dark:border-slate-600 transition-colors"
-                          >
-                            {dbLoading ? <RotateCcw size={16} className="animate-spin" /> : <Plug size={16} />}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    {dbError && (
-                      <div className="col-span-2 text-red-600 text-xs">{dbError}</div>
-                    )}
-                    <div className="col-span-2">
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Database</label>
-                      {databases.length > 0 ? (
-                        <select
-                          className="input"
-                          value={form.database}
-                          onChange={(e) => {
-                            const database = e.target.value;
-                            setForm({ ...form, database });
-                            try {
-                              const raw = localStorage.getItem(CONN_STATE_KEY);
-                              const state = raw ? JSON.parse(raw) : {};
-                              localStorage.setItem(CONN_STATE_KEY, JSON.stringify({ ...state, database }));
-                            } catch { /* ignore */ }
-                            void syncModuleConfig(
-                              {
-                                host: form.host,
-                                port: form.port,
-                                user: form.user,
-                                password: form.password,
-                                database,
-                                connected,
-                                databases,
-                              },
-                              undefined
-                            );
-                          }}
-                          required
-                        >
-                          <option value="">— select a database —</option>
-                          {databases.map((db) => (
-                            <option key={db} value={db}>{db}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          className="input"
-                          value={form.database}
-                          onChange={(e) => {
-                            const database = e.target.value;
-                            setForm({ ...form, database });
-                            void syncModuleConfig(
-                              {
-                                host: form.host,
-                                port: form.port,
-                                user: form.user,
-                                password: form.password,
-                                database,
-                                connected,
-                                databases,
-                              },
-                              undefined
-                            );
-                          }}
-                          placeholder={connected ? 'No databases found' : 'Click Connect to list databases'}
-                          required
-                        />
-                      )}
-                    </div>
-                    <div className="col-span-2">
-                      <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors"
-                      >
-                        {loading ? 'Inspecting…' : 'Inspect Database'}
-                      </button>
-                    </div>
-                  </form>
+          {/* ── Right panel ─────────────────────────────────────────────── */}
+          <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+            {/* Tab bar */}
+            <div className="shrink-0 flex border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4">
+              {([
+                { key: 'mapping', label: 'Column Mapping', Icon: Settings2 },
+                { key: 'jobs',    label: 'Jobs',           Icon: Save },
+                { key: 'execute', label: 'Execute',        Icon: Play },
+              ] as { key: ActiveTab; label: string; Icon: React.FC<any> }[]).map(({ key, label, Icon }) => (
+                <button key={key} onClick={() => setActiveTab(key)}
+                  className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${activeTab === key ? 'border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'}`}>
+                  <Icon size={13} /> {label}
+                  {key === 'execute' && currentRun && (
+                    <StatusBadge status={currentRun.status} />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* ── Mapping tab ──────────────────────────────────────────── */}
+            {activeTab === 'mapping' && (
+              <div className="flex-1 overflow-auto">
+                {!selectedMap && (
+                  <div className="flex flex-col items-center justify-center h-full gap-3">
+                    <Network size={36} className="text-gray-200 dark:text-slate-700" />
+                    <p className="text-sm text-gray-400 dark:text-slate-500">
+                      {srcConnected ? 'Check a table on the left to configure its mapping' : 'Connect a source database first'}
+                    </p>
+                  </div>
+                )}
+                {loadingCols && !selectedMap && (
+                  <div className="p-8 flex items-center gap-2 text-sm text-gray-400 animate-pulse">
+                    <Loader2 size={14} className="animate-spin" /> Loading columns…
+                  </div>
                 )}
 
-                {showConnPanel === 'pg' && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Host</label>
-                      <input
-                        className="input"
-                        value={pgForm.host}
-                        onChange={(e) => setPgForm({ ...pgForm, host: e.target.value })}
-                        disabled={pgConnected}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Port</label>
-                      <input
-                        className="input"
-                        type="number"
-                        value={pgForm.port}
-                        onChange={(e) => setPgForm({ ...pgForm, port: Number(e.target.value) })}
-                        disabled={pgConnected}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">User</label>
-                      <input
-                        className="input"
-                        value={pgForm.user}
-                        onChange={(e) => setPgForm({ ...pgForm, user: e.target.value })}
-                        disabled={pgConnected}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
-                      <div className="flex gap-2">
-                        <input
-                          className="input flex-1"
-                          type="password"
-                          value={pgForm.password}
-                          onChange={(e) => setPgForm({ ...pgForm, password: e.target.value })}
-                          disabled={pgConnected}
-                        />
-                        {pgConnected ? (
-                          <button
-                            type="button"
-                            onClick={handleDisconnectPG}
-                            title="Disconnect PostgreSQL"
-                            className="px-2.5 py-2 bg-red-50 hover:bg-red-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-red-500 dark:text-rose-300 rounded-xl border border-red-200 dark:border-rose-800 transition-colors"
-                          >
-                            <PlugZap size={16} />
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={handleConnectPG}
-                            disabled={pgConnecting || !pgForm.host || !pgForm.database}
-                            title="Connect PostgreSQL"
-                            className="px-2.5 py-2 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 disabled:opacity-50 text-gray-600 dark:text-slate-300 rounded-xl border border-gray-300 dark:border-slate-600 transition-colors"
-                          >
-                            {pgConnecting ? <RotateCcw size={16} className="animate-spin" /> : <Plug size={16} />}
-                          </button>
-                        )}
+                {selectedMap && (
+                  <div className="p-4 space-y-4">
+                    {/* Table header */}
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div>
+                        <label className="block text-[11px] text-gray-500 dark:text-slate-400 mb-1">Source table</label>
+                        <span className="text-sm font-mono text-gray-700 dark:text-slate-300">
+                          {selectedMap.source.schema}.{selectedMap.source.table}
+                        </span>
                       </div>
-                    </div>
-                    {pgConnError && (
-                      <div className="col-span-2 text-red-600 text-xs flex items-center gap-1">
-                        <ServerCrash size={12} /> {pgConnError}
+                      <ArrowRight size={16} className="text-gray-300 dark:text-slate-600 self-end mb-1" />
+                      <div className="flex items-end gap-2">
+                        <div>
+                          <label className="block text-[11px] text-gray-500 dark:text-slate-400 mb-1">Target schema</label>
+                          <input value={selectedMap.target.schema}
+                            onChange={e => updateTableMap(selectedMap.id, { target: { ...selectedMap.target, schema: e.target.value } })}
+                            className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 w-24"
+                          />
+                        </div>
+                        <span className="text-gray-400 pb-1">.</span>
+                        <div>
+                          <label className="block text-[11px] text-gray-500 dark:text-slate-400 mb-1">Target table</label>
+                          <input value={selectedMap.target.table}
+                            onChange={e => updateTableMap(selectedMap.id, { target: { ...selectedMap.target, table: e.target.value } })}
+                            className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 w-32"
+                          />
+                        </div>
                       </div>
-                    )}
-                    <div className="col-span-2">
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Database</label>
-                      <input
-                        className="input"
-                        value={pgForm.database}
-                        onChange={(e) => setPgForm({ ...pgForm, database: e.target.value })}
-                        disabled={pgConnected}
-                        placeholder="postgres"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={pgForm.ssl}
-                          onChange={(e) => setPgForm({ ...pgForm, ssl: e.target.checked })}
-                          disabled={pgConnected}
-                          className="w-3.5 h-3.5"
+                      <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400 self-end mb-1 ml-auto">
+                        <input type="checkbox" checked={selectedMap.truncateBeforeMigrate}
+                          onChange={e => updateTableMap(selectedMap.id, { truncateBeforeMigrate: e.target.checked })}
+                          className="accent-rose-500"
                         />
-                        Use SSL
+                        Truncate target before migrate
                       </label>
                     </div>
-                    {pgConnected && pgSchemas.length > 0 && (
-                      <div className="col-span-2 text-xs text-green-600 dark:text-emerald-300 bg-green-50 dark:bg-emerald-950/30 border border-green-200 dark:border-emerald-800 rounded-lg px-3 py-2">
-                        ✓ Connected · {pgSchemas.length} schemas: {pgSchemas.slice(0, 5).join(', ')}{pgSchemas.length > 5 ? `, +${pgSchemas.length - 5} more` : ''}
+
+                    {/* Column mapping table */}
+                    <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-gray-50 dark:bg-slate-800/60">
+                            {['Source Column', 'Source Type', '', 'Target Column', 'Target Type', 'Conversion', 'FK Ref', 'Include', ''].map((h, i) => (
+                              <th key={i} className="text-left px-3 py-2 text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider border-b border-gray-200 dark:border-slate-700 whitespace-nowrap">
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                          {selectedMap.columns.map((col, idx) => (
+                            <tr key={idx} className={`${col.include ? '' : 'opacity-40'} hover:bg-gray-50 dark:hover:bg-slate-800/40`}>
+                              {/* Source column */}
+                              <td className="px-3 py-1.5 font-mono text-gray-700 dark:text-slate-300">
+                                {col.sourceCol ?? <span className="italic text-gray-400">*(new)*</span>}
+                              </td>
+                              {/* Source type */}
+                              <td className="px-3 py-1.5 text-gray-500 dark:text-slate-400 font-mono text-[11px]">
+                                {colsCache[`${selectedMap.source.schema}.${selectedMap.source.table}`]?.find(c => c.name === col.sourceCol)?.rawType ?? '—'}
+                              </td>
+                              {/* Arrow */}
+                              <td className="px-1 py-1.5 text-gray-300">→</td>
+                              {/* Target column */}
+                              <td className="px-3 py-1.5">
+                                <input value={col.targetCol}
+                                  onChange={e => updateColumn(selectedMap.id, idx, { targetCol: e.target.value })}
+                                  className="w-28 px-1.5 py-0.5 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono"
+                                />
+                              </td>
+                              {/* Target type */}
+                              <td className="px-3 py-1.5">
+                                <input value={col.targetType}
+                                  onChange={e => updateColumn(selectedMap.id, idx, { targetType: e.target.value })}
+                                  className="w-28 px-1.5 py-0.5 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono uppercase"
+                                />
+                              </td>
+                              {/* Conversion */}
+                              <td className="px-3 py-1.5">
+                                <select value={col.conversion}
+                                  onChange={e => {
+                                    const conv = e.target.value as IdConversion;
+                                    const targetType = conv === 'serial_to_uuid'
+                                      ? (tgtConn.type === 'postgresql' ? 'UUID' : 'VARCHAR(36)')
+                                      : col.targetType;
+                                    updateColumn(selectedMap.id, idx, { conversion: conv, targetType });
+                                  }}
+                                  className="text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 py-0.5 px-1">
+                                  <option value="keep">keep</option>
+                                  <option value="serial_to_uuid">serial → UUID</option>
+                                </select>
+                              </td>
+                              {/* FK Ref */}
+                              <td className="px-3 py-1.5">
+                                <input
+                                  value={col.fkRef ?? ''}
+                                  onChange={e => updateColumn(selectedMap.id, idx, { fkRef: e.target.value || null })}
+                                  placeholder={col.conversion === 'keep' ? '—' : 'schema.table'}
+                                  disabled={col.conversion !== 'serial_to_uuid' && !col.fkRef}
+                                  className="w-28 px-1.5 py-0.5 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-mono disabled:opacity-30"
+                                />
+                              </td>
+                              {/* Include */}
+                              <td className="px-3 py-1.5 text-center">
+                                <input type="checkbox" checked={col.include}
+                                  onChange={e => updateColumn(selectedMap.id, idx, { include: e.target.checked })}
+                                  className="accent-blue-500"
+                                />
+                              </td>
+                              {/* Remove */}
+                              <td className="px-2 py-1.5">
+                                {col.sourceCol === null && (
+                                  <button onClick={() => removeColumn(selectedMap.id, idx)}
+                                    className="p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors">
+                                    <X size={12} />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <div className="px-3 py-2 border-t border-gray-100 dark:border-slate-800">
+                        <button onClick={() => addTargetOnlyColumn(selectedMap.id)}
+                          className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700">
+                          <Plus size={12} /> Add target-only column
+                        </button>
                       </div>
-                    )}
+                    </div>
                   </div>
                 )}
               </div>
             )}
-          </div>
-          {/* Phase nav */}
-          <nav className="flex items-center gap-1 text-sm">
-            {[
-              { label: 'Home', href: '/' },
-              { label: 'Source Selection', href: '/migration', active: true },
-              { label: 'Mapping Config', href: '/mapping' },
-              { label: 'Schema Template', href: '/docs' },
-              { label: 'Migrate', href: '/migrate' },
-            ].map((item, i) => (
-              <React.Fragment key={item.href}>
-                {i > 0 && <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />}
-                {item.href === '/' ? (
-                  <button
-                    type="button"
-                    onClick={handleHomeNavigate}
-                    className={`px-3 py-1 rounded-lg ${item.active ? 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold' : 'text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'}`}
-                  >
-                    {item.label}
-                  </button>
-                ) : (
-                  <Link
-                    href={item.href}
-                    className={`px-3 py-1 rounded-lg ${item.active ? 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold' : 'text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'}`}
-                  >
-                    {item.label}
-                    {item.href === '/migration' && (
-                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-200/70 dark:bg-blue-800/70 text-blue-800 dark:text-blue-200 font-semibold">
-                        {configureDone}/{configureTotal}
-                      </span>
-                    )}
-                    {item.href === '/mapping' && (
-                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-200/70 dark:bg-emerald-800/70 text-emerald-800 dark:text-emerald-200 font-semibold">
-                        {assignDone}/{assignTotal}
-                      </span>
-                    )}
-                    {item.href === '/docs' && (
-                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-200/70 dark:bg-amber-800/70 text-amber-800 dark:text-amber-200 font-semibold">
-                        {templateAssigned}/{assignDone}
-                      </span>
-                    )}
-                    {item.href === '/migrate' && (
-                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-cyan-200/70 dark:bg-cyan-800/70 text-cyan-800 dark:text-cyan-200 font-semibold">
-                        {migrateSuccess}/{migrateTotal}
-                      </span>
-                    )}
-                  </Link>
-                )}
-              </React.Fragment>
-            ))}
-            <span className="w-px h-5 bg-gray-200 dark:bg-slate-700 mx-1" />
-            <button
-              type="button"
-              onClick={() => setShowResetDialog(true)}
-              title="Reset everything"
-              className="p-1.5 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-rose-400 hover:bg-red-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors"
-            >
-              <Trash2 size={15} />
-            </button>
-          </nav>
-        </header>
 
-        <main className="max-w-6xl mx-auto px-6 py-8 space-y-6">
-          {loading && <LoadingSpinner message="Connecting to MySQL and reading schema…" />}
-          {results.length === 0 && (
-              <div className="min-h-[46vh] flex items-center justify-center">
-              <div className="max-w-xl text-center bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl px-6 py-7">
-                <h2 className="font-semibold text-gray-900 dark:text-slate-100">How To Select Source Tables</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400 mt-2">
-                  Open MySQL connection badge and connect to source DB, choose database, then click <strong>Inspect Database</strong>.
-                  Then move tables to selection (drag or Add). Final mapping configuration is done in Phase 2.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {results.length > 0 && (
-            <>
-              {/* Summary bar */}
-              <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-xl px-6 py-4 flex items-center justify-between flex-wrap gap-3">
-                <div className="flex flex-wrap items-center gap-3 text-sm">
-                  <span className="text-blue-800 dark:text-blue-200">
-                    <strong>{results.reduce((s, r) => s + r.tables.length, 0)}</strong> tables across{' '}
-                    <strong>{results.length}</strong> database{results.length !== 1 ? 's' : ''}
-                  </span>
-                  {results.map((r) => {
-                    const isHidden = hiddenDatabases.has(r.database);
-                    return (
-                    <span
-                      key={r.database}
-                      onClick={() => handleToggleDatabaseVisibility(r.database)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          handleToggleDatabaseVisibility(r.database);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${
-                        isHidden
-                          ? 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-700'
-                          : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
-                      }`}
-                      title={isHidden ? `Show tables for ${r.database}` : `Hide tables for ${r.database}`}
-                    >
-                      <Database size={10} />
-                      {r.database}
-                      <span className={isHidden ? 'text-gray-400 dark:text-slate-500' : 'text-blue-400 dark:text-blue-400/80'}>({r.tables.length})</span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRemoveDatabase(r.database);
-                        }}
-                        className="ml-0.5 hover:text-red-500 dark:hover:text-rose-400 transition-colors"
-                        title={`Remove ${r.database}`}
-                      >
-                        <X size={10} />
+            {/* ── Jobs tab ──────────────────────────────────────────────── */}
+            {activeTab === 'jobs' && (
+              <div className="flex-1 overflow-auto p-4">
+                <div className="max-w-2xl space-y-3">
+                  {jobs.length === 0 && (
+                    <div className="py-12 text-center">
+                      <Save size={32} className="mx-auto text-gray-200 dark:text-slate-700 mb-3" />
+                      <p className="text-sm text-gray-400 dark:text-slate-500">No saved jobs yet. Save the current config using the button above.</p>
+                    </div>
+                  )}
+                  {jobs.map(job => (
+                    <div key={job.id}
+                      className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${activeJobId === job.id ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'}`}>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{job.name}</p>
+                          <span className="text-[10px] text-gray-400 dark:text-slate-500 shrink-0">v{job.version}</span>
+                          {activeJobId === job.id && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>}
+                        </div>
+                        {job.description && <p className="text-xs text-gray-400 dark:text-slate-500 truncate">{job.description}</p>}
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{job.tableCount} tables · updated {new Date(job.updatedAt).toLocaleDateString()}</p>
+                      </div>
+                      <button onClick={() => void handleLoadJob(job.id)}
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors">
+                        Load
                       </button>
-                    </span>
-                  )})}
-                </div>
-                <button
-                  onClick={handleProceedToPhase2}
-                  className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 dark:border dark:border-blue-500/60 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors flex items-center gap-1"
-                >
-                  Configure Mappings
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-
-              {/* Source selection browser */}
-              <div className="grid grid-cols-2 gap-6">
-                <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-gray-600 dark:text-slate-300 uppercase tracking-wide">
-                      Source Tables
-                    </h2>
-                    <span className="text-xs text-gray-500 dark:text-slate-400">
-                      {sourceGroups.reduce((sum, g) => sum + g.tables.length, 0)} available
-                    </span>
-                  </div>
-                  <div className="max-h-[70vh] overflow-y-auto divide-y divide-gray-100 dark:divide-slate-700">
-                    {sourceGroups.map((group) => (
-                      <div key={group.database}>
-                        <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700">
-                          <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-slate-300">
-                            <Database size={11} className="text-blue-400 dark:text-blue-300" />
-                            {group.database}
-                            <span className="text-gray-400 dark:text-slate-500 font-normal">({group.tables.length})</span>
-                          </span>
-                        </div>
-                        <ul className="divide-y divide-gray-100 dark:divide-slate-700">
-                          {group.tables.map((t) => {
-                            const key = `${group.database}::${t.name}`;
-                            return (
-                              <li key={key}>
-                                <div
-                                  draggable
-                                  onDragStart={() => setDraggingKey(key)}
-                                  className={`w-full px-4 py-2.5 text-left hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors ${selectedTable === key ? 'bg-blue-50 dark:bg-blue-950/40 border-l-2 border-blue-500 dark:border-blue-400' : ''}`}
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedTable(key)}
-                                      className="min-w-0 text-left"
-                                    >
-                                      <p className="text-sm font-medium truncate text-gray-800 dark:text-slate-100">{t.name}</p>
-                                      <p className="text-xs text-gray-400 dark:text-slate-500">{t.columns.length} cols · {t.rowCount.toLocaleString()} rows</p>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAddToSelection(key)}
-                                      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100"
-                                    >
-                                      <PlusCircle size={12} />
-                                      Add
-                                    </button>
-                                  </div>
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                    ))}
-                    {sourceGroups.length === 0 && (
-                      <div className="px-4 py-8 text-center text-sm text-gray-400 dark:text-slate-500">
-                        No source tables available.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (!draggingKey) return;
-                    handleAddToSelection(draggingKey);
-                    setDraggingKey(null);
-                  }}
-                  className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden"
-                >
-                  <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-700 bg-emerald-50/80 dark:bg-emerald-950/20 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-emerald-700 dark:text-emerald-300 uppercase tracking-wide">
-                      Selected Tables
-                    </h2>
-                    <span className="text-xs text-emerald-600 dark:text-emerald-300">
-                      {resolvedSelectedKeys.length} selected
-                    </span>
-                  </div>
-                  <div className="px-4 py-2 border-b border-gray-100 dark:border-slate-700 text-xs text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/20">
-                    Drag from Source Tables into this pane, or click Add. Final mapping configuration is done in Phase 2.
-                  </div>
-                  <div className="max-h-[70vh] overflow-y-auto divide-y divide-gray-100 dark:divide-slate-700">
-                    {selectedGroups.map((group) => (
-                      <div key={group.database}>
-                        <div className="px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700">
-                          <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-slate-300">
-                            <Database size={11} className="text-emerald-500 dark:text-emerald-300" />
-                            {group.database}
-                            <span className="text-gray-400 dark:text-slate-500 font-normal">({group.tables.length})</span>
-                          </span>
-                        </div>
-                        <ul className="divide-y divide-gray-100 dark:divide-slate-700">
-                          {group.tables.map((t) => {
-                            const key = `${group.database}::${t.name}`;
-                            const isConfirmed = isPhase2Confirmed(group.database, t.name);
-                            const description = mappingDescription(group.database, t.name);
-                            const mapped = mappingTableFor(group.database, t.name);
-                            return (
-                              <li key={key}>
-                                <div className={`w-full px-4 py-2.5 text-left transition-colors ${
-                                  isConfirmed
-                                    ? 'bg-emerald-50/80 dark:bg-emerald-950/35 border-l-2 border-emerald-500 dark:border-emerald-400'
-                                    : 'hover:bg-emerald-50/60 dark:hover:bg-emerald-950/20'
-                                } ${selectedTable === key ? 'ring-1 ring-blue-300 dark:ring-blue-700' : ''}`}>
-                                  <div className="flex items-center justify-between gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedTable(key)}
-                                      className="min-w-0 text-left"
-                                    >
-                                      <p className="text-sm font-medium truncate text-gray-800 dark:text-slate-100 flex items-center gap-1.5">
-                                        {t.name}
-                                        {isConfirmed && <BadgeCheck size={13} className="text-emerald-600 dark:text-emerald-300 shrink-0" />}
-                                      </p>
-                                      <p className="text-xs text-gray-400 dark:text-slate-500">{t.columns.length} cols · {t.rowCount.toLocaleString()} rows</p>
-                                      {isConfirmed && mapped && (
-                                        <p className="text-xs text-emerald-700 dark:text-emerald-300 truncate mt-0.5 font-mono">
-                                          → {mapped.pgSchema}.{mapped.pgName}
-                                        </p>
-                                      )}
-                                      {description && (
-                                        <p className="text-xs italic text-gray-500 dark:text-slate-400 truncate mt-0.5">{description}</p>
-                                      )}
-                                    </button>
-                                    {isConfirmed ? (
-                                      <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-emerald-200 text-emerald-700 bg-emerald-50">
-                                        <BadgeCheck size={12} />
-                                        Configured
-                                      </span>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemoveFromSelection(key)}
-                                        className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-red-200 text-red-600 bg-red-50 hover:bg-red-100"
-                                      >
-                                        <X size={12} />
-                                        Remove
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                    ))}
-                    {selectedGroups.length === 0 && (
-                      <div className="px-4 py-8 text-center text-sm text-gray-400 dark:text-slate-500">
-                        No selected tables yet.
-                      </div>
-                    )}
-                  </div>
+                      <button onClick={() => void handleDeleteJob(job.id)}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </>
-          )}
-        </main>
+            )}
+
+            {/* ── Execute tab ───────────────────────────────────────────── */}
+            {activeTab === 'execute' && (
+              <div className="flex-1 overflow-hidden flex flex-col">
+                {!currentRun && (
+                  <div className="flex flex-col items-center justify-center h-full gap-4">
+                    <Play size={36} className="text-gray-200 dark:text-slate-700" />
+                    <p className="text-sm text-gray-400 dark:text-slate-500">Click <strong>Migrate</strong> in the top bar to start</p>
+                    {!canStart && !polling && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {!srcConnected ? 'Source not connected. ' : ''}{!tgtConnected ? 'Target not connected. ' : ''}{includedCount === 0 ? 'No tables selected.' : ''}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {currentRun && (
+                  <div className="flex flex-col h-full overflow-hidden">
+                    {/* Run meta bar */}
+                    <div className="shrink-0 px-4 py-2 border-b border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-4 flex-wrap">
+                      <StatusBadge status={currentRun.status} />
+                      <span className="text-xs text-gray-500 dark:text-slate-400">
+                        {currentRun.migratedRows.toLocaleString()} / {currentRun.totalRows.toLocaleString()} rows
+                      </span>
+                      <span className="text-xs text-gray-400 dark:text-slate-500 font-mono">{currentRun.id.slice(0, 8)}</span>
+                      <div className="flex-1" />
+                      {(currentRun.status === 'completed' || currentRun.status === 'failed') && (
+                        <button onClick={handleRollback} disabled={rollingBack}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/50 disabled:opacity-50 transition-colors">
+                          {rollingBack ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
+                          Rollback
+                        </button>
+                      )}
+                      <button onClick={handleExportMd}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                        <FileText size={11} /> Export MD
+                      </button>
+                    </div>
+
+                    {/* Per-table progress */}
+                    <div className="shrink-0 px-4 py-3 border-b border-gray-100 dark:border-slate-800 space-y-2 max-h-48 overflow-auto">
+                      {currentRun.tableStates.map(ts => {
+                        const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(ts.rowsMigrated / ts.rowsSource * 100)) : 0;
+                        return (
+                          <div key={ts.id}>
+                            <div className="flex items-center justify-between mb-0.5">
+                              <div className="flex items-center gap-2">
+                                <StatusBadge status={ts.status} />
+                                <span className="text-xs font-mono text-gray-700 dark:text-slate-300">{ts.sourceKey}</span>
+                                <span className="text-gray-400 text-xs">→</span>
+                                <span className="text-xs font-mono text-gray-500 dark:text-slate-400">{ts.targetKey}</span>
+                              </div>
+                              <span className="text-[11px] text-gray-400 dark:text-slate-500">
+                                {ts.rowsMigrated.toLocaleString()} / {ts.rowsSource.toLocaleString()} ({pct}%)
+                              </span>
+                            </div>
+                            <div className="h-1 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${ts.status === 'completed' ? 'bg-emerald-500' : ts.status === 'failed' ? 'bg-rose-500' : ts.status === 'rolled_back' ? 'bg-amber-500' : 'bg-blue-500'}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            {ts.error && <p className="text-[11px] text-rose-500 mt-0.5">{ts.error}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Live logs */}
+                    <div className="flex-1 overflow-auto bg-gray-900 dark:bg-black p-3 font-mono text-[11px] text-gray-300 dark:text-slate-300">
+                      {currentRun.logs.map((line, i) => (
+                        <div key={i} className={`leading-5 ${line.includes('ERROR') ? 'text-rose-400' : line.includes('completed') ? 'text-emerald-400' : line.includes('ROLLBACK') ? 'text-amber-400' : ''}`}>
+                          {line}
+                        </div>
+                      ))}
+                      <div ref={logsEndRef} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+        </div>
       </div>
 
-      <style jsx global>{`
-        .input {
-          width: 100%;
-          border: 1px solid #e5e7eb;
-          border-radius: 0.5rem;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          outline: none;
-          transition: box-shadow 0.15s;
-        }
-        .input:focus {
-          box-shadow: 0 0 0 2px #3b82f6;
-        }
-      `}</style>
-
-      {showPgHelp && (
-        <PgHelpPopover
-          top={pgHelpPos.top}
-          left={pgHelpPos.left}
-          onClose={() => setShowPgHelp(false)}
-        />
-      )}
-
-      {/* Reset Confirmation Dialog */}
-      {showResetDialog && (
+      {/* ── Save Job dialog ─────────────────────────────────────────────── */}
+      {showSaveDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-700 w-full max-w-md mx-4 p-6">
-            <div className="flex items-start gap-3 mb-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 dark:bg-rose-950/40 flex items-center justify-center">
-                <Trash2 size={18} className="text-red-600 dark:text-rose-300" />
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 p-6 w-full max-w-sm shadow-xl">
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-4">Save Migration Job</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Job name *</label>
+                <input value={saveJobName} onChange={e => setSaveJobName(e.target.value)} placeholder="e.g. Dev → Staging"
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
               </div>
               <div>
-                <h2 className="font-semibold text-gray-900 dark:text-slate-100 text-base">Reset Everything?</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
-                  This will permanently clear all saved data including connection settings, inspection results, table mappings, and migration configuration.
-                </p>
+                <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Description</label>
+                <input value={saveJobDesc} onChange={e => setSaveJobDesc(e.target.value)} placeholder="Optional"
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
               </div>
             </div>
-            <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-xs text-amber-700 dark:text-amber-300 mb-5">
-              This action cannot be undone. You will need to reconnect and re-inspect your database.
-            </div>
-            <div className="flex gap-3 justify-end">
-              <button
-                type="button"
-                onClick={() => setShowResetDialog(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-slate-200 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
-              >
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setShowSaveDialog(false)}
+                className="flex-1 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={handleReset}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors flex items-center gap-1.5"
-              >
-                <Trash2 size={14} />
-                Reset Everything
+              <button onClick={() => void handleSaveJob()} disabled={savingJob || !saveJobName.trim()}
+                className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                {savingJob ? 'Saving…' : 'Save'}
               </button>
             </div>
           </div>

@@ -1,0 +1,103 @@
+// ── Connection ────────────────────────────────────────────────────────────────
+
+export type DbType = 'postgresql' | 'mysql';
+
+export interface MigConn {
+  type: DbType;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
+}
+
+// ── Column / Table mapping ────────────────────────────────────────────────────
+
+export type IdConversion = 'keep' | 'serial_to_uuid';
+
+export interface ColumnMap {
+  sourceCol: string | null;  // null = target-only (new column not in source)
+  targetCol: string;
+  targetType: string;        // target DB type string
+  nullable: boolean;
+  defaultValue: string | null;
+  include: boolean;
+  conversion: IdConversion;
+  // For FK columns that point to a UUID-converted PK:
+  // e.g. "public.users" means "look up seqToUUID('public.users', fk_value)"
+  fkRef: string | null;
+}
+
+export interface TableMap {
+  id: string;           // stable local id (uuid)
+  include: boolean;
+  source: { schema: string; table: string };
+  target: { schema: string; table: string };
+  columns: ColumnMap[];
+  truncateBeforeMigrate: boolean;
+}
+
+// ── Job ───────────────────────────────────────────────────────────────────────
+
+export interface MigJob {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  // passwords excluded from job storage
+  sourceMeta: Omit<MigConn, 'password'>;
+  targetMeta: Omit<MigConn, 'password'>;
+  tables: TableMap[];
+}
+
+export interface MigJobSummary {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  tableCount: number;
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
+
+export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back';
+export type TableRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back';
+
+export interface MigRunTableState {
+  id: string;           // = tableMap.id
+  sourceKey: string;    // "schema.table"
+  targetKey: string;
+  status: TableRunStatus;
+  rowsSource: number;
+  rowsMigrated: number;
+  offset: number;
+  hasMore: boolean;
+  error: string | null;
+  // rollback support
+  insertedPks: string[];    // first N inserted target PKs
+  pkOverflow: boolean;      // true if > 5000 rows were inserted (list is partial)
+  targetPkCol: string | null;
+}
+
+export interface MigRun {
+  id: string;
+  jobId: string | null;
+  jobName: string;
+  status: RunStatus;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  // store source/target meta (no passwords) for display
+  sourceMeta: Omit<MigConn, 'password'>;
+  targetMeta: Omit<MigConn, 'password'>;
+  tables: TableMap[];          // mapping config snapshot
+  tableStates: MigRunTableState[];
+  logs: string[];
+  totalRows: number;
+  migratedRows: number;
+  errors: string[];
+}

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
-  Database, ArrowRight, UploadCloud, Wand2, SlidersHorizontal,
+  Database, ArrowRight, UploadCloud, Wand2, Network,
   ServerCog, Settings2, Lock, LogIn, LogOut, User, Eye, EyeOff, Mail,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
@@ -12,8 +12,8 @@ const modules = [
   { key: 'db-setup',     title: 'Schema Generator',    desc: 'Apply AI-generated schema and seed data SQL to a PostgreSQL database.',         href: '/db-setup',     available: true,  Icon: ServerCog },
   { key: 'export-import',title: 'Export & Import',     desc: 'Export local data and import to production environment safely.',                 href: '/export-import',available: true,  Icon: UploadCloud },
   { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '#',             available: false, Icon: Wand2 },
-  { key: 'schema-config',title: 'Schema Config',       desc: 'Configure PostgreSQL schema, tables, PK/FK reassignment, and UUID generation.', href: '/schema-config',available: true,  Icon: SlidersHorizontal },
-  { key: 'migration',    title: 'Migration',           desc: 'Plan MySQL to PostgreSQL mapping, dry run, and execute migration.',             href: '/migration',    available: true,  Icon: Database },
+  { key: 'schema-explorer', title: 'Schema Explorer', desc: 'Browse any database, inspect columns, visualise ERD, and export migration SQL or XLSX.', href: '/schema-explorer', available: true, Icon: Network },
+  { key: 'migration',    title: 'Migration',           desc: 'Map and migrate data across any two databases (MySQL ↔ PostgreSQL), with serial→UUID conversion, rollback, and job management.', href: '/migration', available: true, Icon: Database },
 ];
 
 export default function ModuleMenu() {
