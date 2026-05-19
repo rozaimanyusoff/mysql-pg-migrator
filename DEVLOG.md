@@ -30,6 +30,49 @@
   - Dependency added: `@xyflow/react`
   - Status: done
 
+- **revision** — Schema Explorer ERD: solid crow's foot edges + hierarchical auto-layout
+  - Replaced animated dashed edges with solid `CrowsFootEdge` (custom `BaseEdge` + inline SVG `<marker>`) using `markerUnits="userSpaceOnUse"` for zoom-stable symbols
+  - One-to-many: crow's foot (fan) at source FK handle, single bar at target PK handle; one-to-one when FK column is unique
+  - `computeHierarchicalLayout`: BFS reverse-FK traversal assigns depth levels (pure parents left, FK-holding children right); vertical spacing estimated from column count
+  - Status: done
+
+- **fix** — Schema Explorer ERD capture: export full canvas, exclude dialog overlay
+  - `prepareCapture()` closes print dialog then calls `fitView({ duration: 0 })` before capture so the full schema fits in frame
+  - `toPng` `filter` excludes `.react-flow__panel` elements; captures `.react-flow` container directly
+  - Status: done
+
+- **implement** — Schema Designer: new standalone page (replaces Schema Generator)
+  - Page `src/pages/schema-designer.tsx` — full visual schema design tool supporting PostgreSQL & MySQL
+  - Connection bar: select saved connection, pick or create a database (with "+ New DB" dialog)
+  - **Designer tab**: left table tree (grouped by schema for PG, flat for MySQL) + right inline column editor table. Columns: Name, Type, Length, PK, NN, UQ, AI, Default, FK Reference, Comment. PK rows amber-tinted. Add/delete columns inline.
+  - **Import tab** — four import methods:
+    - From Database: load live schema via schema-explorer APIs, checkbox-select tables, import column definitions
+    - From SQL: paste or upload `.sql`, client-side CREATE TABLE parser, table preview, merge into designer
+    - From XLSX/Excel: file upload via existing `excel-parser`, sheet→table mapping, type inference
+    - From CSV: file upload, table name input, header+type inference from sample rows
+  - **Execute tab** (Schema Generator feature parity):
+    - Top: DDL preview (dark terminal) with copy + download buttons
+    - Bottom: Seed SQL textarea (dark terminal) — INSERT statements run after DDL; `SeedAnalysisBadge` popover shows rows/table + ID strategy
+    - Right panel: connection info, Execute button (runs DDL + seed statements in order), execution log
+    - Post-run status banner with "Save Job" shortcut → `SaveJobModal` (job name + description)
+    - Job History section: grouped by job name (`JobGroupCard` → `JobRunCard`), expand/collapse, Load button restores tables + seed SQL + clears log, Retry for failed runs
+  - SQL analysis badges: `SchemaAnalysisBadge` + `SeedAnalysisBadge` — click-to-open popover with full breakdown
+  - Job persistence: reuses `dbt_schema_jobs` table + `/api/schema-generator/jobs` POST/GET endpoints
+  - `SchemaJob` interface updated to include `schema_sql`/`seed_sql` fields; GET query expanded to return them
+  - All imports use merge strategy: skip tables with duplicate schema.name, append new ones
+  - DDL generator: full round-trip support — PG SERIAL types, MySQL AUTO_INCREMENT, FOREIGN KEY constraints, column comments, `CREATE SCHEMA IF NOT EXISTS` for non-public PG schemas
+  - Client-side SQL parser: handles `CREATE TABLE [IF NOT EXISTS] [schema.]table (...)`, inline PK/UNIQUE/FK, table-level constraints, type aliases normalisation
+  - API routes under `src/pages/api/schema-designer/`: `databases.ts`, `create-db.ts`, `execute.ts`
+  - `src/pages/index.tsx` — Schema Designer card added (Columns icon)
+  - `src/pages/db-setup.tsx` — replaced with redirect to `/schema-designer`
+  - Status: done
+
+- **remove** — Schema Generator tab removed from Schema Explorer
+  - Removed `ActiveTab` value `'schema-gen'`; type is now `'columns' | 'erd' | 'export'`
+  - Removed all Sg* component definitions, helper types/functions, schema-gen state block, tab button, tab JSX content, and schema-gen modals from `src/pages/schema-explorer.tsx`
+  - Schema Generator will be implemented as a standalone page
+  - Status: done
+
 ---
 
 ## 2026-04-10
@@ -163,6 +206,93 @@
 ---
 
 ## 2026-05-20
+- **revision** — Schema Explorer ERD: crow's foot edges, hierarchical auto-layout
+  - Replaced animated dashed edges with solid crow's foot edges (`CrowsFootEdge` custom component)
+  - Crow's foot notation: source (FK table) = bar + three diverging lines (many); target (referenced table) = single bar (one); one-to-one when FK column has `isUnique = true`
+  - Uses `getSmoothStepPath` with `borderRadius: 12` for clean right-angle routing; `BaseEdge` + inline SVG `<defs>` markers with `markerUnits="userSpaceOnUse"` for consistent sizing at all zoom levels
+  - `computeHierarchicalLayout()` pure function: BFS reverse-FK traversal — "pure parent" tables (only referenced, no FKs) placed leftmost; FK-holder tables placed right based on depth; vertical spacing estimated from column count
+  - ERD canvas now auto-layouts on every connect (initial load via `useEffect`)
+  - "Layout" button in ERD Panel re-runs the hierarchical layout on demand; `minZoom` lowered to 0.05 to allow full-schema view
+  - `edgeTypes = { crowsFoot: CrowsFootEdge }` registered on `<ReactFlow>`
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **fix** — Schema Explorer ERD export: full canvas capture (no dialog overlay, fit all nodes)
+  - `handlePng` / `handlePrint` now call `prepareCapture()` before capturing: closes dropdown, calls `fitView({ duration: 0, padding: 0.06 })`, waits 180ms for layout to settle
+  - `capture()` passes `filter` to `toPng` to exclude `.react-flow__panel` elements (dialog, Controls, MiniMap) from the image
+  - Previously the Export dropdown was still visible in the screenshot and off-screen nodes were not included
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **implement** — Schema Explorer: integrate Schema Generator as new tab
+  - New `schema-gen` tab added to Schema Explorer tab bar (FileCode2 icon)
+  - Shows PostgreSQL-only notice when connected to MySQL; connect-first prompt when disconnected
+  - Context banner in tab shows active connection label + target database
+  - All Schema Generator sub-components ported into `schema-explorer.tsx`: `SgPopover`, `SchemaAnalysisBadge`, `SeedAnalysisBadge`, `SgDragDropField`, `SgExcelImportCard`, `SgExcelPreviewModal`, `SgSaveJobModal`, `SgJobRunCard`, `SgJobGroupCard`
+  - Helper functions added: `timeAgo`, `analyzeSchemaSql`, `analyzeSeedSql`, `groupJobs`
+  - Schema Gen state: `sgSchemaSql`, `sgSeedSql`, `sgSchemaFile`, `sgSeedFile`, `sgRunning`, `sgLog`, `sgLastStatus`, `sgShowSaveModal`, `sgJobs`, `sgExcelTables`, `sgShowExcelPreview`
+  - `handleSgRun`: executes Schema + optional Seed SQL via `/api/sql-execute` using the currently connected PG DB; builds per-line log
+  - `handleSgSaveJob` / `handleSgLoadJob`: POST/GET `/api/schema-generator/jobs`; loading a job restores SQL fields
+  - `loadSgJobs`: GET `/api/schema-generator/jobs` on mount + after save
+  - Two-column layout: left = Excel import + Schema SQL + Seed SQL + Execute + log; right = Job History grouped by job name
+  - Excel import → `SgExcelPreviewModal` → applies generated schema + seed SQL into text fields
+  - Fixed `Node` type collision (ReactFlow's `Node` vs DOM `Node`) by using `HTMLElement` in `SgPopover` click-outside handler
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+---
+## 2026-05-20
+- **implement** — Schema Explorer: flat grouped table panel, ERD node navigate, print/PNG
+  - Left panel rewrite: flat list grouped by schema (no collapsible); schema header has indeterminate "check all" checkbox; `loadSchemas` auto-loads all schemas on connect
+  - `toggleSchemaErd`: check/uncheck all tables in a schema at once; individual table checkboxes still work
+  - `filteredSchemas` now also matches on table names within schema (not just schema name)
+  - ERD `TableNode` header: `ExternalLink` icon button calls `onTableClick` via `onMouseDown` to avoid drag interference
+  - ERD node click + `ExternalLink` button both navigate to Columns tab for that table
+  - Tab bar Columns context: "ERD" button switches back to ERD tab; table name shown as mono label
+  - Print/PNG panel in ERD canvas (top-right): paper size (A4/A3/Letter/Legal), orientation (portrait/landscape), Print opens popup window with `@page` CSS and auto-prints; PNG downloads via `html-to-image`
+  - Installed: `html-to-image`
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **implement** — Schema Explorer: Records panel + ERD node → Columns navigation
+  - New API `POST /api/schema-explorer/records` — fetches rows with COUNT, LIMIT/OFFSET (max 200), sanitized identifiers; supports PG + MySQL
+  - Records panel renders below Foreign Keys in Columns tab — auto-loads on table select, 50 rows/page with Prev/Next pagination, Reload button
+  - `null` values rendered as italic `null`; all values coerced to string for display
+  - ERD node click (`onNodeClick`) → calls `selectTable(node.id)` → switches to Columns tab and loads columns + records for that table
+  - Files: `src/pages/api/schema-explorer/records.ts` (new), `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **revision** — Schema Explorer: minimalist connected indicator
+  - Removed "✓ Connected" text label
+  - DB type badge changes to green border + small check icon when connected; reverts to blue when disconnected
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **revision** — Schema Explorer: add database picker in header
+  - After picking a connection, loads database list via `/api/pg-databases` (PG) or `/api/list-databases` (MySQL)
+  - Auto-selects `database_name` from the saved connection if present in list, else first in list
+  - `connPayload` now uses the selected database instead of the hardcoded `database_name`
+  - Connect button disabled until both connection and database are chosen
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **revision** — Schema Explorer: new navbar UI (matches Schema Generator & Export/Import)
+  - Header: sticky, backdrop-blur, `bg-white/95`, icon + title + subtitle on left, breadcrumb nav (Home › Schema Explorer) on right
+  - Connection controls (saved connection picker, DB type badge, Connect/Disconnect/Refresh) remain inline between title and breadcrumb
+  - Removed `ArrowLeft` back-button pattern
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **revision** — Schema Explorer: replace manual connection form with saved connection picker
+  - Removed: DB type toggle, host/port/database/username/password inputs, show-password button
+  - Added: `<select>` grouped by PostgreSQL/MySQL listing all `dbt_connections` records (label + database_name)
+  - `connToPayload()` helper maps `ConnectionRow` → `ConnPayload` (including `db_type: 'postgres'` → `'postgresql'`)
+  - All API calls guard against null `connPayload` (no connection selected)
+  - Cleaned unused imports: `ConnForm`, `DbType`, `FkInfo`, `Eye`, `EyeOff`, `useRef`
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+
 
 - **fix** — Import tab: add "Create new DB" to Target database selector
   - New `/api/create-database.ts` — unified PG + MySQL create DB endpoint (auth-protected)

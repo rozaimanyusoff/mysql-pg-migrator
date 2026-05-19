@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   Database, ArrowRight, UploadCloud, Wand2, Network,
-  ServerCog, Settings2, Lock, LogIn, LogOut, User, Eye, EyeOff, Mail,
+  Settings2, Lock, LogIn, LogOut, User, Eye, EyeOff, Mail, Columns,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 
 const modules = [
-  { key: 'db-setup',     title: 'Schema Generator',    desc: 'Apply AI-generated schema and seed data SQL to a PostgreSQL database.',         href: '/db-setup',     available: true,  Icon: ServerCog },
+  { key: 'schema-designer', title: 'Schema Designer',   desc: 'Design schemas and tables visually, import from SQL/XLSX/CSV or a live DB, and execute DDL against PostgreSQL or MySQL.', href: '/schema-designer', available: true, Icon: Columns },
   { key: 'export-import',title: 'Export & Import',     desc: 'Export local data and import to production environment safely.',                 href: '/export-import',available: true,  Icon: UploadCloud },
   { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '#',             available: false, Icon: Wand2 },
   { key: 'schema-explorer', title: 'Schema Explorer', desc: 'Browse any database, inspect columns, visualise ERD, and export migration SQL or XLSX.', href: '/schema-explorer', available: true, Icon: Network },

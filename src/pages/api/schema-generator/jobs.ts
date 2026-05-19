@@ -12,6 +12,8 @@ export interface SchemaJob {
   target_database: string | null;
   schema_file_path: string | null;
   seed_file_path: string | null;
+  schema_sql: string | null;
+  seed_sql: string | null;
   status: 'pending' | 'success' | 'failed';
   log: { step: string; ok: boolean; text: string }[] | null;
   created_at: string;
@@ -32,7 +34,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === 'GET') {
     const { rows } = await pool.query<SchemaJob>(
       `SELECT id, username, job_name, description, connection_label, target_database,
-              schema_file_path, seed_file_path, status, log, created_at
+              schema_file_path, seed_file_path, schema_sql, seed_sql, status, log, created_at
        FROM dbt_schema_jobs
        WHERE username = $1
        ORDER BY created_at DESC
