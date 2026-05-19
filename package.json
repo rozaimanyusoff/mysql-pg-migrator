@@ -14,7 +14,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/nodemailer": "^8.0.0",
     "@xyflow/react": "^12.10.2",
-    "axios": "^1.6.0",
+    "axios": "^1.15.2",
     "html-to-image": "^1.11.13",
     "jsonwebtoken": "^9.0.3",
     "jszip": "^3.10.1",
