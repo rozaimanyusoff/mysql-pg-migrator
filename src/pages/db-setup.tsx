@@ -7,10 +7,15 @@ import {
   XCircle, Terminal, Loader2, Server, FileCode2, Sprout, Info,
   Clock, ChevronDown, ChevronUp, X, Save, FolderOpen, Table2,
   KeyRound, Link2, Layers, Hash, Fingerprint, AlertCircle,
+  FileSpreadsheet, Eye,
 } from 'lucide-react';
 import type { ConnectionRow } from './api/connections/index';
 import type { SchemaJob } from './api/schema-generator/jobs';
 import { useAuth } from '../lib/auth-context';
+import {
+  PG_TYPES, type PgColumnType, type ParsedColumn, type ParsedTable,
+  parseExcelFile, generateSchemaSqlFromTables, generateSeedSqlFromTables,
+} from '../lib/excel-parser';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -443,6 +448,238 @@ function JobGroupCard({ group, onLoad }: { group: JobGroup; onLoad: (job: Schema
   );
 }
 
+// ── Excel import card ─────────────────────────────────────────────────────────
+
+function ExcelImportCard({ onParsed }: { onParsed: (tables: ParsedTable[]) => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  const process = async (file: File) => {
+    if (!/\.xlsx?$/i.test(file.name)) { setError('Upload a .xlsx or .xls file.'); return; }
+    setParsing(true); setError(null);
+    try {
+      const tables = await parseExcelFile(file);
+      if (tables.length === 0) { setError('No valid sheets found — each sheet needs a header row + at least one data row.'); return; }
+      onParsed(tables);
+    } catch { setError('Failed to parse file.'); }
+    finally { setParsing(false); }
+  };
+
+  return (
+    <section className="bg-white dark:bg-slate-900/70 border border-emerald-200 dark:border-emerald-800/60 rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-emerald-100 dark:border-emerald-800/40 bg-emerald-50/60 dark:bg-emerald-950/20">
+        <FileSpreadsheet size={15} className="text-emerald-500" />
+        <div>
+          <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">
+            Import from Excel
+            <span className="ml-2 text-xs font-normal text-gray-400 dark:text-slate-500">optional — alternative to pasting SQL</span>
+          </p>
+          <p className="text-xs text-gray-400 dark:text-slate-500">Each sheet becomes a table. Auto-generates Schema + Seed SQL into Steps 3 &amp; 4.</p>
+        </div>
+      </div>
+
+      <div className="p-4">
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) void process(f); }}
+          onClick={() => fileRef.current?.click()}
+          className={`relative flex flex-col items-center justify-center gap-3 py-8 rounded-xl border-2 border-dashed cursor-pointer transition-colors ${
+            dragging ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30'
+                     : 'border-gray-200 dark:border-slate-700 hover:border-emerald-400 dark:hover:border-emerald-700 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/10'
+          }`}
+        >
+          {parsing ? (
+            <><Loader2 size={22} className="text-emerald-500 animate-spin" /><p className="text-sm text-gray-400 dark:text-slate-500">Parsing…</p></>
+          ) : (
+            <>
+              <FileSpreadsheet size={24} className="text-gray-300 dark:text-slate-600" />
+              <div className="text-center">
+                <p className="text-sm font-medium text-gray-600 dark:text-slate-300">Drop Excel file here or click to browse</p>
+                <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">.xlsx · .xls &nbsp;·&nbsp; row 1 = headers, row 2+ = data</p>
+              </div>
+            </>
+          )}
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void process(f); e.target.value = ''; }} />
+        </div>
+
+        {error && (
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-rose-600 dark:text-rose-400">
+            <XCircle size={11} /> {error}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── Excel preview modal ────────────────────────────────────────────────────────
+
+function ExcelPreviewModal({
+  tables: initial, onApply, onClose,
+}: {
+  tables: ParsedTable[];
+  onApply: (schema: string, seed: string) => void;
+  onClose: () => void;
+}) {
+  const [tables, setTables]       = useState<ParsedTable[]>(initial);
+  const [activeSheet, setActive]  = useState(initial[0]?.sheetName ?? '');
+  const [showSample, setShowSample] = useState(false);
+
+  const active = tables.find((t) => t.sheetName === activeSheet);
+
+  const updateCol = (sheetName: string, idx: number, patch: Partial<ParsedColumn>) =>
+    setTables((prev) => prev.map((t) =>
+      t.sheetName === sheetName
+        ? { ...t, columns: t.columns.map((c, i) => i === idx ? { ...c, ...patch } : c) }
+        : t
+    ));
+
+  const totalRows = tables.reduce((s, t) => s + t.rowCount, 0);
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-4xl max-h-[90vh] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl flex flex-col">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <FileSpreadsheet size={15} className="text-emerald-500" />
+            <p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Excel Import Preview</p>
+            <span className="text-xs text-gray-400 dark:text-slate-500">{tables.length} sheet{tables.length !== 1 ? 's' : ''} · {totalRows} rows</span>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"><X size={16} /></button>
+        </div>
+
+        {/* Body */}
+        <div className="flex flex-1 min-h-0">
+
+          {/* Left — sheet list */}
+          <nav className="w-44 shrink-0 border-r border-gray-100 dark:border-slate-800 p-2 space-y-1 overflow-y-auto">
+            {tables.map((t) => (
+              <button key={t.sheetName} type="button" onClick={() => setActive(t.sheetName)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
+                  activeSheet === t.sheetName
+                    ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
+                    : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                }`}>
+                <p className="truncate font-medium">{t.sheetName}</p>
+                <p className="opacity-60 mt-0.5">{t.rowCount} rows · {t.columns.length} cols</p>
+              </button>
+            ))}
+          </nav>
+
+          {/* Right — column editor */}
+          {active && (
+            <div className="flex-1 p-4 overflow-y-auto space-y-4 min-w-0">
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-xs text-gray-500 dark:text-slate-400">
+                  Table:&nbsp;
+                  <code className="font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400">{active.name}</code>
+                </p>
+                <span className="text-[10px] text-gray-400 dark:text-slate-500">(sheet &quot;{active.sheetName}&quot;)</span>
+                <button type="button" onClick={() => setShowSample((v) => !v)}
+                  className="ml-auto inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                  <Eye size={10} /> {showSample ? 'Hide' : 'Show'} sample data
+                </button>
+              </div>
+
+              {/* Column type table */}
+              <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-slate-700">
+                      <th className="text-left px-3 py-2 font-medium text-gray-500 dark:text-slate-400">Excel Column</th>
+                      <th className="text-left px-3 py-2 font-medium text-gray-500 dark:text-slate-400">PG Name</th>
+                      <th className="text-left px-3 py-2 font-medium text-gray-500 dark:text-slate-400">Type</th>
+                      <th className="text-center px-3 py-2 font-medium text-gray-500 dark:text-slate-400">Nullable</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                    {active.columns.map((col, i) => (
+                      <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/20">
+                        <td className="px-3 py-2 font-mono text-gray-600 dark:text-slate-400">{col.originalName}</td>
+                        <td className="px-3 py-2 font-mono text-blue-600 dark:text-blue-400">{col.name}</td>
+                        <td className="px-3 py-2">
+                          <select value={col.type}
+                            onChange={(e) => updateCol(active.sheetName, i, { type: e.target.value as PgColumnType })}
+                            className="px-2 py-1 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            {PG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <input type="checkbox" checked={col.nullable}
+                            onChange={(e) => updateCol(active.sheetName, i, { nullable: e.target.checked })}
+                            className="rounded border-gray-300 dark:border-slate-600 accent-blue-600" />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Sample data */}
+              {showSample && active.sampleRows.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 mb-2">
+                    Sample data (first {active.sampleRows.length} rows)
+                  </p>
+                  <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-700">
+                    <table className="text-[10px] font-mono w-full">
+                      <thead>
+                        <tr className="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-100 dark:border-slate-800">
+                          {active.columns.map((c, i) => (
+                            <th key={i} className="text-left px-2 py-1.5 font-medium text-gray-500 dark:text-slate-400 whitespace-nowrap">{c.name}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                        {active.sampleRows.map((row, ri) => (
+                          <tr key={ri}>
+                            {row.map((cell, ci) => (
+                              <td key={ci} className="px-2 py-1.5 text-gray-600 dark:text-slate-400 max-w-[120px] truncate">
+                                {cell.trim() !== '' ? cell : <span className="opacity-30 italic">null</span>}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100 dark:border-slate-800 shrink-0">
+          <p className="text-xs text-gray-400 dark:text-slate-500">
+            Will generate <span className="font-semibold text-gray-700 dark:text-slate-300">{tables.length} CREATE TABLE</span> + <span className="font-semibold text-gray-700 dark:text-slate-300">{totalRows} INSERT</span> rows
+          </p>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
+              Cancel
+            </button>
+            <button type="button"
+              onClick={() => onApply(generateSchemaSqlFromTables(tables), generateSeedSqlFromTables(tables))}
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors">
+              <CheckCircle2 size={13} /> Apply to Schema + Seed
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // ── Save job modal ─────────────────────────────────────────────────────────────
 
 function SaveJobModal({ onSave, onSkip }: { onSave: (name: string, desc: string) => void; onSkip: () => void }) {
@@ -517,6 +754,9 @@ export default function SchemaGeneratorPage() {
 
   const [jobs, setJobs] = useState<SchemaJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
+
+  const [excelTables, setExcelTables]       = useState<ParsedTable[] | null>(null);
+  const [showExcelPreview, setShowExcelPreview] = useState(false);
 
   // Derived analysis
   const schemaAnalysis = useMemo(() => analyzeSchemaSql(schemaSql), [schemaSql]);
@@ -828,6 +1068,13 @@ export default function SchemaGeneratorPage() {
                 </section>
               )}
 
+              {/* Excel import — optional alternative to pasting SQL */}
+              {selectedConn && (
+                <ExcelImportCard
+                  onParsed={(tables) => { setExcelTables(tables); setShowExcelPreview(true); }}
+                />
+              )}
+
               {/* Step 3 — Schema SQL */}
               {selectedConn && (
                 <DragDropSqlField
@@ -937,6 +1184,21 @@ export default function SchemaGeneratorPage() {
 
           </div>
         </div>
+
+        {showExcelPreview && excelTables && (
+          <ExcelPreviewModal
+            tables={excelTables}
+            onApply={(schema, seed) => {
+              setSchemaSql(schema);
+              setSeedSql(seed);
+              setSchemaFile(null);
+              setSeedFile(null);
+              setShowExcelPreview(false);
+              setExcelTables(null);
+            }}
+            onClose={() => { setShowExcelPreview(false); setExcelTables(null); }}
+          />
+        )}
 
         {showSaveModal && (
           <SaveJobModal

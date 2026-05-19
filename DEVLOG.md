@@ -132,6 +132,29 @@
 
 ---
 
+## 2026-05-20
+
+- **fix** — Import tab: add "Create new DB" to Target database selector
+  - New `/api/create-database.ts` — unified PG + MySQL create DB endpoint (auth-protected)
+  - `DbSelector` in `export-import.tsx` — added `allowCreate` prop; shows Existing/New toggle; calls new API
+  - Only Import tab passes `allowCreate` — Export and Sync tabs unaffected
+  - Files: `src/pages/api/create-database.ts` (new), `src/pages/export-import.tsx`
+  - Status: done
+
+- **implement** — Export & Import: 8 enhancements
+  - **Shared lib** — `src/lib/excel-parser.ts` extracted from db-setup; reused by both Schema Generator and Export & Import
+  - **Table row counts** — `listTablesWithCounts()` in `sql-exporter.ts`; `TableSelector` shows row counts + >50k warning badge
+  - **Excel import (Import tab)** — SQL/Excel toggle; drag-drop `.xlsx`/`.xls`; `ExcelImportModal` with column type editor → generates INSERT SQL
+  - **Dry-run preview** — "Preview" button before import shows statement breakdown (CREATE/INSERT/DROP/TRUNCATE) + destructive warning
+  - **WHERE filter (Export)** — Optional per-export filter applied to all SELECT queries; toggled via "Add WHERE filter"
+  - **CSV export** — Format picker (SQL/CSV); CSV path zipped client-side via JSZip with one file per table
+  - **Conflict strategy (Sync)** — `ConflictPicker`: INSERT only / TRUNCATE+INSERT / Upsert (ON CONFLICT DO NOTHING / INSERT IGNORE)
+  - **Operation history** — `dbt_export_history` table; right-side `HistoryPanel` per tab; delete entries; persists across sessions
+  - **Large dataset warning** — Tables >50k rows flagged amber in TableSelector
+  - Files: `src/lib/excel-parser.ts` (new), `src/lib/sql-exporter.ts`, `src/pages/export-import.tsx`, `src/pages/api/export-import/tables.ts`, `src/pages/api/export-import/export.ts`, `src/pages/api/export-import/sync.ts`, `src/pages/api/export-import/history.ts` (new), `db/migrations/005_export_history.sql` (new)
+  - Installed: `jszip`
+  - Status: done
+
 ## 2026-05-19
 - **implement** — Export & Import module (`/export-import`)
   - 3 tabs: Export, Import, Sync
@@ -157,6 +180,15 @@
 
 - **implement** — Home screen: Export & Import link activated
   - `href: '/export-import'`, `available: true`
+  - Status: done
+
+- **implement** — Schema Generator: Excel import (`/db-setup`)
+  - New `ExcelImportCard` — drag-drop / browse `.xlsx`/`.xls`, shown between Step 2 and Step 3
+  - New `ExcelPreviewModal` — sheet list sidebar, per-column type editor (10 PG types), nullable toggle, sample data toggle
+  - Helper functions: `parseExcelFile` (SheetJS dynamic import), `inferPgType`, `sanitizePgName`, `generateSchemaSqlFromTables`, `generateSeedSqlFromTables`
+  - On apply: auto-populates Schema SQL (Step 3) + Seed SQL (Step 4), clears any previous file badges
+  - Installed: `xlsx` (SheetJS)
+  - Files: `src/pages/db-setup.tsx`, `package.json`
   - Status: done
 
 - **implement** — DEVLOG.md created; CLAUDE.md instruction added

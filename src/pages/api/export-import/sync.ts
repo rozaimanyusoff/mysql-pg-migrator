@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { Pool } from 'pg';
 import mysql from 'mysql2/promise';
 import { verifyAccessToken } from '../../../lib/auth-store';
-import { exportDatabase, ConnCfg, ExportInclude } from '../../../lib/sql-exporter';
+import { exportDatabase, ConnCfg, ExportInclude, ConflictStrategy } from '../../../lib/sql-exporter';
 
 interface SyncLog { step: string; ok: boolean; text: string }
 
@@ -12,9 +12,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const token = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   if (!token || !verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
-  const { source, target, tables, include } = req.body as {
+  const { source, target, tables, include, conflict } = req.body as {
     source?: ConnCfg; target?: ConnCfg;
     tables?: string[] | 'all'; include?: ExportInclude;
+    conflict?: ConflictStrategy;
   };
 
   if (!source?.host || !source?.user || !source?.database)
@@ -24,16 +25,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (source.db_type !== target.db_type)
     return res.status(400).json({ error: 'Cross-DB sync (MySQL↔PostgreSQL) is not supported in this module. Use the Migration module instead.' });
 
+  const strategy: ConflictStrategy = conflict ?? 'insert_only';
   const log: SyncLog[] = [];
 
   try {
-    // Step 1: Export from source
+    // Step 1: Export from source (with conflict strategy embedded in SQL)
     log.push({ step: 'export', ok: true, text: `[START] Exporting from source "${source.database}" (${source.db_type})…` });
-    const exported = await exportDatabase(source, tables ?? 'all', include ?? 'both');
+    const exported = await exportDatabase(source, tables ?? 'all', include ?? 'both', { conflictStrategy: strategy });
     log.push({ step: 'export', ok: true, text: `[OK] Exported ${exported.tables.length} table(s), ${exported.sql.length} bytes` });
 
     // Step 2: Import into target
-    log.push({ step: 'import', ok: true, text: `[START] Importing into target "${target.database}" (${target.db_type})…` });
+    const strategyLabel = strategy === 'insert_only' ? 'INSERT only' : strategy === 'truncate_insert' ? 'TRUNCATE + INSERT' : 'UPSERT';
+    log.push({ step: 'import', ok: true, text: `[START] Importing into target "${target.database}" (${target.db_type}) — strategy: ${strategyLabel}…` });
 
     if (target.db_type === 'postgres') {
       const pool = new Pool({

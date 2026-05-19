@@ -12,8 +12,14 @@ export interface ConnCfg {
 }
 
 export type ExportInclude = 'schema' | 'data' | 'both';
+export type ConflictStrategy = 'insert_only' | 'truncate_insert' | 'upsert';
 
-// ── value escaping ─────────────────────────────────────────────────────────────
+export interface TableInfo {
+  name: string;
+  rowCount: number;
+}
+
+// ── Value escaping ─────────────────────────────────────────────────────────────
 
 function pgVal(v: unknown): string {
   if (v === null || v === undefined) return 'NULL';
@@ -35,16 +41,28 @@ function myVal(v: unknown): string {
   return `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 }
 
+function csvVal(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  const s = v instanceof Date ? v.toISOString() : String(v);
+  return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 // ── PostgreSQL ─────────────────────────────────────────────────────────────────
 
-async function pgListTables(client: PoolClient, database: string): Promise<string[]> {
+async function pgListTablesWithCounts(client: PoolClient): Promise<TableInfo[]> {
   const { rows } = await client.query<{ table_name: string }>(
     `SELECT table_name FROM information_schema.tables
      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
      ORDER BY table_name`,
   );
-  void database;
-  return rows.map((r) => r.table_name);
+  const tables = rows.map((r) => r.table_name);
+  const counts = await Promise.all(
+    tables.map(async (t) => {
+      const { rows: cr } = await client.query<{ c: string }>(`SELECT COUNT(*)::text AS c FROM "${t}"`);
+      return { name: t, rowCount: parseInt(cr[0]?.c ?? '0', 10) };
+    }),
+  );
+  return counts;
 }
 
 async function pgExportSchema(client: PoolClient, table: string): Promise<string> {
@@ -121,60 +139,101 @@ async function pgExportSchema(client: PoolClient, table: string): Promise<string
   return sql;
 }
 
-async function pgExportData(client: PoolClient, table: string): Promise<string> {
-  const { rows, fields } = await client.query(`SELECT * FROM "${table}"`);
+async function pgExportData(
+  client: PoolClient, table: string,
+  whereClause?: string, conflictStrategy?: ConflictStrategy,
+): Promise<string> {
+  const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
+  const { rows, fields } = await client.query(`SELECT * FROM "${table}"${where}`);
   if (rows.length === 0) return '';
   const cols = fields.map((f) => `"${f.name}"`).join(', ');
-  const vals = rows
-    .map((r) => `(${fields.map((f) => pgVal(r[f.name])).join(', ')})`)
-    .join(',\n');
+  const vals = rows.map((r) => `(${fields.map((f) => pgVal(r[f.name])).join(', ')})`).join(',\n');
+
+  if (conflictStrategy === 'upsert') {
+    return `INSERT INTO "${table}" (${cols}) VALUES\n${vals}\nON CONFLICT DO NOTHING;\n`;
+  }
   return `INSERT INTO "${table}" (${cols}) VALUES\n${vals};\n`;
+}
+
+async function pgExportDataCsv(client: PoolClient, table: string, whereClause?: string): Promise<string> {
+  const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
+  const { rows, fields } = await client.query(`SELECT * FROM "${table}"${where}`);
+  const header = fields.map((f) => f.name).join(',');
+  if (rows.length === 0) return header + '\n';
+  const dataRows = rows.map((r) => fields.map((f) => csvVal(r[f.name])).join(','));
+  return [header, ...dataRows].join('\n') + '\n';
 }
 
 // ── MySQL ──────────────────────────────────────────────────────────────────────
 
-async function myListTables(conn: mysql.Connection, database: string): Promise<string[]> {
+async function myListTablesWithCounts(conn: mysql.Connection, database: string): Promise<TableInfo[]> {
   const [rows] = await conn.execute<mysql.RowDataPacket[]>(
-    `SELECT TABLE_NAME FROM information_schema.TABLES
+    `SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.TABLES
      WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`,
     [database],
   );
-  return rows.map((r) => r.TABLE_NAME as string);
+  return rows.map((r) => ({ name: r.TABLE_NAME as string, rowCount: Number(r.TABLE_ROWS ?? 0) }));
 }
 
 async function myExportSchema(conn: mysql.Connection, database: string, table: string): Promise<string> {
   const [rows] = await conn.execute<mysql.RowDataPacket[]>(
     `SHOW CREATE TABLE \`${database}\`.\`${table}\``,
   );
-  const ddl = rows[0]['Create Table'] as string;
-  return `${ddl};\n`;
+  return `${rows[0]['Create Table'] as string};\n`;
 }
 
-async function myExportData(conn: mysql.Connection, database: string, table: string): Promise<string> {
+async function myExportData(
+  conn: mysql.Connection, database: string, table: string,
+  whereClause?: string, conflictStrategy?: ConflictStrategy,
+): Promise<string> {
+  const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
   const [rows] = await conn.execute<mysql.RowDataPacket[]>(
-    `SELECT * FROM \`${database}\`.\`${table}\``,
+    `SELECT * FROM \`${database}\`.\`${table}\`${where}`,
   );
   if (!Array.isArray(rows) || rows.length === 0) return '';
   const cols = Object.keys(rows[0]).map((k) => `\`${k}\``).join(', ');
-  const vals = rows
-    .map((r) => `(${Object.values(r).map(myVal).join(', ')})`)
-    .join(',\n');
+  const vals = rows.map((r) => `(${Object.values(r).map(myVal).join(', ')})`).join(',\n');
+
+  if (conflictStrategy === 'upsert') {
+    return `INSERT IGNORE INTO \`${table}\` (${cols}) VALUES\n${vals};\n`;
+  }
   return `INSERT INTO \`${table}\` (${cols}) VALUES\n${vals};\n`;
+}
+
+async function myExportDataCsv(
+  conn: mysql.Connection, database: string, table: string, whereClause?: string,
+): Promise<string> {
+  const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
+  const [rows] = await conn.execute<mysql.RowDataPacket[]>(
+    `SELECT * FROM \`${database}\`.\`${table}\`${where}`,
+  );
+  if (!Array.isArray(rows) || rows.length === 0) return '';
+  const keys = Object.keys(rows[0]);
+  const header = keys.join(',');
+  const dataRows = (rows as Record<string, unknown>[]).map(
+    (r) => keys.map((k) => csvVal(r[k])).join(','),
+  );
+  return [header, ...dataRows].join('\n') + '\n';
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
-export async function listTables(cfg: ConnCfg): Promise<string[]> {
+export async function listTablesWithCounts(cfg: ConnCfg): Promise<TableInfo[]> {
   if (cfg.db_type === 'postgres') {
     const pool = makePgPool(cfg);
     const client = await pool.connect();
-    try { return await pgListTables(client, cfg.database); }
+    try { return await pgListTablesWithCounts(client); }
     finally { client.release(); await pool.end(); }
   } else {
     const conn = await makeMySQLConn(cfg);
-    try { return await myListTables(conn, cfg.database); }
+    try { return await myListTablesWithCounts(conn, cfg.database); }
     finally { await conn.end(); }
   }
+}
+
+// Keep the original for backwards compat
+export async function listTables(cfg: ConnCfg): Promise<string[]> {
+  return (await listTablesWithCounts(cfg)).map((t) => t.name);
 }
 
 export interface ExportResult {
@@ -183,11 +242,18 @@ export interface ExportResult {
   include: ExportInclude;
 }
 
+export interface ExportOptions {
+  whereClause?: string;
+  conflictStrategy?: ConflictStrategy;
+}
+
 export async function exportDatabase(
   cfg: ConnCfg,
   tables: string[] | 'all',
   include: ExportInclude,
+  opts: ExportOptions = {},
 ): Promise<ExportResult> {
+  const { whereClause, conflictStrategy } = opts;
   const header = `-- Export: ${cfg.database} (${cfg.db_type})\n-- Generated: ${new Date().toISOString()}\n-- Include: ${include}\n\n`;
   const parts: string[] = [header];
 
@@ -195,13 +261,21 @@ export async function exportDatabase(
     const pool = makePgPool(cfg);
     const client = await pool.connect();
     try {
-      const all = await pgListTables(client, cfg.database);
-      const target = tables === 'all' ? all : tables;
+      const allInfo = await pgListTablesWithCounts(client);
+      const allNames = allInfo.map((t) => t.name);
+      const target = tables === 'all' ? allNames : tables;
       parts.push('SET client_min_messages TO WARNING;\n\n');
+
+      if (conflictStrategy === 'truncate_insert' && include !== 'schema') {
+        for (const t of [...target].reverse())
+          parts.push(`TRUNCATE TABLE "${t}" CASCADE;\n`);
+        parts.push('\n');
+      }
+
       for (const t of target) {
         parts.push(`-- Table: ${t}\n`);
         if (include !== 'data') parts.push(await pgExportSchema(client, t));
-        if (include !== 'schema') parts.push(await pgExportData(client, t));
+        if (include !== 'schema') parts.push(await pgExportData(client, t, whereClause, conflictStrategy));
         parts.push('\n');
       }
       return { sql: parts.join(''), tables: target, include };
@@ -209,17 +283,60 @@ export async function exportDatabase(
   } else {
     const conn = await makeMySQLConn(cfg);
     try {
-      const all = await myListTables(conn, cfg.database);
-      const target = tables === 'all' ? all : tables;
+      const allInfo = await myListTablesWithCounts(conn, cfg.database);
+      const allNames = allInfo.map((t) => t.name);
+      const target = tables === 'all' ? allNames : tables;
       parts.push(`USE \`${cfg.database}\`;\nSET FOREIGN_KEY_CHECKS=0;\n\n`);
+
+      if (conflictStrategy === 'truncate_insert' && include !== 'schema') {
+        for (const t of target) parts.push(`TRUNCATE TABLE \`${t}\`;\n`);
+        parts.push('\n');
+      }
+
       for (const t of target) {
         parts.push(`-- Table: ${t}\n`);
         if (include !== 'data') parts.push(await myExportSchema(conn, cfg.database, t));
-        if (include !== 'schema') parts.push(await myExportData(conn, cfg.database, t));
+        if (include !== 'schema') parts.push(await myExportData(conn, cfg.database, t, whereClause, conflictStrategy));
         parts.push('\n');
       }
       parts.push('SET FOREIGN_KEY_CHECKS=1;\n');
       return { sql: parts.join(''), tables: target, include };
+    } finally { await conn.end(); }
+  }
+}
+
+export interface CsvExportResult {
+  csvFiles: { table: string; csv: string }[];
+  tables: string[];
+}
+
+export async function exportDatabaseCsv(
+  cfg: ConnCfg,
+  tables: string[] | 'all',
+  whereClause?: string,
+): Promise<CsvExportResult> {
+  if (cfg.db_type === 'postgres') {
+    const pool = makePgPool(cfg);
+    const client = await pool.connect();
+    try {
+      const allInfo = await pgListTablesWithCounts(client);
+      const allNames = allInfo.map((t) => t.name);
+      const target = tables === 'all' ? allNames : tables;
+      const csvFiles = await Promise.all(
+        target.map(async (t) => ({ table: t, csv: await pgExportDataCsv(client, t, whereClause) })),
+      );
+      return { csvFiles, tables: target };
+    } finally { client.release(); await pool.end(); }
+  } else {
+    const conn = await makeMySQLConn(cfg);
+    try {
+      const allInfo = await myListTablesWithCounts(conn, cfg.database);
+      const allNames = allInfo.map((t) => t.name);
+      const target = tables === 'all' ? allNames : tables;
+      const csvFiles = await Promise.all(
+        target.map(async (t) => ({ table: t, csv: await myExportDataCsv(conn, cfg.database, t, whereClause) })),
+      );
+      return { csvFiles, tables: target };
     } finally { await conn.end(); }
   }
 }
