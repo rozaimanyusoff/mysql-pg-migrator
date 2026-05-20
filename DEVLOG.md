@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-05-20
+- **revision** — Schema Designer overhaul: connection-free design, PostgreSQL-only, execute via modal
+  - Removed connection selector from page header — designer now works fully locally without any DB connection
+  - PostgreSQL-only: removed all MySQL branching from `TableTreePanel`, `ColumnEditorPanel`, `NewTableDialog`, DDL generation
+  - Schema/table creation always available — no longer gated behind a connected DB
+  - `ExecutePanel` stripped of all connection UI; job history now shows a Play button per group/run
+  - `JobRunCard` + `JobGroupCard` — added `onExecute` prop + Play icon button
+  - Added `ExecuteJobModal` component — connection + database picker, DDL re-generation, execution log, saves a new run record on completion
+  - `ImportPanel` — self-contained connection/db picker for "From DB" section
+  - Removed dead code: `SchemaAnalysis` interface, `SchemaAnalysisBadge` component, `NewDbDialog` component, `analyzeSchemaSql` function, `MYSQL_TYPES` constant, `useRouter` import, `Terminal` + `AlertCircle` icons
+  - Removed state: `selectedConnId`, `databases`, `selectedDb`, `loadingDbs`, `dbError`, `showNewDb`, `creatingDb`, `newDbError`, `executing`, `execLog`, `lastRunStatus`
+  - File: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: load-and-resave flow
+  - `handleLoadJob` now sets `loadedJob` state when a saved job is loaded into the designer
+  - `SaveJobModal` accepts `defaultName` + `defaultDesc` props — pre-fills job name/description when a job is loaded, so user can save a revision under the same name without retyping
+  - Modal shows an info banner when editing a loaded job; Save button label changes to "Save Revision" when the name matches the loaded job
+  - File: `src/pages/schema-designer.tsx`
+  - Status: done
+
 ## 2026-05-19
 - **implement** — Migration module v2: full replacement for old multi-page migration flow
   - New lib layer `src/lib/migv2/`: `types.ts`, `type-map.ts`, `job-store.ts`, `run-store.ts`, `runner.ts`

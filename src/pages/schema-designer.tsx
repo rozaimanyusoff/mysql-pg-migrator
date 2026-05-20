@@ -1,14 +1,14 @@
 'use client';
 import Head from 'next/head';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   ArrowLeft, Database, Plus, Trash2, Table2, Upload, Play, Copy,
   Check, RefreshCw, FileSpreadsheet, FileCode2, FileText, CheckCircle2,
   XCircle, Loader2, X, ChevronRight, ChevronDown, ChevronUp, Download,
-  AlertCircle, Columns, Sprout, Terminal, Save, Clock,
+  Columns, Sprout, Save, Clock,
   FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info, HelpCircle, BookOpen,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
@@ -52,16 +52,6 @@ interface ExecLogLine {
   text: string;
 }
 
-interface SchemaAnalysis {
-  tables: string[];
-  indexes: number;
-  uniqueIndexes: number;
-  foreignKeys: number;
-  extensions: string[];
-  enums: string[];
-  triggers: number;
-}
-
 interface SeedAnalysis {
   tables: string[];
   rowsPerTable: Record<string, number>;
@@ -85,14 +75,6 @@ const PG_TYPES = [
   'BYTEA',
 ];
 
-const MYSQL_TYPES = [
-  'INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'MEDIUMINT',
-  'BOOLEAN',
-  'VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT',
-  'FLOAT', 'DOUBLE', 'DECIMAL',
-  'DATE', 'TIME', 'DATETIME', 'TIMESTAMP',
-  'JSON', 'BLOB',
-];
 
 const NEEDS_LENGTH = new Set(['VARCHAR', 'CHAR', 'NUMERIC', 'DECIMAL']);
 
@@ -322,19 +304,6 @@ function mergeTables(existing: DesignerTable[], incoming: DesignerTable[]): Desi
   return [...existing, ...incoming.filter(t => !existingKeys.has(`${t.schema}.${t.name}`))];
 }
 
-// ─── SQL Analysis ────────────────────────────────────────────────────────────
-
-function analyzeSchemaSql(sql: string): SchemaAnalysis | null {
-  if (!sql.trim()) return null;
-  const tables = [...sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"?\w+"?\.)?"?(\w+)"?/gi)].map(m => m[1]);
-  const indexes = [...sql.matchAll(/CREATE\s+INDEX/gi)].length;
-  const uniqueIndexes = [...sql.matchAll(/CREATE\s+UNIQUE\s+INDEX/gi)].length;
-  const foreignKeys = [...sql.matchAll(/FOREIGN\s+KEY|REFERENCES\s+\w/gi)].length;
-  const extensions = [...sql.matchAll(/CREATE\s+EXTENSION\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?/gi)].map(m => m[1]);
-  const enums = [...sql.matchAll(/CREATE\s+TYPE\s+"?(\w+)"?\s+AS\s+ENUM/gi)].map(m => m[1]);
-  const triggers = [...sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER/gi)].length;
-  return { tables: [...new Set(tables)], indexes, uniqueIndexes, foreignKeys, extensions: [...new Set(extensions)], enums, triggers };
-}
 
 function analyzeSeedSql(sql: string): SeedAnalysis | null {
   if (!sql.trim()) return null;
@@ -389,34 +358,6 @@ function Popover({ trigger, children }: { trigger: React.ReactNode; children: Re
   );
 }
 
-function SchemaAnalysisBadge({ a }: { a: SchemaAnalysis }) {
-  return (
-    <Popover trigger={
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 text-xs text-blue-700 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-950/50 transition-colors select-none">
-        <Info size={11} />
-        <span className="font-medium">{a.tables.length} table{a.tables.length !== 1 ? 's' : ''}</span>
-        {a.indexes > 0 && <span className="opacity-70">· {a.indexes} index{a.indexes !== 1 ? 'es' : ''}</span>}
-        {a.foreignKeys > 0 && <span className="opacity-70">· {a.foreignKeys} FK{a.foreignKeys !== 1 ? 's' : ''}</span>}
-        {a.extensions.length > 0 && <span className="opacity-70">· {a.extensions.length} ext</span>}
-        <span className="opacity-50">— click for details</span>
-      </div>
-    }>
-      <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 mb-2">Schema Summary</p>
-      {a.tables.length > 0 && (
-        <div>
-          <p className="flex items-center gap-1.5 font-medium text-gray-600 dark:text-slate-300 mb-1"><Table2 size={11} /> Tables ({a.tables.length})</p>
-          <div className="flex flex-wrap gap-1">{a.tables.map(t => <span key={t} className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300 font-mono">{t}</span>)}</div>
-        </div>
-      )}
-      {a.indexes > 0 && <div className="flex items-center gap-1.5 text-gray-600 dark:text-slate-300"><Layers size={11} /><span>{a.indexes} index{a.indexes !== 1 ? 'es' : ''}{a.uniqueIndexes > 0 ? ` (${a.uniqueIndexes} unique)` : ''}</span></div>}
-      {a.foreignKeys > 0 && <div className="flex items-center gap-1.5 text-gray-600 dark:text-slate-300"><Link2 size={11} /><span>{a.foreignKeys} foreign key reference{a.foreignKeys !== 1 ? 's' : ''}</span></div>}
-      {a.enums.length > 0 && <div><p className="flex items-center gap-1.5 font-medium text-gray-600 dark:text-slate-300 mb-1"><Hash size={11} /> Enums</p><div className="flex flex-wrap gap-1">{a.enums.map(e => <span key={e} className="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400 font-mono">{e}</span>)}</div></div>}
-      {a.extensions.length > 0 && <div><p className="flex items-center gap-1.5 font-medium text-gray-600 dark:text-slate-300 mb-1"><KeyRound size={11} /> Extensions</p><div className="flex flex-wrap gap-1">{a.extensions.map(e => <span key={e} className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 font-mono">{e}</span>)}</div></div>}
-      {a.triggers > 0 && <div className="flex items-center gap-1.5 text-gray-600 dark:text-slate-300"><AlertCircle size={11} /><span>{a.triggers} trigger{a.triggers !== 1 ? 's' : ''}</span></div>}
-    </Popover>
-  );
-}
-
 function SeedAnalysisBadge({ a }: { a: SeedAnalysis }) {
   const strategyColor = { uuid: 'text-violet-700 dark:text-violet-400', sequential: 'text-amber-700 dark:text-amber-400', mixed: 'text-blue-700 dark:text-blue-400', none: 'text-gray-500 dark:text-slate-400' }[a.idStrategy];
   const strategyIcon = { uuid: <Fingerprint size={11} />, sequential: <Hash size={11} />, mixed: <Layers size={11} />, none: <Info size={11} /> }[a.idStrategy];
@@ -449,7 +390,7 @@ function SeedAnalysisBadge({ a }: { a: SeedAnalysis }) {
 
 // ─── Job Cards ────────────────────────────────────────────────────────────────
 
-function JobRunCard({ job, onLoad }: { job: SchemaJob; onLoad: (j: SchemaJob) => void }) {
+function JobRunCard({ job, onLoad, onExecute }: { job: SchemaJob; onLoad: (j: SchemaJob) => void; onExecute: (j: SchemaJob) => void }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div className={`rounded-lg border text-xs overflow-hidden ${job.status === 'success' ? 'border-emerald-200 dark:border-emerald-800/60' : job.status === 'failed' ? 'border-rose-200 dark:border-rose-800/60' : 'border-gray-200 dark:border-slate-700'}`}>
@@ -458,8 +399,11 @@ function JobRunCard({ job, onLoad }: { job: SchemaJob; onLoad: (j: SchemaJob) =>
         <span className="flex items-center gap-1 text-gray-400 dark:text-slate-500 shrink-0"><Clock size={9} />{timeAgo(job.created_at)}</span>
         {job.target_database && <span className="text-gray-500 dark:text-slate-400 truncate flex-1">{job.target_database}</span>}
         <div className="flex items-center gap-1 ml-auto shrink-0">
+          <button onClick={e => { e.stopPropagation(); onExecute(job); }} title="Execute this job against a database" className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-950/60 transition-colors">
+            <Play size={9} /> Run
+          </button>
           <button onClick={e => { e.stopPropagation(); onLoad(job); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-950/60 transition-colors">
-            <FolderOpen size={9} />{job.status === 'failed' ? 'Retry' : 'Load'}
+            <FolderOpen size={9} /> Load
           </button>
           {job.log && job.log.length > 0 && (
             <button onClick={e => { e.stopPropagation(); setExpanded(v => !v); }} className="p-0.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
@@ -482,26 +426,37 @@ function JobRunCard({ job, onLoad }: { job: SchemaJob; onLoad: (j: SchemaJob) =>
   );
 }
 
-function JobGroupCard({ group, onLoad }: { group: JobGroup; onLoad: (j: SchemaJob) => void }) {
+function JobGroupCard({ group, onLoad, onExecute }: { group: JobGroup; onLoad: (j: SchemaJob) => void; onExecute: (j: SchemaJob) => void }) {
   const [expanded, setExpanded] = useState(false);
   const latest = group.runs[0];
   const hasFailure = group.runs.some(r => r.status === 'failed');
   const allSuccess = group.runs.every(r => r.status === 'success');
   return (
     <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/60">
-      <button onClick={() => setExpanded(v => !v)} className="w-full flex items-center gap-2.5 px-3 py-3 text-left hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-gray-900 dark:text-slate-100 truncate">{group.job_name}</p>
-          <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{group.runs.length} run{group.runs.length !== 1 ? 's' : ''} · latest {timeAgo(latest.created_at)}</p>
-        </div>
+      <div className="w-full flex items-center gap-2.5 px-3 py-3">
+        <button onClick={() => setExpanded(v => !v)} className="flex-1 flex items-center gap-2 text-left hover:opacity-80 transition-opacity min-w-0">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-gray-900 dark:text-slate-100 truncate">{group.job_name}</p>
+            <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{group.runs.length} run{group.runs.length !== 1 ? 's' : ''} · latest {timeAgo(latest.created_at)}</p>
+          </div>
+          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${allSuccess ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : hasFailure ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'}`}>{allSuccess ? 'success' : hasFailure ? 'has failures' : latest.status}</span>
+        </button>
         <div className="flex items-center gap-1.5 shrink-0">
-          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${allSuccess ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : hasFailure ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'}`}>{allSuccess ? 'success' : hasFailure ? 'has failures' : latest.status}</span>
-          {expanded ? <ChevronUp size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
+          <button
+            onClick={() => onExecute(latest)}
+            title="Execute latest run against a database"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-950/60 transition-colors"
+          >
+            <Play size={10} /> Run
+          </button>
+          <button onClick={() => setExpanded(v => !v)} className="p-1 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
+            {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </button>
         </div>
-      </button>
+      </div>
       {expanded && (
         <div className="border-t border-gray-100 dark:border-slate-800 px-3 pb-3 pt-2 space-y-1.5">
-          {group.runs.map(run => <JobRunCard key={run.id} job={run} onLoad={onLoad} />)}
+          {group.runs.map(run => <JobRunCard key={run.id} job={run} onLoad={onLoad} onExecute={onExecute} />)}
         </div>
       )}
     </div>
@@ -510,11 +465,17 @@ function JobGroupCard({ group, onLoad }: { group: JobGroup; onLoad: (j: SchemaJo
 
 // ─── Save Job Modal ───────────────────────────────────────────────────────────
 
-function SaveJobModal({ onSave, onSkip }: { onSave: (name: string, desc: string) => void; onSkip: () => void }) {
-  const [name, setName] = useState('');
-  const [desc, setDesc] = useState('');
+function SaveJobModal({ onSave, onSkip, defaultName, defaultDesc }: {
+  onSave: (name: string, desc: string) => void;
+  onSkip: () => void;
+  defaultName?: string;
+  defaultDesc?: string;
+}) {
+  const [name, setName] = useState(defaultName ?? '');
+  const [desc, setDesc] = useState(defaultDesc ?? '');
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
+  const isUpdate = !!defaultName && name.trim() === defaultName.trim();
   return (
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl">
@@ -523,6 +484,12 @@ function SaveJobModal({ onSave, onSkip }: { onSave: (name: string, desc: string)
           <button onClick={onSkip} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
         </div>
         <div className="p-5 space-y-4">
+          {defaultName && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-400">
+              <FolderOpen size={12} />
+              <span>Loaded from <strong>{defaultName}</strong> — saving with the same name adds a new revision.</span>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Job Name <span className="text-rose-500">*</span></label>
             <input ref={ref} value={name} onChange={e => setName(e.target.value)}
@@ -543,7 +510,7 @@ function SaveJobModal({ onSave, onSkip }: { onSave: (name: string, desc: string)
           <button onClick={onSkip} className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">Skip</button>
           <button onClick={() => name.trim() && onSave(name.trim(), desc.trim())} disabled={!name.trim()}
             className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors">
-            <Save size={13} /> Save
+            <Save size={13} /> {isUpdate ? 'Save Revision' : 'Save'}
           </button>
         </div>
       </div>
@@ -647,14 +614,13 @@ function FkPickerModal({ tables, currentTableId, value, onSelect, onClose }: {
 
 // ─── Column Editor ────────────────────────────────────────────────────────────
 
-function ColumnEditorPanel({ table, tables, dbType, onUpdate, onDeleteTable }: {
+function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
   table: DesignerTable;
   tables: DesignerTable[];
-  dbType: DbType;
   onUpdate: (t: DesignerTable) => void;
   onDeleteTable: () => void;
 }) {
-  const types = dbType === 'postgresql' ? PG_TYPES : MYSQL_TYPES;
+  const types = PG_TYPES;
   const [fkPickerColId, setFkPickerColId] = useState<string | null>(null);
 
   const updateCol = (colId: string, patch: Partial<DesignerColumn>) =>
@@ -685,19 +651,24 @@ function ColumnEditorPanel({ table, tables, dbType, onUpdate, onDeleteTable }: {
           onChange={e => onUpdate({ ...table, name: e.target.value })}
           placeholder="table_name"
         />
-        {dbType === 'postgresql' && (
-          <>
-            <span className="text-gray-300 dark:text-slate-600">·</span>
-            <span className="text-[11px] text-gray-400 dark:text-slate-500">schema:</span>
-            <input
-              className="text-[11px] bg-transparent border-0 outline-none text-gray-500 dark:text-slate-400 font-mono w-24 focus:ring-0"
-              value={table.schema}
-              onChange={e => onUpdate({ ...table, schema: e.target.value })}
-              placeholder="public"
-            />
-          </>
-        )}
+        <>
+          <span className="text-gray-300 dark:text-slate-600">·</span>
+          <span className="text-[11px] text-gray-400 dark:text-slate-500">schema:</span>
+          <input
+            className="text-[11px] bg-transparent border-0 outline-none text-gray-500 dark:text-slate-400 font-mono w-24 focus:ring-0"
+            value={table.schema}
+            onChange={e => onUpdate({ ...table, schema: e.target.value })}
+            placeholder="public"
+          />
+        </>
         <span className="ml-auto text-[11px] text-gray-400 dark:text-slate-500">{table.columns.length} column{table.columns.length !== 1 ? 's' : ''}</span>
+        <button
+          onClick={addCol}
+          title="Add column"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+        >
+          <Plus size={11} /> Add Column
+        </button>
         <button onClick={onDeleteTable} title="Delete table" className="p-1 text-gray-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
           <Trash2 size={13} />
         </button>
@@ -867,10 +838,9 @@ function ColumnEditorPanel({ table, tables, dbType, onUpdate, onDeleteTable }: {
 
 // ─── Table Tree Panel ─────────────────────────────────────────────────────────
 
-function TableTreePanel({ tables, selectedId, dbType, schemas, onSelect, onDelete, onAdd, onAddSchema, onAddTableFor }: {
+function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd, onAddSchema, onAddTableFor }: {
   tables: DesignerTable[];
   selectedId: string | null;
-  dbType: DbType;
   schemas: string[];
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -880,18 +850,14 @@ function TableTreePanel({ tables, selectedId, dbType, schemas, onSelect, onDelet
 }) {
   const grouped = useMemo(() => {
     const m = new Map<string, DesignerTable[]>();
-    if (dbType === 'postgresql') {
-      for (const s of schemas) { if (!m.has(s)) m.set(s, []); }
-    } else {
-      m.set('', []);
-    }
+    for (const s of schemas) { if (!m.has(s)) m.set(s, []); }
     for (const t of tables) {
-      const key = dbType === 'postgresql' ? (t.schema || 'public') : '';
+      const key = t.schema || 'public';
       if (!m.has(key)) m.set(key, []);
       m.get(key)!.push(t);
     }
     return m;
-  }, [tables, dbType, schemas]);
+  }, [tables, schemas]);
 
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['public', '']));
   const toggleSchema = (s: string) => setExpanded(p => { const n = new Set(p); n.has(s) ? n.delete(s) : n.add(s); return n; });
@@ -906,14 +872,12 @@ function TableTreePanel({ tables, selectedId, dbType, schemas, onSelect, onDelet
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          {dbType === 'postgresql' && (
-            <button
-              onClick={onAddSchema}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
-            >
-              <Plus size={11} /> Schema
-            </button>
-          )}
+          <button
+            onClick={onAddSchema}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+          >
+            <Plus size={11} /> Schema
+          </button>
           <button
             onClick={onAdd}
             className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
@@ -925,41 +889,32 @@ function TableTreePanel({ tables, selectedId, dbType, schemas, onSelect, onDelet
 
       {/* Tree */}
       <div className="flex-1 overflow-y-auto py-1">
-        {tables.length === 0 && dbType === 'mysql' && (
-          <div className="flex flex-col items-center justify-center gap-2 p-4 h-28">
-            <Table2 size={24} className="text-gray-200 dark:text-slate-700" />
-            <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">No tables yet.<br />Click + to add one.</p>
-          </div>
-        )}
-
         {Array.from(grouped.entries()).map(([schema, schemaTables]) => (
           <div key={schema}>
-            {/* Schema header (PG only) */}
-            {dbType === 'postgresql' && (
-              <div className="flex items-center group/schema">
-                <button
-                  onClick={() => toggleSchema(schema)}
-                  className="flex-1 flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors"
-                >
-                  {expanded.has(schema) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                  <Layers size={10} />
-                  <span>{schema || 'public'}</span>
-                  {schemaTables.length > 0 && <span className="opacity-60">({schemaTables.length})</span>}
-                </button>
-                <button
-                  onClick={() => onAddTableFor(schema)}
-                  title={`Add table to ${schema}`}
-                  className="opacity-0 group-hover/schema:opacity-100 p-1.5 mr-1 text-gray-400 hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400 transition-all shrink-0"
-                >
-                  <Plus size={11} />
-                </button>
-              </div>
-            )}
+            {/* Schema header */}
+            <div className="flex items-center group/schema">
+              <button
+                onClick={() => toggleSchema(schema)}
+                className="flex-1 flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors"
+              >
+                {expanded.has(schema) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                <Layers size={10} />
+                <span>{schema || 'public'}</span>
+                {schemaTables.length > 0 && <span className="opacity-60">({schemaTables.length})</span>}
+              </button>
+              <button
+                onClick={() => onAddTableFor(schema)}
+                title={`Add table to ${schema}`}
+                className="opacity-0 group-hover/schema:opacity-100 p-1.5 mr-1 text-gray-400 hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400 transition-all shrink-0"
+              >
+                <Plus size={11} />
+              </button>
+            </div>
 
             {/* Tables under schema */}
-            {(dbType === 'mysql' || expanded.has(schema)) && (
+            {expanded.has(schema) && (
               <>
-                {schemaTables.length === 0 && dbType === 'postgresql' && (
+                {schemaTables.length === 0 && (
                   <p className="pl-8 py-1.5 text-[10px] italic text-gray-300 dark:text-slate-700">
                     Empty — hover + to add table
                   </p>
@@ -971,8 +926,7 @@ function TableTreePanel({ tables, selectedId, dbType, schemas, onSelect, onDelet
                     <div
                       key={t.id}
                       onClick={() => onSelect(t.id)}
-                      className={`group flex items-center gap-2 py-1.5 cursor-pointer transition-colors
-                        ${dbType === 'postgresql' ? 'pl-7 pr-2' : 'px-3'}
+                      className={`group flex items-center gap-2 py-1.5 pl-7 pr-2 cursor-pointer transition-colors
                         ${selectedId === t.id
                           ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
                           : 'hover:bg-gray-50 dark:hover:bg-slate-800/30 text-gray-700 dark:text-slate-300'}`}
@@ -1002,10 +956,8 @@ function TableTreePanel({ tables, selectedId, dbType, schemas, onSelect, onDelet
 
 // ─── Import Panel ─────────────────────────────────────────────────────────────
 
-function ImportPanel({ conn, selectedDb, dbType, onMerge }: {
-  conn: ConnectionRow | null;
-  selectedDb: string;
-  dbType: DbType;
+function ImportPanel({ connections, onMerge }: {
+  connections: ConnectionRow[];
   onMerge: (tables: DesignerTable[]) => void;
 }) {
   // SQL import
@@ -1013,10 +965,7 @@ function ImportPanel({ conn, selectedDb, dbType, onMerge }: {
   const [sqlParsed, setSqlParsed] = useState<DesignerTable[]>([]);
   const sqlFileRef = useRef<HTMLInputElement>(null);
 
-  const parseSql = () => {
-    const tables = parseSqlToTables(sqlText);
-    setSqlParsed(tables);
-  };
+  const parseSql = () => { setSqlParsed(parseSqlToTables(sqlText)); };
 
   const handleSqlFile = (file: File) => {
     const reader = new FileReader();
@@ -1065,7 +1014,28 @@ function ImportPanel({ conn, selectedDb, dbType, onMerge }: {
     reader.readAsText(file);
   };
 
-  // From DB
+  // From DB — own connection/db picker
+  const [importConnId, setImportConnId] = useState<number | null>(null);
+  const [importDbs, setImportDbs] = useState<string[]>([]);
+  const [importDb, setImportDb] = useState('');
+  const [loadingImportDbs, setLoadingImportDbs] = useState(false);
+  const importConn = connections.find(c => c.id === importConnId) ?? null;
+
+  const loadImportDbs = useCallback(async (conn: ConnectionRow) => {
+    setLoadingImportDbs(true);
+    setImportDbs([]);
+    setImportDb('');
+    try {
+      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn), { headers: authH() });
+      setImportDbs(data.databases);
+      if (data.databases.length) setImportDb(data.databases[0]);
+    } catch { /* ignore */ } finally { setLoadingImportDbs(false); }
+  }, []);
+
+  useEffect(() => {
+    if (importConn) void loadImportDbs(importConn);
+  }, [importConn, loadImportDbs]);
+
   const [dbSchemas, setDbSchemas] = useState<SchemaInfo[]>([]);
   const [dbTables, setDbTables] = useState<Record<string, TableInfo[]>>({});
   const [dbExpanded, setDbExpanded] = useState<Set<string>>(new Set());
@@ -1074,19 +1044,21 @@ function ImportPanel({ conn, selectedDb, dbType, onMerge }: {
   const [importingFromDb, setImportingFromDb] = useState(false);
 
   const loadDbSchemas = useCallback(async () => {
-    if (!conn || !selectedDb) return;
+    if (!importConn || !importDb) return;
     setLoadingDbSchema(true);
+    setDbSchemas([]);
+    setDbTables({});
     try {
-      const explorerConn = connToExplorerConn(conn, selectedDb);
+      const explorerConn = connToExplorerConn(importConn, importDb);
       const { data } = await axios.post<{ schemas: SchemaInfo[] }>('/api/schema-explorer/schemas', explorerConn, { headers: authH() });
       setDbSchemas(data.schemas);
     } catch { /* ignore */ } finally { setLoadingDbSchema(false); }
-  }, [conn, selectedDb]);
+  }, [importConn, importDb]);
 
   const loadDbTables = async (schema: string) => {
-    if (!conn || !selectedDb || dbTables[schema]) return;
+    if (!importConn || !importDb || dbTables[schema]) return;
     try {
-      const explorerConn = connToExplorerConn(conn, selectedDb);
+      const explorerConn = connToExplorerConn(importConn, importDb);
       const { data } = await axios.post<{ tables: TableInfo[] }>('/api/schema-explorer/tables', { conn: explorerConn, schemas: [schema] }, { headers: authH() });
       setDbTables(p => ({ ...p, [schema]: data.tables }));
     } catch { /* ignore */ }
@@ -1102,9 +1074,9 @@ function ImportPanel({ conn, selectedDb, dbType, onMerge }: {
   };
 
   const importFromDb = async () => {
-    if (!conn || !selectedDb || !dbSelected.size) return;
+    if (!importConn || !importDb || !dbSelected.size) return;
     setImportingFromDb(true);
-    const explorerConn = connToExplorerConn(conn, selectedDb);
+    const explorerConn = connToExplorerConn(importConn, importDb);
     const imported: DesignerTable[] = [];
     for (const key of dbSelected) {
       try {
@@ -1130,53 +1102,80 @@ function ImportPanel({ conn, selectedDb, dbType, onMerge }: {
     <div className="p-6 overflow-auto h-full space-y-5">
 
       {/* From DB */}
-      {conn && selectedDb && (
-        <div className={sectionClass}>
-          <div className={sectionHeaderClass}>
-            <Database size={14} className="text-blue-500" />
-            <div className="flex-1">
-              <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">From Connected Database</p>
-              <p className="text-[11px] text-gray-400 dark:text-slate-500">{conn.label} → {selectedDb}</p>
-            </div>
-            <button onClick={loadDbSchemas} disabled={loadingDbSchema}
+      <div className={sectionClass}>
+        <div className={sectionHeaderClass}>
+          <Database size={14} className="text-blue-500" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">From Database</p>
+            <p className="text-[11px] text-gray-400 dark:text-slate-500">Import existing tables as designer definitions</p>
+          </div>
+        </div>
+        {/* Connection + DB picker */}
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900 flex-wrap">
+          <select
+            value={importConnId ?? ''}
+            onChange={e => setImportConnId(e.target.value ? Number(e.target.value) : null)}
+            className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[160px] focus:outline-none focus:border-blue-400 cursor-pointer"
+          >
+            <option value="">— select connection —</option>
+            {connections.filter(c => c.db_type === 'postgres').map(c => (
+              <option key={c.id} value={c.id}>{c.label}</option>
+            ))}
+          </select>
+          {importConn && (
+            loadingImportDbs
+              ? <span className="text-xs text-gray-400 animate-pulse">Loading…</span>
+              : (
+                <select
+                  value={importDb}
+                  onChange={e => { setImportDb(e.target.value); setDbSchemas([]); setDbTables({}); }}
+                  className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[120px] focus:outline-none focus:border-blue-400 cursor-pointer font-mono"
+                >
+                  {importDbs.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              )
+          )}
+          {importConn && importDb && (
+            <button onClick={() => void loadDbSchemas()} disabled={loadingDbSchema}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
               {loadingDbSchema ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
               Load Schemas
             </button>
-          </div>
-          {dbSchemas.length > 0 && (
-            <div className="divide-y divide-gray-100 dark:divide-slate-800 max-h-64 overflow-auto">
-              {dbSchemas.map(s => (
-                <div key={s.schema}>
-                  <button onClick={() => void toggleDbSchema(s.schema)}
-                    className="w-full flex items-center gap-2 px-5 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors text-left">
-                    {dbExpanded.has(s.schema) ? <ChevronDown size={11} className="text-gray-400" /> : <ChevronRight size={11} className="text-gray-400" />}
-                    <span className="text-xs font-medium text-gray-700 dark:text-slate-200">{s.schema}</span>
-                    <span className="text-[10px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</span>
-                  </button>
-                  {dbExpanded.has(s.schema) && (dbTables[s.schema] ?? []).map(t => {
-                    const key = `${t.schema}.${t.name}`;
-                    return (
-                      <label key={key} className="flex items-center gap-2.5 pl-10 pr-5 py-1.5 hover:bg-gray-50 dark:hover:bg-slate-800/20 cursor-pointer">
-                        <input type="checkbox" className="w-3.5 h-3.5 accent-blue-500 rounded" checked={dbSelected.has(key)} onChange={() => toggleDbTable(key)} />
-                        <Table2 size={11} className="text-gray-400 dark:text-slate-500 shrink-0" />
-                        <span className="text-[11px] text-gray-700 dark:text-slate-300">{t.name}</span>
-                        <span className="text-[10px] text-gray-400 dark:text-slate-500 ml-auto">{t.columnCount} cols</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
           )}
-          {dbSchemas.length > 0 && (
-            <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-800 flex items-center gap-3">
-              {applyBtn(() => void importFromDb(), importingFromDb || !dbSelected.size, importingFromDb ? 'Importing…' : `Import Selected (${dbSelected.size})`)}
-              {dbSelected.size > 0 && <button onClick={() => setDbSelected(new Set())} className="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">Clear</button>}
-            </div>
-          )}
+          {!importConn && <span className="text-[11px] text-gray-400 dark:text-slate-500">Select a PostgreSQL connection to browse tables.</span>}
         </div>
-      )}
+        {dbSchemas.length > 0 && (
+          <div className="divide-y divide-gray-100 dark:divide-slate-800 max-h-64 overflow-auto">
+            {dbSchemas.map(s => (
+              <div key={s.schema}>
+                <button onClick={() => void toggleDbSchema(s.schema)}
+                  className="w-full flex items-center gap-2 px-5 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors text-left">
+                  {dbExpanded.has(s.schema) ? <ChevronDown size={11} className="text-gray-400" /> : <ChevronRight size={11} className="text-gray-400" />}
+                  <span className="text-xs font-medium text-gray-700 dark:text-slate-200">{s.schema}</span>
+                  <span className="text-[10px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</span>
+                </button>
+                {dbExpanded.has(s.schema) && (dbTables[s.schema] ?? []).map(t => {
+                  const key = `${t.schema}.${t.name}`;
+                  return (
+                    <label key={key} className="flex items-center gap-2.5 pl-10 pr-5 py-1.5 hover:bg-gray-50 dark:hover:bg-slate-800/20 cursor-pointer">
+                      <input type="checkbox" className="w-3.5 h-3.5 accent-blue-500 rounded" checked={dbSelected.has(key)} onChange={() => toggleDbTable(key)} />
+                      <Table2 size={11} className="text-gray-400 dark:text-slate-500 shrink-0" />
+                      <span className="text-[11px] text-gray-700 dark:text-slate-300">{t.name}</span>
+                      <span className="text-[10px] text-gray-400 dark:text-slate-500 ml-auto">{t.columnCount} cols</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+        {dbSchemas.length > 0 && (
+          <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-800 flex items-center gap-3">
+            {applyBtn(() => void importFromDb(), importingFromDb || !dbSelected.size, importingFromDb ? 'Importing…' : `Import Selected (${dbSelected.size})`)}
+            {dbSelected.size > 0 && <button onClick={() => setDbSelected(new Set())} className="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">Clear</button>}
+          </div>
+        )}
+      </div>
 
       {/* SQL import */}
       <div className={sectionClass}>
@@ -1300,26 +1299,21 @@ function ImportPanel({ conn, selectedDb, dbType, onMerge }: {
 
 // ─── Execute Panel ────────────────────────────────────────────────────────────
 
-function ExecutePanel({ tables, conn, selectedDb, dbType, seedSql, onSeedSqlChange, executing, execLog, onExecute, lastRunStatus, onSaveJob, jobs, loadingJobs, onLoadJob }: {
+function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadingJobs, onLoadJob, onExecuteJob }: {
   tables: DesignerTable[];
-  conn: ConnectionRow | null;
-  selectedDb: string;
-  dbType: DbType;
   seedSql: string;
   onSeedSqlChange: (v: string) => void;
-  executing: boolean;
-  execLog: ExecLogLine[];
-  onExecute: () => void;
-  lastRunStatus: 'success' | 'failed' | null;
   onSaveJob: () => void;
   jobs: SchemaJob[];
   loadingJobs: boolean;
   onLoadJob: (j: SchemaJob) => void;
+  onExecuteJob: (j: SchemaJob) => void;
 }) {
-  const ddlText = useMemo(() => generateDDL(tables, dbType).join('\n\n'), [tables, dbType]);
+  const ddlText = useMemo(() => generateDDL(tables, 'postgresql').join('\n\n'), [tables]);
   const [copied, setCopied] = useState(false);
   const [copiedSeed, setCopiedSeed] = useState(false);
   const groupedJobs = useMemo(() => groupJobs(jobs), [jobs]);
+  const seedAnalysis = analyzeSeedSql(seedSql);
 
   const copyDdl = async () => {
     await navigator.clipboard.writeText(ddlText);
@@ -1341,11 +1335,6 @@ function ExecutePanel({ tables, conn, selectedDb, dbType, seedSql, onSeedSqlChan
     setTimeout(() => setCopiedSeed(false), 1500);
   };
 
-  const canRun = !!conn && !!selectedDb && tables.length > 0 && !executing;
-  const successCount = execLog.filter(l => l.ok).length;
-  const failCount = execLog.filter(l => !l.ok).length;
-  const seedAnalysis = analyzeSeedSql(seedSql);
-
   return (
     <div className="h-full overflow-hidden flex flex-col xl:flex-row gap-0">
 
@@ -1357,7 +1346,7 @@ function ExecutePanel({ tables, conn, selectedDb, dbType, seedSql, onSeedSqlChan
           <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
             <FileCode2 size={14} className="text-emerald-500" />
             <span className="text-xs font-semibold text-gray-700 dark:text-slate-200">Generated DDL</span>
-            <span className="text-[11px] text-gray-400 dark:text-slate-500 ml-1">({dbType})</span>
+            <span className="text-[11px] text-gray-400 dark:text-slate-500 ml-1">(postgresql)</span>
             <div className="ml-auto flex items-center gap-2">
               <button onClick={downloadDdl} disabled={!ddlText} title="Download .sql"
                 className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 transition-colors">
@@ -1408,84 +1397,38 @@ function ExecutePanel({ tables, conn, selectedDb, dbType, seedSql, onSeedSqlChan
         </div>
       </div>
 
-      {/* Right: Run Controls + Log + Job History */}
-      <div className="w-full xl:w-80 shrink-0 flex flex-col overflow-hidden bg-white dark:bg-slate-900">
-        <div className="shrink-0 px-5 py-4 border-b border-gray-200 dark:border-slate-800 space-y-3">
-          <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Execute Against</p>
-          {conn && selectedDb ? (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700">
-              <Database size={12} className="text-blue-500 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium text-gray-700 dark:text-slate-200 truncate">{conn.label}</p>
-                <p className="text-[10px] text-gray-400 dark:text-slate-500 font-mono truncate">{selectedDb}</p>
-              </div>
-              <span className={`ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded ${conn.db_type === 'postgres' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400'}`}>
-                {conn.db_type === 'postgres' ? 'PG' : 'MySQL'}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-600 dark:text-amber-400">
-              <AlertCircle size={12} /> Select a connection and database above
-            </div>
-          )}
-          <button onClick={onExecute} disabled={!canRun}
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
-            {executing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            {executing ? 'Executing…' : `Execute (${tables.length} table${tables.length !== 1 ? 's' : ''}${seedSql.trim() ? ' + seed' : ''})`}
+      {/* Right: Job History */}
+      <div className="w-full xl:w-96 shrink-0 flex flex-col overflow-hidden bg-white dark:bg-slate-900">
+        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-gray-200 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <Clock size={13} className="text-gray-400 dark:text-slate-500" />
+            <span className="text-xs font-semibold text-gray-700 dark:text-slate-200">Saved Jobs</span>
+            {loadingJobs && <Loader2 size={10} className="animate-spin text-gray-400" />}
+          </div>
+          <button
+            onClick={onSaveJob}
+            disabled={tables.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+          >
+            <Save size={11} /> Save Current Schema
           </button>
-          {lastRunStatus && (
-            <div className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-[11px] font-medium ${lastRunStatus === 'success' ? 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400' : 'bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-400'}`}>
-              <div className="flex items-center gap-1.5">
-                {lastRunStatus === 'success' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                {lastRunStatus === 'success' ? 'Execution succeeded' : 'Execution had errors'}
-              </div>
-              <button onClick={onSaveJob}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-white/60 dark:bg-slate-800/60 border border-current/20 hover:bg-white/90 dark:hover:bg-slate-700/60 transition-colors">
-                <Save size={9} /> Save Job
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* Log + Job History */}
         <div className="flex-1 overflow-auto">
-          {execLog.length > 0 ? (
-            <>
-              <div className="flex items-center gap-3 px-5 py-2.5 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
-                <span className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">Execution Log</span>
-                {successCount > 0 && <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{successCount} ok</span>}
-                {failCount > 0 && <span className="text-[10px] text-rose-600 dark:text-rose-400">{failCount} failed</span>}
-              </div>
-              <div className="p-3 space-y-1.5 font-mono">
-                {execLog.map((line, i) => (
-                  <div key={i} className={`flex items-start gap-2 text-[10px] leading-relaxed ${line.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                    {line.ok ? <CheckCircle2 size={10} className="mt-0.5 shrink-0" /> : <XCircle size={10} className="mt-0.5 shrink-0" />}
-                    <span className="break-all">{line.text}</span>
-                  </div>
-                ))}
-              </div>
-            </>
+          {groupedJobs.length === 0 && !loadingJobs ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 px-6">
+              <Clock size={28} className="text-gray-200 dark:text-slate-700" />
+              <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">
+                No saved jobs yet.<br />Save your schema design to create a job, then click <strong>Run</strong> to execute it against a database.
+              </p>
+            </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-8 gap-2 px-6">
-              <Terminal size={22} className="text-gray-200 dark:text-slate-700" />
-              <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">Execution log appears here after running.</p>
+            <div className="p-4 space-y-2">
+              {groupedJobs.map(g => (
+                <JobGroupCard key={g.job_name} group={g} onLoad={onLoadJob} onExecute={onExecuteJob} />
+              ))}
             </div>
           )}
-
-          {/* Job History */}
-          <div className="border-t border-gray-100 dark:border-slate-800 px-4 py-3">
-            <div className="flex items-center gap-2 mb-3">
-              <Clock size={12} className="text-gray-400 dark:text-slate-500" />
-              <span className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">Job History</span>
-              {loadingJobs && <Loader2 size={10} className="animate-spin text-gray-400" />}
-            </div>
-            {groupedJobs.length === 0 && !loadingJobs && (
-              <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-2">No saved jobs yet.</p>
-            )}
-            <div className="space-y-2">
-              {groupedJobs.map(g => <JobGroupCard key={g.job_name} group={g} onLoad={onLoadJob} />)}
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -1494,8 +1437,7 @@ function ExecutePanel({ tables, conn, selectedDb, dbType, seedSql, onSeedSqlChan
 
 // ─── New Table Dialog ─────────────────────────────────────────────────────────
 
-function NewTableDialog({ dbType, defaultSchema, onConfirm, onClose }: {
-  dbType: DbType;
+function NewTableDialog({ defaultSchema, onConfirm, onClose }: {
   defaultSchema?: string;
   onConfirm: (name: string, schema: string) => void;
   onClose: () => void;
@@ -1515,15 +1457,13 @@ function NewTableDialog({ dbType, defaultSchema, onConfirm, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-80 p-6 space-y-4">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">New Table</h3>
-        {dbType === 'postgresql' && (
-          <div className="space-y-1">
-            <label className="text-[11px] text-gray-500 dark:text-slate-400">Schema</label>
-            <input
-              className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
-              value={schema} onChange={e => setSchema(e.target.value)} placeholder="public"
-            />
-          </div>
-        )}
+        <div className="space-y-1">
+          <label className="text-[11px] text-gray-500 dark:text-slate-400">Schema</label>
+          <input
+            className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
+            value={schema} onChange={e => setSchema(e.target.value)} placeholder="public"
+          />
+        </div>
         <div className="space-y-1">
           <label className="text-[11px] text-gray-500 dark:text-slate-400">Table name</label>
           <input
@@ -1538,49 +1478,6 @@ function NewTableDialog({ dbType, defaultSchema, onConfirm, onClose }: {
           <button onClick={submit} disabled={!name.trim()}
             className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
             Create
-          </button>
-          <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── New DB Dialog ────────────────────────────────────────────────────────────
-
-function NewDbDialog({ dbType, onConfirm, onClose, creating, error }: {
-  dbType: DbType;
-  onConfirm: (name: string) => void;
-  onClose: () => void;
-  creating: boolean;
-  error: string;
-}) {
-  const [name, setName] = useState('');
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { ref.current?.focus(); }, []);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-80 p-6 space-y-4">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Create New Database</h3>
-        <div className="space-y-1">
-          <label className="text-[11px] text-gray-500 dark:text-slate-400">Database name ({dbType === 'postgresql' ? 'PostgreSQL' : 'MySQL'})</label>
-          <input
-            ref={ref}
-            className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
-            value={name} onChange={e => setName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && name.trim()) onConfirm(name.trim()); if (e.key === 'Escape') onClose(); }}
-            placeholder="my_database"
-          />
-        </div>
-        {error && <p className="text-[11px] text-rose-500">{error}</p>}
-        <div className="flex gap-2 pt-1">
-          <button onClick={() => onConfirm(name.trim())} disabled={!name.trim() || creating}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
-            {creating && <Loader2 size={13} className="animate-spin" />}
-            {creating ? 'Creating…' : 'Create'}
           </button>
           <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
             Cancel
@@ -1799,24 +1696,166 @@ function NewSchemaDialog({ onConfirm, onClose }: {
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── Execute Job Modal ────────────────────────────────────────────────────────
 
-function SchemaDesignerInner() {
-  const { authenticated, loading: authLoading } = useAuth();
-  const router = useRouter();
-
-  // Connections
-  const [connections, setConnections] = useState<ConnectionRow[]>([]);
+function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
+  job: SchemaJob;
+  connections: ConnectionRow[];
+  onClose: () => void;
+  onJobDone: () => void;
+}) {
   const [selectedConnId, setSelectedConnId] = useState<number | null>(null);
   const [databases, setDatabases] = useState<string[]>([]);
   const [selectedDb, setSelectedDb] = useState('');
   const [loadingDbs, setLoadingDbs] = useState(false);
-  const [dbError, setDbError] = useState('');
+  const [executing, setExecuting] = useState(false);
+  const [execLog, setExecLog] = useState<ExecLogLine[]>([]);
+  const [done, setDone] = useState(false);
 
-  // New DB dialog
-  const [showNewDb, setShowNewDb] = useState(false);
-  const [creatingDb, setCreatingDb] = useState(false);
-  const [newDbError, setNewDbError] = useState('');
+  const selectedConn = connections.find(c => c.id === selectedConnId) ?? null;
+
+  const loadDatabases = useCallback(async (conn: ConnectionRow) => {
+    setLoadingDbs(true);
+    setDatabases([]);
+    setSelectedDb('');
+    try {
+      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn), { headers: authH() });
+      setDatabases(data.databases);
+      if (data.databases.length) setSelectedDb(data.databases[0]);
+    } catch { /* ignore */ } finally { setLoadingDbs(false); }
+  }, []);
+
+  useEffect(() => { if (selectedConn) void loadDatabases(selectedConn); }, [selectedConn, loadDatabases]);
+
+  const handleExecute = async () => {
+    if (!selectedConn || !selectedDb || !job.schema_sql) return;
+    setExecuting(true);
+    setExecLog([]);
+    const explorerConn = connToExplorerConn(selectedConn, selectedDb);
+    const ddlStmts = generateDDL(parseSqlToTables(job.schema_sql), 'postgresql');
+    const seedStmts = job.seed_sql?.trim()
+      ? job.seed_sql.split(/;\s*(?=\n|$)/).map(s => s.trim()).filter(s => s.length > 0).map(s => s.endsWith(';') ? s : s + ';')
+      : [];
+    try {
+      const { data } = await axios.post<{ log: ExecLogLine[] }>('/api/schema-designer/execute', { conn: explorerConn, statements: [...ddlStmts, ...seedStmts] }, { headers: authH() });
+      setExecLog(data.log);
+      const status = data.log.every(l => l.ok) ? 'success' : 'failed';
+      await axios.post('/api/schema-generator/jobs', {
+        job_name: job.job_name,
+        description: job.description,
+        schema_sql: job.schema_sql,
+        seed_sql: job.seed_sql,
+        target_database: selectedDb,
+        connection_label: selectedConn.label,
+        status,
+        log: data.log.map((l, i) => ({ step: i + 1, ok: l.ok, text: l.text })),
+      }, { headers: authH() });
+      onJobDone();
+      setDone(true);
+    } catch (err) {
+      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err);
+      setExecLog([{ sql: '', ok: false, text: msg }]);
+    } finally { setExecuting(false); }
+  };
+
+  const canRun = !!selectedConn && !!selectedDb && !!job.schema_sql && !executing;
+  const successCount = execLog.filter(l => l.ok).length;
+  const failCount = execLog.filter(l => !l.ok).length;
+  const allOk = execLog.length > 0 && failCount === 0;
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[85vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <Play size={15} className="text-emerald-500" />
+            <div>
+              <p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">{job.job_name}</p>
+              <p className="text-[10px] text-gray-400 dark:text-slate-500">Select a connection and database to execute against</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
+        </div>
+
+        <div className="flex-1 overflow-auto p-5 space-y-4">
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">Connection</label>
+              <select
+                value={selectedConnId ?? ''}
+                onChange={e => setSelectedConnId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer"
+              >
+                <option value="">— select connection —</option>
+                {connections.filter(c => c.db_type === 'postgres').map(c => (
+                  <option key={c.id} value={c.id}>{c.label} ({c.database_name})</option>
+                ))}
+              </select>
+            </div>
+            {selectedConn && (
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">Database</label>
+                {loadingDbs
+                  ? <span className="text-xs text-gray-400 animate-pulse">Loading databases…</span>
+                  : (
+                    <select value={selectedDb} onChange={e => setSelectedDb(e.target.value)}
+                      className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer font-mono">
+                      {databases.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  )}
+              </div>
+            )}
+          </div>
+
+          {execLog.length > 0 && (
+            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700">
+              <div className="flex items-center gap-3 px-4 py-2 bg-gray-50 dark:bg-slate-800/50 border-b border-gray-100 dark:border-slate-800">
+                <span className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">Execution Log</span>
+                {successCount > 0 && <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{successCount} ok</span>}
+                {failCount > 0 && <span className="text-[10px] text-rose-600 dark:text-rose-400">{failCount} failed</span>}
+              </div>
+              <div className="bg-slate-950 p-3 max-h-52 overflow-auto space-y-1 font-mono">
+                {execLog.map((line, i) => (
+                  <div key={i} className={`flex items-start gap-2 text-[10px] leading-relaxed ${line.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {line.ok ? <CheckCircle2 size={10} className="mt-0.5 shrink-0" /> : <XCircle size={10} className="mt-0.5 shrink-0" />}
+                    <span className="break-all">{line.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {done && allOk && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 size={12} /> Schema applied successfully. Run saved to Job History.
+            </div>
+          )}
+        </div>
+
+        <div className="shrink-0 flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
+            {done ? 'Close' : 'Cancel'}
+          </button>
+          {!done && (
+            <button onClick={() => void handleExecute()} disabled={!canRun}
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-40 transition-colors">
+              {executing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              {executing ? 'Executing…' : 'Execute'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+function SchemaDesignerInner() {
+  const { authenticated, loading: authLoading } = useAuth();
+
+  // Connections (kept for ImportPanel + ExecuteJobModal)
+  const [connections, setConnections] = useState<ConnectionRow[]>([]);
 
   // Designer state
   const [tables, setTables] = useState<DesignerTable[]>([]);
@@ -1825,75 +1864,36 @@ function SchemaDesignerInner() {
   const [showNewTable, setShowNewTable] = useState(false);
   const [newTableDefaultSchema, setNewTableDefaultSchema] = useState<string | undefined>(undefined);
 
-  // Schema tree (PG only)
+  // Schema tree
   const [designerSchemas, setDesignerSchemas] = useState<string[]>(['public']);
   const [showNewSchema, setShowNewSchema] = useState(false);
 
-  // Seed + execute state
+  // Seed SQL
   const [seedSql, setSeedSql] = useState('');
-  const [executing, setExecuting] = useState(false);
-  const [execLog, setExecLog] = useState<ExecLogLine[]>([]);
-  const [lastRunStatus, setLastRunStatus] = useState<'success' | 'failed' | null>(null);
+
+  // Loaded job tracking
+  const [loadedJob, setLoadedJob] = useState<SchemaJob | null>(null);
+
+  // Save modal
   const [showSaveModal, setShowSaveModal] = useState(false);
+
+  // Execute job modal
+  const [showExecModal, setShowExecModal] = useState(false);
+  const [execModalJob, setExecModalJob] = useState<SchemaJob | null>(null);
 
   // Job history
   const [jobs, setJobs] = useState<SchemaJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
 
-  const selectedConn = useMemo(() => connections.find(c => c.id === selectedConnId) ?? null, [connections, selectedConnId]);
-  const dbType: DbType = selectedConn?.db_type === 'postgres' ? 'postgresql' : 'mysql';
   const selectedTable = tables.find(t => t.id === selectedTableId) ?? null;
 
-  // Load connections
+  // Load connections for ImportPanel + ExecuteJobModal
   useEffect(() => {
     if (!authenticated) return;
     axios.get<{ success: boolean; connections: ConnectionRow[] }>('/api/connections', { headers: authH() })
-      .then(r => {
-        setConnections(r.data.connections);
-        if (r.data.connections.length === 1) setSelectedConnId(r.data.connections[0].id);
-      })
+      .then(r => setConnections(r.data.connections))
       .catch(() => { });
   }, [authenticated]);
-
-  // Load databases when connection changes
-  const loadDatabases = useCallback(async (conn: ConnectionRow) => {
-    setLoadingDbs(true);
-    setDbError('');
-    setDatabases([]);
-    setSelectedDb('');
-    try {
-      const payload = connToPayload(conn);
-      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', payload, { headers: authH() });
-      setDatabases(data.databases);
-      if (data.databases.includes(conn.database_name)) setSelectedDb(conn.database_name);
-      else if (data.databases.length) setSelectedDb(data.databases[0]);
-    } catch (err) {
-      setDbError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Failed to load databases') : 'Failed to load databases');
-    } finally {
-      setLoadingDbs(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (selectedConn) void loadDatabases(selectedConn);
-  }, [selectedConn, loadDatabases]);
-
-  const handleCreateDb = async (name: string) => {
-    if (!selectedConn) return;
-    setCreatingDb(true);
-    setNewDbError('');
-    try {
-      const payload = { ...connToPayload(selectedConn), dbName: name };
-      const { data } = await axios.post<{ dbName: string }>('/api/schema-designer/create-db', payload, { headers: authH() });
-      await loadDatabases(selectedConn);
-      setSelectedDb(data.dbName);
-      setShowNewDb(false);
-    } catch (err) {
-      setNewDbError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Failed to create database') : 'Failed to create database');
-    } finally {
-      setCreatingDb(false);
-    }
-  };
 
   const handleAddSchema = (name: string) => {
     setDesignerSchemas(p => p.includes(name) ? p : [...p, name]);
@@ -1906,14 +1906,12 @@ function SchemaDesignerInner() {
   };
 
   const handleAddTable = (name: string, schema: string) => {
-    const t = mkTable(name, schema, dbType);
+    const t = mkTable(name, schema, 'postgresql');
     setTables(p => [...p, t]);
     setSelectedTableId(t.id);
     setShowNewTable(false);
     setNewTableDefaultSchema(undefined);
-    if (dbType === 'postgresql') {
-      setDesignerSchemas(p => p.includes(schema) ? p : [...p, schema]);
-    }
+    setDesignerSchemas(p => p.includes(schema) ? p : [...p, schema]);
   };
 
   const handleDeleteTable = (id: string) => {
@@ -1935,43 +1933,16 @@ function SchemaDesignerInner() {
 
   useEffect(() => { if (authenticated) void loadJobs(); }, [authenticated, loadJobs]);
 
-  const handleExecute = async () => {
-    if (!selectedConn || !selectedDb || !tables.length) return;
-    setExecuting(true);
-    setExecLog([]);
-    setLastRunStatus(null);
-    const explorerConn = connToExplorerConn(selectedConn, selectedDb);
-    const ddlStmts = generateDDL(tables, dbType);
-    const seedStmts = seedSql.trim()
-      ? seedSql.split(/;\s*(?=\n|$)/).map(s => s.trim()).filter(s => s.length > 0).map(s => s.endsWith(';') ? s : s + ';')
-      : [];
-    const statements = [...ddlStmts, ...seedStmts];
-    try {
-      const { data } = await axios.post<{ log: ExecLogLine[] }>('/api/schema-designer/execute', { conn: explorerConn, statements }, { headers: authH() });
-      setExecLog(data.log);
-      setLastRunStatus(data.log.every(l => l.ok) ? 'success' : 'failed');
-      setShowSaveModal(true);
-    } catch (err) {
-      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err);
-      setExecLog([{ sql: '', ok: false, text: msg }]);
-      setLastRunStatus('failed');
-      setShowSaveModal(true);
-    } finally {
-      setExecuting(false);
-    }
-  };
-
   const handleSaveJob = async (name: string, desc: string) => {
-    const schemaSql = generateDDL(tables, dbType).join('\n\n');
+    const schemaSql = generateDDL(tables, 'postgresql').join('\n\n');
     try {
       await axios.post('/api/schema-generator/jobs', {
         job_name: name,
         description: desc,
         schema_sql: schemaSql,
         seed_sql: seedSql,
-        target_database: selectedDb,
-        status: lastRunStatus === 'success' ? 'success' : 'failed',
-        log: execLog.map((l, i) => ({ step: i + 1, ok: l.ok, text: l.text })),
+        status: 'pending',
+        log: null,
       }, { headers: authH() });
       void loadJobs();
     } catch { /* ignore */ } finally { setShowSaveModal(false); }
@@ -1980,11 +1951,15 @@ function SchemaDesignerInner() {
   const handleLoadJob = (job: SchemaJob) => {
     if (job.schema_sql) {
       const parsed = parseSqlToTables(job.schema_sql);
-      if (parsed.length) { setTables(parsed); setSelectedTableId(parsed[0].id); }
+      if (parsed.length) {
+        setTables(parsed);
+        setSelectedTableId(parsed[0].id);
+        const schemas = [...new Set(parsed.map(t => t.schema || 'public'))];
+        setDesignerSchemas(schemas);
+      }
     }
     setSeedSql(job.seed_sql ?? '');
-    setExecLog([]);
-    setLastRunStatus(null);
+    setLoadedJob(job);
     setActiveTab('designer');
   };
 
@@ -2025,58 +2000,9 @@ function SchemaDesignerInner() {
           </div>
         </div>
 
-        <div className="h-8 w-px bg-gray-200 dark:bg-slate-700 shrink-0" />
-
-        {/* Connection selector */}
-        <select
-          className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[200px] focus:outline-none focus:border-blue-400 cursor-pointer"
-          value={selectedConnId ?? ''}
-          onChange={e => {
-            if (e.target.value === '__new_conn__') { void router.push('/connections'); return; }
-            setSelectedConnId(e.target.value ? Number(e.target.value) : null);
-          }}
-        >
-          <option value="">— select connection —</option>
-          {(['postgres', 'mysql'] as const).map(type => {
-            const group = connections.filter(c => c.db_type === type);
-            if (!group.length) return null;
-            return (
-              <optgroup key={type} label={type === 'postgres' ? 'PostgreSQL' : 'MySQL'}>
-                {group.map(c => <option key={c.id} value={c.id}>{c.label} ({c.database_name})</option>)}
-              </optgroup>
-            );
-          })}
-          <option value="__new_conn__">+ New Connection →</option>
-        </select>
-
-        {/* Database selector — includes New Database option */}
-        {selectedConn && (
-          loadingDbs
-            ? <span className="text-xs text-gray-400 dark:text-slate-500 animate-pulse">Loading databases…</span>
-            : (
-              <select
-                className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[140px] focus:outline-none focus:border-blue-400 cursor-pointer font-mono"
-                value={selectedDb}
-                onChange={e => {
-                  if (e.target.value === '__new_db__') { setShowNewDb(true); return; }
-                  setSelectedDb(e.target.value);
-                }}
-              >
-                {!selectedDb && <option value="">— select db —</option>}
-                {databases.map(d => <option key={d} value={d}>{d}</option>)}
-                <option value="__new_db__">+ New Database…</option>
-              </select>
-            )
-        )}
-
-        {/* PostgreSQL badge — only shown when connected to PostgreSQL */}
-        {selectedConn?.db_type === 'postgres' && (
-          <span className="shrink-0 inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium border bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-100 dark:border-blue-900">
-            PostgreSQL
-          </span>
-        )}
-
-        {dbError && <span className="text-xs text-rose-500">{dbError}</span>}
+        <span className="shrink-0 inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium border bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-100 dark:border-blue-900">
+          PostgreSQL
+        </span>
 
         {/* Breadcrumb */}
         <nav className="ml-auto flex items-center gap-1 text-sm shrink-0">
@@ -2101,7 +2027,15 @@ function SchemaDesignerInner() {
             )}
           </button>
         ))}
-        <div className="ml-auto pr-1 flex items-center">
+        <div className="ml-auto pr-1 flex items-center gap-2">
+          {activeTab === 'designer' && tables.length > 0 && (
+            <button
+              onClick={() => setShowSaveModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+            >
+              <Save size={12} /> Save Schema
+            </button>
+          )}
           <GuidePopover />
         </div>
       </div>
@@ -2117,7 +2051,6 @@ function SchemaDesignerInner() {
               <TableTreePanel
                 tables={tables}
                 selectedId={selectedTableId}
-                dbType={dbType}
                 schemas={designerSchemas}
                 onSelect={setSelectedTableId}
                 onDelete={handleDeleteTable}
@@ -2133,7 +2066,6 @@ function SchemaDesignerInner() {
                 <ColumnEditorPanel
                   table={selectedTable}
                   tables={tables}
-                  dbType={dbType}
                   onUpdate={handleUpdateTable}
                   onDeleteTable={() => handleDeleteTable(selectedTable.id)}
                 />
@@ -2156,9 +2088,7 @@ function SchemaDesignerInner() {
         {/* Import */}
         {activeTab === 'import' && (
           <ImportPanel
-            conn={selectedConn}
-            selectedDb={selectedDb}
-            dbType={dbType}
+            connections={connections}
             onMerge={incoming => setTables(p => mergeTables(p, incoming))}
           />
         )}
@@ -2167,19 +2097,13 @@ function SchemaDesignerInner() {
         {activeTab === 'execute' && (
           <ExecutePanel
             tables={tables}
-            conn={selectedConn}
-            selectedDb={selectedDb}
-            dbType={dbType}
             seedSql={seedSql}
             onSeedSqlChange={setSeedSql}
-            executing={executing}
-            execLog={execLog}
-            onExecute={() => void handleExecute()}
-            lastRunStatus={lastRunStatus}
             onSaveJob={() => setShowSaveModal(true)}
             jobs={jobs}
             loadingJobs={loadingJobs}
             onLoadJob={handleLoadJob}
+            onExecuteJob={job => { setExecModalJob(job); setShowExecModal(true); }}
           />
         )}
       </div>
@@ -2187,7 +2111,6 @@ function SchemaDesignerInner() {
       {/* Dialogs */}
       {showNewTable && (
         <NewTableDialog
-          dbType={dbType}
           defaultSchema={newTableDefaultSchema}
           onConfirm={handleAddTable}
           onClose={() => { setShowNewTable(false); setNewTableDefaultSchema(undefined); }}
@@ -2199,19 +2122,20 @@ function SchemaDesignerInner() {
           onClose={() => setShowNewSchema(false)}
         />
       )}
-      {showNewDb && (
-        <NewDbDialog
-          dbType={dbType}
-          onConfirm={handleCreateDb}
-          onClose={() => { setShowNewDb(false); setNewDbError(''); }}
-          creating={creatingDb}
-          error={newDbError}
-        />
-      )}
       {showSaveModal && (
         <SaveJobModal
           onSave={(name, desc) => void handleSaveJob(name, desc)}
           onSkip={() => setShowSaveModal(false)}
+          defaultName={loadedJob?.job_name}
+          defaultDesc={loadedJob?.description ?? undefined}
+        />
+      )}
+      {showExecModal && execModalJob && (
+        <ExecuteJobModal
+          job={execModalJob}
+          connections={connections}
+          onClose={() => { setShowExecModal(false); setExecModalJob(null); }}
+          onJobDone={() => void loadJobs()}
         />
       )}
     </div>
