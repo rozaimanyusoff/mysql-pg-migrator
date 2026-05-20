@@ -73,6 +73,39 @@
   - Schema Generator will be implemented as a standalone page
   - Status: done
 
+## 2026-05-20
+- **implement** — Schema Designer: pgAdmin-like UX overhaul — hierarchical tree, FK picker, guide popover
+  - **Navbar UX**: New Connection option inside connection dropdown (navigates to `/connections` via `useRouter`); "+ New Database…" option inside DB dropdown; PostgreSQL badge shown only for PG connections
+  - **`TableTreePanel`**: hierarchical schema → table grouping for PG (schema headers with expand/collapse, per-schema hover "+" to add table); flat list for MySQL; FK/referenced icons on table rows; "New Schema" button (PG only) + "New Table" button in panel header
+  - **`NewSchemaDialog`**: PG-only dialog, sanitizes name to lowercase alphanumeric; adds schema to `designerSchemas` state; DDL generator emits `CREATE SCHEMA IF NOT EXISTS` for non-public schemas at execute time
+  - **`NewTableDialog`**: accepts `defaultSchema?` prop so per-schema "+" pre-fills the schema field
+  - **`FkPickerModal`**: two-panel visual FK picker — left: table list, right: columns with PK/UQ icons; click column → sets FK as `table.column` and closes modal
+  - **`ColumnEditorPanel`**: FK cell shows blue badge (click to reopen picker) + × to clear; "Set FK" button opens picker; relationship summary below column table (Outgoing FKs + Referenced by)
+  - **`GuidePopover`**: self-contained English-language guide popover (click-outside closes, 430 px wide, scrollable, 7 sections: Workflow, Navbar, Designer Tab, Column Properties, FK Picker, Import, Execute); replaces old full-screen Malay modal
+  - Removed `showGuide` state, old tab bar button, old `GuideModal`/`_GuideModal_UNUSED` function
+  - Files affected: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Migration module: navbar redesign + saved-connection pickers for source/target
+  - Removed manual `ConnForm` (host/port/user/pass inputs) and `EMPTY_CONN` constant; removed `Eye`, `EyeOff`, `Plug`, `Unplug` icon imports
+  - Header redesigned to match other modules: sticky, `backdrop-blur`, title + subtitle left, breadcrumb + action buttons right
+  - New connections bar: Source and Target each have a saved-connection dropdown (grouped by PG/MySQL) + a database dropdown; "+ New Connection →" option navigates to `/connections`
+  - When a connection is selected → databases auto-loaded via `/api/schema-designer/databases`; when a database is selected → auto-connects (source: fetches tables; target: validates connection)
+  - `connRowToMigConn(row, db): MigConn` helper builds the connection object from `ConnectionRow`; `srcConn`/`tgtConn` state updated automatically so start/advance/rollback functions are unchanged
+  - `handleLoadJob` now restores `srcConnId`/`srcDb` and `tgtConnId`/`tgtDb` by matching job metadata against saved connections (host + username + type)
+  - Files affected: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Migration: target schema/table pickers for MySQL→PG mapping
+  - Added `tgtSchemas: string[]` and `tgtDefaultSchema: string` state
+  - When target PG DB connects, `/api/migv2/tables` response is used to extract distinct schema names; defaults to `public` if present
+  - Connections bar: PG-only schema `<select>` (styled blue) appears after the database dropdown once connected; selects the default schema for new table mappings
+  - Per-table mapping editor: target schema field is a `<select>` dropdown (populated from `tgtSchemas`) when connected to PG; falls back to free-text `<input>` for MySQL or if schemas not loaded
+  - `toggleTable`: target schema now defaults to `tgtDefaultSchema` (for PG targets) instead of copying the MySQL source schema/db name
+  - Added `tgtTables: MigTableInfo[]` state; target table field uses `<input>` + `<datalist>` that lists existing tables in the selected target schema — filters dynamically as schema changes; allows typing a new table name
+  - Files affected: `src/pages/migration.tsx`
+  - Status: done
+
 ---
 
 ## 2026-04-10
@@ -313,6 +346,25 @@
   - **Large dataset warning** — Tables >50k rows flagged amber in TableSelector
   - Files: `src/lib/excel-parser.ts` (new), `src/lib/sql-exporter.ts`, `src/pages/export-import.tsx`, `src/pages/api/export-import/tables.ts`, `src/pages/api/export-import/export.ts`, `src/pages/api/export-import/sync.ts`, `src/pages/api/export-import/history.ts` (new), `db/migrations/005_export_history.sql` (new)
   - Installed: `jszip`
+  - Status: done
+
+## 2026-05-20
+- **implement** — Schema Designer: Guide modal
+  - `GuideModal` component — scrollable modal dengan 7 sections: Overview, Navbar, Designer Tab, Column Properties (table), FK Relationship Picker, Import Tab, Execute Tab, Tips
+  - `HelpCircle` + `BookOpen` icons dari lucide-react
+  - Button `Guide` dalam tab bar (kanan, `ml-auto`) — `HelpCircle` icon + label, hover style biru; click buka modal
+  - `showGuide` state dalam `SchemaDesignerInner`
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: FK/PK relationship picker + schema tree + navbar UX
+  - `FkPickerModal` — visual two-panel modal (tables left, columns right); PK/UQ badges on columns; click to set FK; "Remove FK" button; replaces free-text `table.col` input
+  - `ColumnEditorPanel` — FK Reference cell changed from text input to button-badge (shows `table.col` as blue badge, click to re-pick, × to clear); relationship summary section below column table showing outgoing FKs and incoming references (tables that point to this table)
+  - `TableTreePanel` — hierarchical schema tree for PostgreSQL (schema → tables); per-schema hover "+ Add Table" button; FK indicator icon on tables with outgoing FKs; referenced-by indicator on tables pointed to by others; header split into two rows: title + labeled "New Schema" / "New Table" buttons (PG-only schema button)
+  - `NewSchemaDialog` — new dialog for adding a schema node to designer (sanitises name to lowercase alphanumeric); schema tracked in `designerSchemas` state; `CREATE SCHEMA IF NOT EXISTS` generated at DDL time
+  - `NewTableDialog` — added `defaultSchema` prop; clicking "Add Table" under a schema pre-fills schema field
+  - Navbar: connection dropdown has `+ New Connection →` option (navigates to `/connections`); DB dropdown has `+ New Database…` option (opens NewDbDialog inline, replaces standalone "New DB" button); PostgreSQL badge only appears for PG connections (MySQL connection shows no badge)
+  - Files: `src/pages/schema-designer.tsx`
   - Status: done
 
 ## 2026-05-19

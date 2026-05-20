@@ -1,21 +1,22 @@
 'use client';
 import Head from 'next/head';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { randomUUID } from 'crypto';
 import {
-  ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight,
-  Database, Download, Eye, EyeOff, FileText, Layers, Loader2,
+  ArrowRight, Check, ChevronDown, ChevronRight,
+  Database, FileText, Layers, Loader2,
   Play, Plus, RefreshCw, RotateCcw, Save, Search, Settings2,
   Table2, Trash2, X, AlertTriangle, CheckCircle2, Clock,
-  Plug, Unplug, Network,
+  Network,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 import { suggestTargetType, isPkLikeSerial } from '../lib/migv2/type-map';
 import type { MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigRun, DbType, IdConversion } from '../lib/migv2/types';
 import type { MigTableInfo } from './api/migv2/tables';
 import type { MigColumnInfo } from './api/migv2/columns';
+import type { ConnectionRow } from './api/connections/index';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -32,81 +33,15 @@ function authHeaders() {
   return { Authorization: `Bearer ${getToken()}` };
 }
 
-const EMPTY_CONN: MigConn = {
-  type: 'postgresql', host: 'localhost', port: 5432, database: '', username: '', password: '',
-};
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-function ConnForm({
-  label, conn, onChange, connected, onConnect, onDisconnect, connecting, error,
-}: {
-  label: string;
-  conn: MigConn;
-  onChange: (c: MigConn) => void;
-  connected: boolean;
-  onConnect: () => void;
-  onDisconnect: () => void;
-  connecting: boolean;
-  error: string;
-}) {
-  const [showPw, setShowPw] = useState(false);
-
-  return (
-    <div className="flex-1 min-w-0 p-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">{label}</span>
-        {connected
-          ? <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium"><Check size={10} /> Connected</span>
-          : error ? <span className="text-[11px] text-rose-500 truncate max-w-[120px]" title={error}>{error}</span> : null}
-      </div>
-
-      {/* DB type toggle */}
-      <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-600 mb-2 w-fit">
-        {(['postgresql', 'mysql'] as DbType[]).map(t => (
-          <button key={t} disabled={connected}
-            onClick={() => onChange({ ...conn, type: t, port: t === 'postgresql' ? 5432 : 3306 })}
-            className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${conn.type === t ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-700 text-gray-500 dark:text-slate-400'} disabled:cursor-default`}>
-            {t === 'postgresql' ? 'PG' : 'MySQL'}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-1.5 mb-1.5">
-        <input value={conn.host} disabled={connected} placeholder="host"
-          onChange={e => onChange({ ...conn, host: e.target.value })}
-          className="col-span-2 px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
-        <input value={conn.port} disabled={connected} placeholder="port" type="number"
-          onChange={e => onChange({ ...conn, port: Number(e.target.value) })}
-          className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
-        <input value={conn.database} disabled={connected} placeholder="database"
-          onChange={e => onChange({ ...conn, database: e.target.value })}
-          className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
-        <input value={conn.username} disabled={connected} placeholder="user"
-          onChange={e => onChange({ ...conn, username: e.target.value })}
-          className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
-        <div className="relative">
-          <input type={showPw ? 'text' : 'password'} value={conn.password} disabled={connected} placeholder="password"
-            onChange={e => onChange({ ...conn, password: e.target.value })}
-            className="w-full pl-2 pr-7 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 disabled:opacity-60" />
-          <button type="button" onClick={() => setShowPw(v => !v)} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400">
-            {showPw ? <EyeOff size={11} /> : <Eye size={11} />}
-          </button>
-        </div>
-      </div>
-
-      {!connected
-        ? <button onClick={onConnect} disabled={connecting || !conn.host || !conn.username}
-            className="w-full inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
-            {connecting ? <Loader2 size={11} className="animate-spin" /> : <Plug size={11} />}
-            {connecting ? 'Connecting…' : 'Connect'}
-          </button>
-        : <button onClick={onDisconnect}
-            className="w-full inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
-            <Unplug size={11} /> Disconnect
-          </button>}
-    </div>
-  );
+function connRowToMigConn(row: ConnectionRow, database: string): MigConn {
+  return {
+    type: row.db_type === 'postgres' ? 'postgresql' : 'mysql',
+    host: row.host,
+    port: row.port,
+    database,
+    username: row.username,
+    password: row.password_enc ?? '',
+  };
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -138,10 +73,31 @@ type ActiveTab = 'mapping' | 'jobs' | 'execute';
 
 export default function Migration() {
   useAuth();
+  const router = useRouter();
 
-  // ── Connections ─────────────────────────────────────────────────────────────
-  const [srcConn, setSrcConn] = useState<MigConn>({ ...EMPTY_CONN, type: 'mysql', port: 3306 });
-  const [tgtConn, setTgtConn] = useState<MigConn>({ ...EMPTY_CONN, type: 'postgresql', port: 5432 });
+  // ── Saved connections ────────────────────────────────────────────────────────
+  const [connections, setConnections] = useState<ConnectionRow[]>([]);
+
+  // ── Source connection picker ─────────────────────────────────────────────────
+  const [srcConnId, setSrcConnId] = useState<number | null>(null);
+  const [srcDbs, setSrcDbs] = useState<string[]>([]);
+  const [srcDb, setSrcDb] = useState('');
+  const [srcLoadingDbs, setSrcLoadingDbs] = useState(false);
+  const [srcDbError, setSrcDbError] = useState('');
+
+  // ── Target connection picker ─────────────────────────────────────────────────
+  const [tgtConnId, setTgtConnId] = useState<number | null>(null);
+  const [tgtDbs, setTgtDbs] = useState<string[]>([]);
+  const [tgtDb, setTgtDb] = useState('');
+  const [tgtLoadingDbs, setTgtLoadingDbs] = useState(false);
+  const [tgtDbError, setTgtDbError] = useState('');
+  const [tgtSchemas, setTgtSchemas] = useState<string[]>([]);
+  const [tgtDefaultSchema, setTgtDefaultSchema] = useState('public');
+  const [tgtTables, setTgtTables] = useState<MigTableInfo[]>([]);
+
+  // ── Active MigConn (derived, kept as state for use in start/advance/rollback) ─
+  const [srcConn, setSrcConn] = useState<MigConn>({ type: 'mysql', host: '', port: 3306, database: '', username: '', password: '' });
+  const [tgtConn, setTgtConn] = useState<MigConn>({ type: 'postgresql', host: '', port: 5432, database: '', username: '', password: '' });
   const [srcConnected, setSrcConnected] = useState(false);
   const [tgtConnected, setTgtConnected] = useState(false);
   const [srcConnecting, setSrcConnecting] = useState(false);
@@ -157,7 +113,7 @@ export default function Migration() {
   // ── Mapping config ───────────────────────────────────────────────────────────
   const [tableMaps, setTableMaps] = useState<TableMap[]>([]);
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
-  const [colsCache, setColsCache] = useState<Record<string, MigColumnInfo[]>>({}); // source cols by "schema.table"
+  const [colsCache, setColsCache] = useState<Record<string, MigColumnInfo[]>>({});
   const [loadingCols, setLoadingCols] = useState(false);
   const [dirty, setDirty] = useState(false);
 
@@ -178,42 +134,105 @@ export default function Migration() {
   // ── UI ────────────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>('mapping');
 
-  // ── Connect source ────────────────────────────────────────────────────────────
+  // ── Load saved connections ────────────────────────────────────────────────────
+  useEffect(() => {
+    void axios.get<{ connections: ConnectionRow[] }>('/api/connections', { headers: authHeaders() })
+      .then(r => setConnections(r.data.connections))
+      .catch(() => { });
+  }, []);
 
-  const connectSource = async () => {
-    setSrcConnecting(true); setSrcError('');
-    try {
-      const { data } = await axios.post<{ tables: MigTableInfo[] }>(
-        '/api/migv2/tables', srcConn, { headers: authHeaders() }
-      );
-      setSrcTables(data.tables);
-      setSrcConnected(true);
-      // Auto-expand first schema
-      const firstSchema = data.tables[0]?.schema;
-      if (firstSchema) setExpandedSchemas(new Set([firstSchema]));
-    } catch (err) {
-      setSrcError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Connection failed') : 'Connection failed');
-    } finally { setSrcConnecting(false); }
-  };
-
-  const disconnectSource = () => {
+  // ── Load databases when source connection changes ─────────────────────────────
+  const loadSrcDbs = useCallback(async (connId: number) => {
+    const row = connections.find(c => c.id === connId);
+    if (!row) return;
+    setSrcLoadingDbs(true); setSrcDbs([]); setSrcDb(''); setSrcDbError('');
     setSrcConnected(false); setSrcTables([]); setTableMaps([]); setColsCache({}); setSelectedMapId(null);
-  };
-
-  // ── Connect target ────────────────────────────────────────────────────────────
-
-  const connectTarget = async () => {
-    setTgtConnecting(true); setTgtError('');
     try {
-      // Just test connection by fetching tables (we don't need them, but it validates creds)
-      await axios.post('/api/migv2/tables', tgtConn, { headers: authHeaders() });
-      setTgtConnected(true);
+      const { data } = await axios.post<{ databases: string[] }>(
+        '/api/schema-designer/databases',
+        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' },
+        { headers: authHeaders() }
+      );
+      setSrcDbs(data.databases);
+      const def = data.databases.includes(row.database_name) ? row.database_name : data.databases[0] ?? '';
+      setSrcDb(def);
     } catch (err) {
-      setTgtError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Connection failed') : 'Connection failed');
-    } finally { setTgtConnecting(false); }
-  };
+      setSrcDbError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Failed to load databases') : 'Failed');
+    } finally { setSrcLoadingDbs(false); }
+  }, [connections]);
 
-  const disconnectTarget = () => { setTgtConnected(false); };
+  useEffect(() => {
+    if (srcConnId) void loadSrcDbs(srcConnId);
+    else { setSrcDbs([]); setSrcDb(''); setSrcConnected(false); setSrcTables([]); }
+  }, [srcConnId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-connect source when db selected ──────────────────────────────────────
+  useEffect(() => {
+    if (!srcConnId || !srcDb) { setSrcConnected(false); return; }
+    const row = connections.find(c => c.id === srcConnId);
+    if (!row) return;
+    const conn = connRowToMigConn(row, srcDb);
+    setSrcConn(conn);
+    setSrcConnecting(true); setSrcError(''); setSrcConnected(false);
+    setSrcTables([]); setTableMaps([]); setColsCache({}); setSelectedMapId(null);
+    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', conn, { headers: authHeaders() })
+      .then(({ data }) => {
+        setSrcTables(data.tables);
+        setSrcConnected(true);
+        const firstSchema = data.tables[0]?.schema;
+        if (firstSchema) setExpandedSchemas(new Set([firstSchema]));
+      })
+      .catch(err => setSrcError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Connection failed') : 'Connection failed'))
+      .finally(() => setSrcConnecting(false));
+  }, [srcDb]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Load databases when target connection changes ─────────────────────────────
+  const loadTgtDbs = useCallback(async (connId: number) => {
+    const row = connections.find(c => c.id === connId);
+    if (!row) return;
+    setTgtLoadingDbs(true); setTgtDbs([]); setTgtDb(''); setTgtDbError('');
+    setTgtConnected(false);
+    try {
+      const { data } = await axios.post<{ databases: string[] }>(
+        '/api/schema-designer/databases',
+        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' },
+        { headers: authHeaders() }
+      );
+      setTgtDbs(data.databases);
+      const def = data.databases.includes(row.database_name) ? row.database_name : data.databases[0] ?? '';
+      setTgtDb(def);
+    } catch (err) {
+      setTgtDbError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Failed to load databases') : 'Failed');
+    } finally { setTgtLoadingDbs(false); }
+  }, [connections]);
+
+  useEffect(() => {
+    if (tgtConnId) void loadTgtDbs(tgtConnId);
+    else { setTgtDbs([]); setTgtDb(''); setTgtConnected(false); }
+  }, [tgtConnId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-connect target when db selected ─────────────────────────────────────
+  useEffect(() => {
+    if (!tgtConnId || !tgtDb) { setTgtConnected(false); setTgtSchemas([]); return; }
+    const row = connections.find(c => c.id === tgtConnId);
+    if (!row) return;
+    const conn = connRowToMigConn(row, tgtDb);
+    setTgtConn(conn);
+    setTgtConnecting(true); setTgtError(''); setTgtConnected(false); setTgtSchemas([]); setTgtTables([]);
+    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', conn, { headers: authHeaders() })
+      .then(({ data }) => {
+        setTgtConnected(true);
+        setTgtTables(data.tables);
+        if (row.db_type === 'postgres') {
+          const schemas = [...new Set(data.tables.map(t => t.schema))].sort();
+          const schemaList = schemas.length ? schemas : ['public'];
+          setTgtSchemas(schemaList);
+          setTgtDefaultSchema(schemaList.includes('public') ? 'public' : schemaList[0]);
+        }
+      })
+      .catch(err => setTgtError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Connection failed') : 'Connection failed'))
+      .finally(() => setTgtConnecting(false));
+  }, [tgtDb]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Source table selection ─────────────────────────────────────────────────────
 
@@ -272,7 +291,10 @@ export default function Migration() {
         id: newId(),
         include: true,
         source: { schema, table },
-        target: { schema, table },
+        target: {
+          schema: tgtConn.type === 'postgresql' ? tgtDefaultSchema : schema,
+          table,
+        },
         columns,
         truncateBeforeMigrate: false,
       };
@@ -372,8 +394,17 @@ export default function Migration() {
     try {
       const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${id}`, { headers: authHeaders() });
       const job = data.job;
-      setSrcConn({ ...srcConn, type: job.sourceMeta.type, host: job.sourceMeta.host, port: job.sourceMeta.port, database: job.sourceMeta.database, username: job.sourceMeta.username });
-      setTgtConn({ ...tgtConn, type: job.targetMeta.type, host: job.targetMeta.host, port: job.targetMeta.port, database: job.targetMeta.database, username: job.targetMeta.username });
+      // Restore connection dropdowns by matching saved metadata
+      const srcMatch = connections.find(c =>
+        c.host === job.sourceMeta.host && c.username === job.sourceMeta.username &&
+        c.db_type === (job.sourceMeta.type === 'postgresql' ? 'postgres' : 'mysql')
+      );
+      if (srcMatch) { setSrcConnId(srcMatch.id); setSrcDb(job.sourceMeta.database); }
+      const tgtMatch = connections.find(c =>
+        c.host === job.targetMeta.host && c.username === job.targetMeta.username &&
+        c.db_type === (job.targetMeta.type === 'postgresql' ? 'postgres' : 'mysql')
+      );
+      if (tgtMatch) { setTgtConnId(tgtMatch.id); setTgtDb(job.targetMeta.database); }
       setTableMaps(job.tables);
       setActiveJobId(id);
       setSaveJobName(job.name);
@@ -479,50 +510,166 @@ export default function Migration() {
       <div className="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden">
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
-        <header className="shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 flex items-center gap-3">
-          <Link href="/" className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
-            <ArrowLeft size={16} />
-          </Link>
-          <div className="flex items-center gap-2">
-            <Database size={16} className="text-blue-500" />
-            <span className="text-sm font-semibold text-gray-800 dark:text-slate-200">Migration</span>
+        <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
+
+          {/* Title */}
+          <div className="flex items-center gap-3 shrink-0">
+            <Network size={18} className="text-blue-600" />
+            <div>
+              <h1 className="font-bold text-sm text-gray-900 dark:text-slate-100">Migration</h1>
+              <p className="text-xs text-gray-500 dark:text-slate-400">Map and migrate tables between databases</p>
+            </div>
           </div>
+
+          <div className="h-8 w-px bg-gray-200 dark:bg-slate-700 shrink-0" />
+
           {dirty && (
             <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400">
               unsaved changes
             </span>
           )}
-          <div className="flex-1" />
           {includedCount > 0 && (
             <span className="text-xs text-gray-400 dark:text-slate-500">{includedCount} table{includedCount > 1 ? 's' : ''} selected</span>
           )}
-          <button onClick={() => { setSaveJobName(saveJobName || 'New Job'); setShowSaveDialog(true); }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700">
-            <Save size={12} /> Save Job
-          </button>
-          <button onClick={() => void startMigration()} disabled={!canStart}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
-            {polling ? <><Loader2 size={12} className="animate-spin" /> Running…</> : <><Play size={12} /> Migrate</>}
-          </button>
+
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            <button onClick={() => { setSaveJobName(saveJobName || 'New Job'); setShowSaveDialog(true); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+              <Save size={12} /> Save Job
+            </button>
+            <button onClick={() => void startMigration()} disabled={!canStart}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+              {polling ? <><Loader2 size={12} className="animate-spin" /> Running…</> : <><Play size={12} /> Migrate</>}
+            </button>
+            <div className="h-8 w-px bg-gray-200 dark:bg-slate-700" />
+            <nav className="flex items-center gap-1 text-sm">
+              <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
+              <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
+              <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Migration</span>
+            </nav>
+          </div>
         </header>
 
         {/* ── Connections bar ───────────────────────────────────────────── */}
-        <div className="shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 flex items-start gap-3">
-          <ConnForm
-            label="Source"
-            conn={srcConn} onChange={setSrcConn}
-            connected={srcConnected} connecting={srcConnecting} error={srcError}
-            onConnect={() => void connectSource()} onDisconnect={disconnectSource}
-          />
-          <div className="flex items-center self-center pt-6">
-            <ArrowRight size={20} className="text-gray-300 dark:text-slate-600" />
+        <div className="shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-3 flex items-center gap-4">
+
+          {/* Source */}
+          <div className="flex flex-col gap-1.5 min-w-0">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Source</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={srcConnId ?? ''}
+                onChange={e => {
+                  if (e.target.value === '__new_conn__') { void router.push('/connections'); return; }
+                  setSrcConnId(e.target.value ? Number(e.target.value) : null);
+                }}
+                className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[180px] focus:outline-none focus:border-blue-400 cursor-pointer"
+              >
+                <option value="">— select connection —</option>
+                {(['postgres', 'mysql'] as const).map(type => {
+                  const group = connections.filter(c => c.db_type === type);
+                  if (!group.length) return null;
+                  return (
+                    <optgroup key={type} label={type === 'postgres' ? 'PostgreSQL' : 'MySQL'}>
+                      {group.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                    </optgroup>
+                  );
+                })}
+                <option value="__new_conn__">+ New Connection →</option>
+              </select>
+
+              {srcConnId && (srcLoadingDbs
+                ? <Loader2 size={12} className="animate-spin text-gray-400" />
+                : (
+                  <select
+                    value={srcDb}
+                    onChange={e => setSrcDb(e.target.value)}
+                    className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[120px] focus:outline-none focus:border-blue-400 cursor-pointer font-mono"
+                  >
+                    {!srcDb && <option value="">— select db —</option>}
+                    {srcDbs.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                )
+              )}
+
+              {srcConnecting && <span className="text-[11px] text-gray-400 dark:text-slate-500 animate-pulse">Connecting…</span>}
+              {srcConnected && !srcConnecting && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  <Check size={10} /> Connected
+                </span>
+              )}
+              {srcDbError && <span className="text-[11px] text-rose-500">{srcDbError}</span>}
+              {srcError && !srcConnecting && <span className="text-[11px] text-rose-500 truncate max-w-[160px]" title={srcError}>{srcError}</span>}
+            </div>
           </div>
-          <ConnForm
-            label="Target"
-            conn={tgtConn} onChange={setTgtConn}
-            connected={tgtConnected} connecting={tgtConnecting} error={tgtError}
-            onConnect={() => void connectTarget()} onDisconnect={disconnectTarget}
-          />
+
+          <ArrowRight size={18} className="text-gray-300 dark:text-slate-600 shrink-0 mt-4" />
+
+          {/* Target */}
+          <div className="flex flex-col gap-1.5 min-w-0">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Target</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={tgtConnId ?? ''}
+                onChange={e => {
+                  if (e.target.value === '__new_conn__') { void router.push('/connections'); return; }
+                  setTgtConnId(e.target.value ? Number(e.target.value) : null);
+                }}
+                className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[180px] focus:outline-none focus:border-blue-400 cursor-pointer"
+              >
+                <option value="">— select connection —</option>
+                {(['postgres', 'mysql'] as const).map(type => {
+                  const group = connections.filter(c => c.db_type === type);
+                  if (!group.length) return null;
+                  return (
+                    <optgroup key={type} label={type === 'postgres' ? 'PostgreSQL' : 'MySQL'}>
+                      {group.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                    </optgroup>
+                  );
+                })}
+                <option value="__new_conn__">+ New Connection →</option>
+              </select>
+
+              {tgtConnId && (tgtLoadingDbs
+                ? <Loader2 size={12} className="animate-spin text-gray-400" />
+                : (
+                  <select
+                    value={tgtDb}
+                    onChange={e => setTgtDb(e.target.value)}
+                    className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[120px] focus:outline-none focus:border-blue-400 cursor-pointer font-mono"
+                  >
+                    {!tgtDb && <option value="">— select db —</option>}
+                    {tgtDbs.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                )
+              )}
+
+              {/* Schema selector — PG only, appears once connected */}
+              {tgtConnected && tgtSchemas.length > 0 && (
+                <>
+                  <span className="text-gray-300 dark:text-slate-600 text-xs">›</span>
+                  <select
+                    value={tgtDefaultSchema}
+                    onChange={e => setTgtDefaultSchema(e.target.value)}
+                    className="px-2 py-1.5 text-xs rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 min-w-[100px] focus:outline-none focus:border-blue-400 cursor-pointer font-mono"
+                    title="Default target schema for new table mappings"
+                  >
+                    {tgtSchemas.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <span className="text-[10px] text-blue-500 dark:text-blue-400 font-medium">schema</span>
+                </>
+              )}
+
+              {tgtConnecting && <span className="text-[11px] text-gray-400 dark:text-slate-500 animate-pulse">Connecting…</span>}
+              {tgtConnected && !tgtConnecting && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  <Check size={10} /> Connected
+                </span>
+              )}
+              {tgtDbError && <span className="text-[11px] text-rose-500">{tgtDbError}</span>}
+              {tgtError && !tgtConnecting && <span className="text-[11px] text-rose-500 truncate max-w-[160px]" title={tgtError}>{tgtError}</span>}
+            </div>
+          </div>
         </div>
 
         {/* ── Body ─────────────────────────────────────────────────────── */}
@@ -643,18 +790,45 @@ export default function Migration() {
                       <div className="flex items-end gap-2">
                         <div>
                           <label className="block text-[11px] text-gray-500 dark:text-slate-400 mb-1">Target schema</label>
-                          <input value={selectedMap.target.schema}
-                            onChange={e => updateTableMap(selectedMap.id, { target: { ...selectedMap.target, schema: e.target.value } })}
-                            className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 w-24"
-                          />
+                          {tgtSchemas.length > 0 ? (
+                            <select
+                              value={selectedMap.target.schema}
+                              onChange={e => updateTableMap(selectedMap.id, { target: { ...selectedMap.target, schema: e.target.value } })}
+                              className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 w-28 focus:outline-none focus:border-blue-400"
+                            >
+                              {tgtSchemas.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          ) : (
+                            <input value={selectedMap.target.schema}
+                              onChange={e => updateTableMap(selectedMap.id, { target: { ...selectedMap.target, schema: e.target.value } })}
+                              className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 w-24"
+                            />
+                          )}
                         </div>
                         <span className="text-gray-400 pb-1">.</span>
                         <div>
                           <label className="block text-[11px] text-gray-500 dark:text-slate-400 mb-1">Target table</label>
-                          <input value={selectedMap.target.table}
-                            onChange={e => updateTableMap(selectedMap.id, { target: { ...selectedMap.target, table: e.target.value } })}
-                            className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 w-32"
-                          />
+                          {(() => {
+                            const schemaTables = tgtTables.filter(t => t.schema === selectedMap.target.schema);
+                            return schemaTables.length > 0 ? (
+                              <select
+                                value={selectedMap.target.table}
+                                onChange={e => updateTableMap(selectedMap.id, { target: { ...selectedMap.target, table: e.target.value } })}
+                                className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 w-40 focus:outline-none focus:border-blue-400"
+                              >
+                                {!schemaTables.find(t => t.name === selectedMap.target.table) && (
+                                  <option value={selectedMap.target.table}>{selectedMap.target.table || '— select table —'}</option>
+                                )}
+                                {schemaTables.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                              </select>
+                            ) : (
+                              <input
+                                value={selectedMap.target.table}
+                                onChange={e => updateTableMap(selectedMap.id, { target: { ...selectedMap.target, table: e.target.value } })}
+                                className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 w-40"
+                              />
+                            );
+                          })()}
                         </div>
                       </div>
                       <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400 self-end mb-1 ml-auto">

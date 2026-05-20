@@ -1,14 +1,15 @@
 'use client';
 import Head from 'next/head';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   ArrowLeft, Database, Plus, Trash2, Table2, Upload, Play, Copy,
   Check, RefreshCw, FileSpreadsheet, FileCode2, FileText, CheckCircle2,
   XCircle, Loader2, X, ChevronRight, ChevronDown, ChevronUp, Download,
-  FolderPlus, AlertCircle, Columns, Sprout, Terminal, Save, Clock,
-  FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info,
+  AlertCircle, Columns, Sprout, Terminal, Save, Clock,
+  FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info, HelpCircle, BookOpen,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 import type { ConnectionRow } from './api/connections/index';
@@ -550,21 +551,125 @@ function SaveJobModal({ onSave, onSkip }: { onSave: (name: string, desc: string)
   );
 }
 
+// ─── FK Picker Modal ─────────────────────────────────────────────────────────
+
+function FkPickerModal({ tables, currentTableId, value, onSelect, onClose }: {
+  tables: DesignerTable[];
+  currentTableId: string;
+  value: string;
+  onSelect: (ref: string) => void;
+  onClose: () => void;
+}) {
+  const otherTables = tables.filter(t => t.id !== currentTableId);
+  const initTable = (() => {
+    if (value) {
+      const [tName] = value.split('.');
+      const found = otherTables.find(t => t.name === tName);
+      if (found) return found;
+    }
+    return otherTables.find(t => t.columns.some(c => c.isPk)) ?? otherTables[0] ?? null;
+  })();
+  const [pickedTable, setPickedTable] = useState<DesignerTable | null>(initTable);
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <Link2 size={15} className="text-blue-500" />
+            <p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Set Foreign Key Reference</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
+        </div>
+        <div className="flex overflow-hidden" style={{ height: 320 }}>
+          {/* Tables list */}
+          <div className="w-44 shrink-0 border-r border-gray-100 dark:border-slate-800 overflow-y-auto">
+            <p className="px-3 py-2 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider sticky top-0 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
+              Tables ({otherTables.length})
+            </p>
+            {otherTables.length === 0
+              ? <p className="px-3 py-4 text-[11px] text-gray-400 dark:text-slate-500 text-center">No other tables in designer</p>
+              : otherTables.map(t => (
+                <button key={t.id} onClick={() => setPickedTable(t)}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-left border-b border-gray-50 dark:border-slate-800/50 transition-colors ${pickedTable?.id === t.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30 text-gray-700 dark:text-slate-300'}`}>
+                  <Table2 size={11} className={`shrink-0 ${pickedTable?.id === t.id ? 'text-blue-400' : 'text-gray-400 dark:text-slate-500'}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium truncate">{t.name}</p>
+                    {t.schema && t.schema !== 'public' && <p className="text-[9px] text-gray-400 dark:text-slate-500 font-mono">{t.schema}</p>}
+                  </div>
+                  <span className="text-[10px] text-gray-400 dark:text-slate-600 shrink-0">{t.columns.length}</span>
+                </button>
+              ))
+            }
+          </div>
+          {/* Columns list */}
+          <div className="flex-1 overflow-y-auto">
+            {pickedTable ? (
+              <>
+                <p className="px-4 py-2 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider sticky top-0 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
+                  {pickedTable.name} — pick column
+                </p>
+                {pickedTable.columns.map(col => {
+                  const ref = `${pickedTable.name}.${col.name}`;
+                  const selected = value === ref;
+                  return (
+                    <button key={col.id} onClick={() => { onSelect(ref); onClose(); }}
+                      className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left border-b border-gray-50 dark:border-slate-800/50 transition-colors ${selected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}>
+                      <span className="w-4 shrink-0 flex justify-center">
+                        {col.isPk ? <KeyRound size={11} className="text-amber-500" />
+                          : col.isUnique ? <Fingerprint size={11} className="text-purple-400" />
+                            : <span className="w-1.5 h-1.5 rounded-full bg-gray-200 dark:bg-slate-600 inline-block" />}
+                      </span>
+                      <span className={`flex-1 text-[11px] font-mono font-medium truncate ${selected ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-slate-300'}`}>{col.name}</span>
+                      <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 shrink-0">{col.type}</span>
+                      {selected && <Check size={11} className="text-blue-500 shrink-0" />}
+                    </button>
+                  );
+                })}
+                {pickedTable.columns.length === 0 && <p className="px-4 py-4 text-[11px] text-gray-400 dark:text-slate-500">No columns in this table.</p>}
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-full"><p className="text-[11px] text-gray-400 dark:text-slate-500">Select a table on the left</p></div>
+            )}
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-800 flex items-center justify-between">
+          {value
+            ? <button onClick={() => { onSelect(''); onClose(); }} className="inline-flex items-center gap-1.5 text-[11px] text-rose-500 hover:text-rose-600 transition-colors"><X size={11} /> Remove FK</button>
+            : <span />
+          }
+          <button onClick={onClose} className="px-4 py-1.5 text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Column Editor ────────────────────────────────────────────────────────────
 
-function ColumnEditorPanel({ table, dbType, onUpdate, onDeleteTable }: {
+function ColumnEditorPanel({ table, tables, dbType, onUpdate, onDeleteTable }: {
   table: DesignerTable;
+  tables: DesignerTable[];
   dbType: DbType;
   onUpdate: (t: DesignerTable) => void;
   onDeleteTable: () => void;
 }) {
   const types = dbType === 'postgresql' ? PG_TYPES : MYSQL_TYPES;
+  const [fkPickerColId, setFkPickerColId] = useState<string | null>(null);
 
   const updateCol = (colId: string, patch: Partial<DesignerColumn>) =>
     onUpdate({ ...table, columns: table.columns.map(c => c.id === colId ? { ...c, ...patch } : c) });
 
   const addCol = () => onUpdate({ ...table, columns: [...table.columns, mkCol()] });
   const delCol = (colId: string) => onUpdate({ ...table, columns: table.columns.filter(c => c.id !== colId) });
+
+  // FK relationship summaries
+  const fkCols = table.columns.filter(c => c.fkRef);
+  const incomingFks = tables.flatMap(t =>
+    t.id !== table.id
+      ? t.columns.filter(c => c.fkRef?.startsWith(`${table.name}.`)).map(c => ({ fromTable: t, fromCol: c }))
+      : []
+  );
 
   const cbClass = 'w-3.5 h-3.5 cursor-pointer accent-blue-500 rounded';
   const inputClass = 'w-full bg-transparent outline-none text-gray-900 dark:text-slate-100 font-mono text-[11px] px-1 py-0.5 rounded border border-transparent hover:bg-gray-100 dark:hover:bg-slate-700/50 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-400 transition-colors';
@@ -600,7 +705,7 @@ function ColumnEditorPanel({ table, dbType, onUpdate, onDeleteTable }: {
 
       {/* Column table */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full text-[11px] border-collapse" style={{ minWidth: 860 }}>
+        <table className="w-full text-[11px] border-collapse" style={{ minWidth: 880 }}>
           <thead className="sticky top-0 z-10">
             <tr className="text-left text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider bg-gray-50 dark:bg-slate-800/60">
               <th className="px-3 py-2 w-36">Name</th>
@@ -611,7 +716,7 @@ function ColumnEditorPanel({ table, dbType, onUpdate, onDeleteTable }: {
               <th className="px-3 py-2 text-center w-9" title="Unique">UQ</th>
               <th className="px-3 py-2 text-center w-9" title="Auto Increment">AI</th>
               <th className="px-3 py-2 w-28">Default</th>
-              <th className="px-3 py-2 w-32">FK Reference</th>
+              <th className="px-3 py-2 w-40">FK Reference</th>
               <th className="px-3 py-2 w-32">Comment</th>
               <th className="px-3 py-2 w-8"></th>
             </tr>
@@ -659,8 +764,30 @@ function ColumnEditorPanel({ table, dbType, onUpdate, onDeleteTable }: {
                 <td className="px-2 py-1">
                   <input className={inputClass} placeholder="NULL" value={col.defaultValue} onChange={e => updateCol(col.id, { defaultValue: e.target.value })} />
                 </td>
+                {/* FK Reference — visual picker instead of free text */}
                 <td className="px-2 py-1">
-                  <input className={`${inputClass} text-blue-600 dark:text-blue-400`} placeholder="table.col" value={col.fkRef} onChange={e => updateCol(col.id, { fkRef: e.target.value })} />
+                  {col.fkRef ? (
+                    <div className="flex items-center gap-1 min-w-0">
+                      <button
+                        onClick={() => setFkPickerColId(col.id)}
+                        title={`FK → ${col.fkRef} (click to change)`}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-[10px] font-mono text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors max-w-[100px] min-w-0"
+                      >
+                        <Link2 size={8} className="shrink-0" />
+                        <span className="truncate">{col.fkRef}</span>
+                      </button>
+                      <button onClick={() => updateCol(col.id, { fkRef: '' })} title="Remove FK" className="shrink-0 p-0.5 text-gray-300 dark:text-slate-700 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
+                        <X size={10} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setFkPickerColId(col.id)}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-gray-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                    >
+                      <Link2 size={10} /> Set FK
+                    </button>
+                  )}
                 </td>
                 <td className="px-2 py-1">
                   <input className={`${inputClass} text-gray-500 dark:text-slate-400`} placeholder="—" value={col.comment} onChange={e => updateCol(col.id, { comment: e.target.value })} />
@@ -679,89 +806,193 @@ function ColumnEditorPanel({ table, dbType, onUpdate, onDeleteTable }: {
         </table>
       </div>
 
+      {/* FK Relationships summary */}
+      {(fkCols.length > 0 || incomingFks.length > 0) && (
+        <div className="shrink-0 px-5 py-3 border-t border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/40 space-y-2.5">
+          {fkCols.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <Link2 size={10} /> Outgoing FK{fkCols.length !== 1 ? 's' : ''} ({fkCols.length})
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {fkCols.map(c => (
+                  <div key={c.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 text-[10px]">
+                    <span className="font-mono font-medium text-gray-700 dark:text-slate-200">{c.name}</span>
+                    <span className="text-blue-400">→</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400">{c.fkRef}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {incomingFks.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <ChevronRight size={10} /> Referenced by ({incomingFks.length})
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {incomingFks.map(({ fromTable, fromCol }) => (
+                  <div key={`${fromTable.id}-${fromCol.id}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 text-[10px]">
+                    <span className="font-mono text-purple-600 dark:text-purple-400">{fromTable.name}.{fromCol.name}</span>
+                    <span className="text-purple-400">→</span>
+                    <span className="font-mono font-medium text-gray-600 dark:text-slate-300">this</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Add column */}
       <div className="shrink-0 px-4 py-2.5 border-t border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
         <button onClick={addCol} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors">
           <Plus size={12} /> Add Column
         </button>
       </div>
+
+      {/* FK Picker Modal */}
+      {fkPickerColId && (
+        <FkPickerModal
+          tables={tables}
+          currentTableId={table.id}
+          value={table.columns.find(c => c.id === fkPickerColId)?.fkRef ?? ''}
+          onSelect={ref => updateCol(fkPickerColId, { fkRef: ref })}
+          onClose={() => setFkPickerColId(null)}
+        />
+      )}
     </div>
   );
 }
 
 // ─── Table Tree Panel ─────────────────────────────────────────────────────────
 
-function TableTreePanel({ tables, selectedId, dbType, onSelect, onDelete, onAdd }: {
+function TableTreePanel({ tables, selectedId, dbType, schemas, onSelect, onDelete, onAdd, onAddSchema, onAddTableFor }: {
   tables: DesignerTable[];
   selectedId: string | null;
   dbType: DbType;
+  schemas: string[];
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onAdd: () => void;
+  onAddSchema: () => void;
+  onAddTableFor: (schema: string) => void;
 }) {
   const grouped = useMemo(() => {
     const m = new Map<string, DesignerTable[]>();
+    if (dbType === 'postgresql') {
+      for (const s of schemas) { if (!m.has(s)) m.set(s, []); }
+    } else {
+      m.set('', []);
+    }
     for (const t of tables) {
       const key = dbType === 'postgresql' ? (t.schema || 'public') : '';
       if (!m.has(key)) m.set(key, []);
       m.get(key)!.push(t);
     }
     return m;
-  }, [tables, dbType]);
+  }, [tables, dbType, schemas]);
 
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['public', '']));
   const toggleSchema = (s: string) => setExpanded(p => { const n = new Set(p); n.has(s) ? n.delete(s) : n.add(s); return n; });
 
-  if (tables.length === 0) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-slate-800">
-          <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Tables</span>
-          <button onClick={onAdd} title="Add table" className="p-1 text-blue-500 hover:text-blue-600 transition-colors"><Plus size={14} /></button>
-        </div>
-        <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4">
-          <Table2 size={28} className="text-gray-200 dark:text-slate-700" />
-          <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">No tables yet.<br />Click + to add one.</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full">
-      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-slate-800">
-        <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Tables ({tables.length})</span>
-        <button onClick={onAdd} title="Add table" className="p-1 text-blue-500 hover:text-blue-600 transition-colors"><Plus size={14} /></button>
+      {/* Header */}
+      <div className="shrink-0 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
+            Tables{tables.length > 0 ? ` (${tables.length})` : ''}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {dbType === 'postgresql' && (
+            <button
+              onClick={onAddSchema}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+            >
+              <Plus size={11} /> Schema
+            </button>
+          )}
+          <button
+            onClick={onAdd}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+          >
+            <Plus size={11} /> Table
+          </button>
+        </div>
       </div>
+
+      {/* Tree */}
       <div className="flex-1 overflow-y-auto py-1">
+        {tables.length === 0 && dbType === 'mysql' && (
+          <div className="flex flex-col items-center justify-center gap-2 p-4 h-28">
+            <Table2 size={24} className="text-gray-200 dark:text-slate-700" />
+            <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">No tables yet.<br />Click + to add one.</p>
+          </div>
+        )}
+
         {Array.from(grouped.entries()).map(([schema, schemaTables]) => (
           <div key={schema}>
+            {/* Schema header (PG only) */}
             {dbType === 'postgresql' && (
-              <button
-                onClick={() => toggleSchema(schema)}
-                className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors"
-              >
-                {expanded.has(schema) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                {schema || 'public'}
-              </button>
-            )}
-            {(dbType === 'mysql' || expanded.has(schema)) && schemaTables.map(t => (
-              <div
-                key={t.id}
-                onClick={() => onSelect(t.id)}
-                className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors ${selectedId === t.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30 text-gray-700 dark:text-slate-300'} ${dbType === 'postgresql' ? 'pl-6' : ''}`}
-              >
-                <Table2 size={11} className={selectedId === t.id ? 'text-blue-500' : 'text-gray-400 dark:text-slate-500'} />
-                <span className="flex-1 text-[11px] font-medium truncate">{t.name}</span>
-                <span className="text-[10px] text-gray-400 dark:text-slate-600 mr-1">{t.columns.length}</span>
+              <div className="flex items-center group/schema">
                 <button
-                  onClick={e => { e.stopPropagation(); onDelete(t.id); }}
-                  className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition-all"
+                  onClick={() => toggleSchema(schema)}
+                  className="flex-1 flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors"
                 >
-                  <X size={11} />
+                  {expanded.has(schema) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                  <Layers size={10} />
+                  <span>{schema || 'public'}</span>
+                  {schemaTables.length > 0 && <span className="opacity-60">({schemaTables.length})</span>}
+                </button>
+                <button
+                  onClick={() => onAddTableFor(schema)}
+                  title={`Add table to ${schema}`}
+                  className="opacity-0 group-hover/schema:opacity-100 p-1.5 mr-1 text-gray-400 hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400 transition-all shrink-0"
+                >
+                  <Plus size={11} />
                 </button>
               </div>
-            ))}
+            )}
+
+            {/* Tables under schema */}
+            {(dbType === 'mysql' || expanded.has(schema)) && (
+              <>
+                {schemaTables.length === 0 && dbType === 'postgresql' && (
+                  <p className="pl-8 py-1.5 text-[10px] italic text-gray-300 dark:text-slate-700">
+                    Empty — hover + to add table
+                  </p>
+                )}
+                {schemaTables.map(t => {
+                  const hasFk = t.columns.some(c => c.fkRef);
+                  const isReferenced = tables.some(ot => ot.id !== t.id && ot.columns.some(c => c.fkRef?.startsWith(`${t.name}.`)));
+                  return (
+                    <div
+                      key={t.id}
+                      onClick={() => onSelect(t.id)}
+                      className={`group flex items-center gap-2 py-1.5 cursor-pointer transition-colors
+                        ${dbType === 'postgresql' ? 'pl-7 pr-2' : 'px-3'}
+                        ${selectedId === t.id
+                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                          : 'hover:bg-gray-50 dark:hover:bg-slate-800/30 text-gray-700 dark:text-slate-300'}`}
+                    >
+                      <Table2 size={11} className={`shrink-0 ${selectedId === t.id ? 'text-blue-500' : 'text-gray-400 dark:text-slate-500'}`} />
+                      <span className="flex-1 text-[11px] font-medium truncate">{t.name}</span>
+                      {hasFk && <span title="Has FK references"><Link2 size={9} className="text-blue-400 dark:text-blue-500 shrink-0" /></span>}
+                      {isReferenced && <span title="Referenced by other tables"><ChevronRight size={9} className="text-purple-400 dark:text-purple-500 shrink-0 -rotate-90" /></span>}
+                      <span className="text-[10px] text-gray-400 dark:text-slate-600">{t.columns.length}</span>
+                      <button
+                        onClick={e => { e.stopPropagation(); onDelete(t.id); }}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition-all shrink-0"
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -1263,13 +1494,14 @@ function ExecutePanel({ tables, conn, selectedDb, dbType, seedSql, onSeedSqlChan
 
 // ─── New Table Dialog ─────────────────────────────────────────────────────────
 
-function NewTableDialog({ dbType, onConfirm, onClose }: {
+function NewTableDialog({ dbType, defaultSchema, onConfirm, onClose }: {
   dbType: DbType;
+  defaultSchema?: string;
   onConfirm: (name: string, schema: string) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState('');
-  const [schema, setSchema] = useState('public');
+  const [schema, setSchema] = useState(defaultSchema ?? 'public');
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus(); }, []);
 
@@ -1359,10 +1591,219 @@ function NewDbDialog({ dbType, onConfirm, onClose, creating, error }: {
   );
 }
 
+// ─── Guide Popover ────────────────────────────────────────────────────────────
+
+function GuidePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const pill = (text: string) => (
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{text}</span>
+  );
+  const h3 = 'flex items-center gap-1.5 text-xs font-semibold text-gray-800 dark:text-slate-100';
+  const sec = 'mt-2 space-y-1.5 text-[11px] text-gray-600 dark:text-slate-300 leading-relaxed';
+  const div = 'border-t border-gray-100 dark:border-slate-800';
+
+  return (
+    <div ref={ref} className="relative flex items-center">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors border ${open
+          ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+          : 'text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-transparent hover:border-blue-200 dark:hover:border-blue-800'}`}
+      >
+        <HelpCircle size={13} /> Guide
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-50 w-[430px] max-h-[74vh] flex flex-col bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+
+          {/* Header */}
+          <div className="shrink-0 flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <BookOpen size={14} className="text-blue-500" />
+            <p className="flex-1 font-semibold text-sm text-gray-900 dark:text-slate-100">Schema Designer Guide</p>
+            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"><X size={14} /></button>
+          </div>
+
+          {/* Scrollable body */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-[11px]">
+
+            {/* Workflow */}
+            <div>
+              <p className={h3}><Info size={12} className="text-blue-500" /> Workflow</p>
+              <div className={sec}>
+                <p>Pick a <strong>connection</strong> → pick a <strong>database</strong> → design tables → click <strong>Execute</strong>.</p>
+                <p>All changes are <strong>local</strong> until Execute — nothing is written to the database beforehand.</p>
+              </div>
+            </div>
+
+            <div className={div} />
+
+            {/* Navbar */}
+            <div>
+              <p className={h3}><Database size={12} className="text-purple-500" /> Navbar</p>
+              <div className={sec}>
+                <p><strong>Connection dropdown</strong> — select a saved connection. {pill('+ New Connection →')} navigates to the Connections page.</p>
+                <p><strong>Database dropdown</strong> — select a database. {pill('+ New Database…')} creates one inline without leaving this page.</p>
+                <p><span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">PostgreSQL</span> badge only appears for PostgreSQL connections.</p>
+              </div>
+            </div>
+
+            <div className={div} />
+
+            {/* Designer tab */}
+            <div>
+              <p className={h3}><Table2 size={12} className="text-blue-500" /> Designer Tab</p>
+              <div className={sec}>
+                <p><strong>Object tree (left panel)</strong></p>
+                <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
+                  <li>{pill('New Schema')} (PostgreSQL only) — adds a schema node; generates <code className="text-[10px]">CREATE SCHEMA IF NOT EXISTS</code> at execute time.</li>
+                  <li>{pill('New Table')} — creates a table. For PG, schema is pre-filled from the selected schema node.</li>
+                  <li>Hover a schema header → {pill('+')} appears to add a table directly under that schema.</li>
+                  <li>Hover a table row → {pill('×')} appears to delete it.</li>
+                  <li>Blue link icon on a table = has outgoing FKs. Purple arrow = referenced by other tables.</li>
+                </ul>
+                <p className="mt-2"><strong>Column editor (right panel)</strong></p>
+                <p>Click any table in the tree to edit its columns. Table name and schema are editable inline in the editor header.</p>
+              </div>
+            </div>
+
+            <div className={div} />
+
+            {/* Column flags */}
+            <div>
+              <p className={h3}><Columns size={12} className="text-teal-500" /> Column Properties</p>
+              <div className="mt-2 space-y-1.5">
+                {[
+                  ['PK', 'Primary Key', 'Auto-sets NOT NULL + UNIQUE. Row highlighted amber.'],
+                  ['NN', 'Not Null', 'Column cannot be NULL.'],
+                  ['UQ', 'Unique', 'Adds a UNIQUE constraint.'],
+                  ['AI', 'Auto Increment', 'PG: SERIAL/BIGSERIAL. MySQL: AUTO_INCREMENT. Auto-enabled for SERIAL types.'],
+                  ['Default', 'Default value', 'Expressions (NOW(), NULL, TRUE) used as-is. Plain strings are quoted.'],
+                  ['FK Ref', 'Foreign Key', 'Click "Set FK" to open the relationship picker.'],
+                  ['Comment', 'Column comment', 'PG: COMMENT ON COLUMN. MySQL: inline COMMENT in DDL.'],
+                ].map(([flag, name, note]) => (
+                  <div key={flag} className="flex items-start gap-2">
+                    <span className="shrink-0 w-11 text-center inline-block px-1 py-0.5 rounded font-mono text-[10px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{flag}</span>
+                    <span className="text-[11px] text-gray-600 dark:text-slate-300"><span className="font-medium text-gray-700 dark:text-slate-200">{name}</span> — {note}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className={div} />
+
+            {/* FK Picker */}
+            <div>
+              <p className={h3}><Link2 size={12} className="text-blue-500" /> FK Relationship Picker</p>
+              <div className={sec}>
+                <p>Click {pill('Set FK')} in the FK column to open the two-panel picker:</p>
+                <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
+                  <li><strong>Left panel</strong> — all other tables in the designer. Click to select one.</li>
+                  <li><strong>Right panel</strong> — columns of the selected table. Amber key = PK, purple = Unique.</li>
+                  <li>Click a column → FK set as {pill('table.column')}; picker closes automatically.</li>
+                  <li>Click the blue FK badge to reopen and change. Click {pill('×')} to remove the FK.</li>
+                </ul>
+                <p className="mt-1.5">A <strong>Relationship Summary</strong> below the column table shows all outgoing FKs and tables that reference this one.</p>
+              </div>
+            </div>
+
+            <div className={div} />
+
+            {/* Import */}
+            <div>
+              <p className={h3}><Upload size={12} className="text-emerald-500" /> Import Tab</p>
+              <div className={sec}>
+                <ul className="space-y-1.5">
+                  <li>{pill('From Database')} — load live schema; expand schemas, check tables, click Import Selected.</li>
+                  <li>{pill('From SQL')} — paste or upload a .sql file; parser previews found tables before merging.</li>
+                  <li>{pill('From XLSX')} — each sheet becomes one table; column types inferred from data.</li>
+                  <li>{pill('From CSV')} — header row = column names; types inferred from sample rows.</li>
+                </ul>
+                <p className="text-gray-400 dark:text-slate-500 text-[10px] mt-1">Tables with the same schema.name are skipped (merge strategy).</p>
+              </div>
+            </div>
+
+            <div className={div} />
+
+            {/* Execute */}
+            <div>
+              <p className={h3}><Play size={12} className="text-rose-500" /> Execute Tab</p>
+              <div className={sec}>
+                <ul className="space-y-1.5">
+                  <li><strong>DDL Preview</strong> — auto-generated CREATE TABLE SQL. Copy or download as .sql.</li>
+                  <li><strong>Seed SQL</strong> — optional INSERT statements run after DDL.</li>
+                  <li><strong>Execute</strong> — applies DDL + Seed to the selected database. Per-statement log shows results.</li>
+                  <li><strong>Save Job</strong> — saves the run as a named job. Load from Job History to restore the full design.</li>
+                </ul>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── New Schema Dialog ────────────────────────────────────────────────────────
+
+function NewSchemaDialog({ onConfirm, onClose }: {
+  onConfirm: (name: string) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState('');
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { ref.current?.focus(); }, []);
+  const sanitized = name.toLowerCase().replace(/[^a-z0-9_]/g, '');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-80 p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Layers size={15} className="text-blue-500" />
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Add Schema</h3>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-gray-500 dark:text-slate-400">Schema name (PostgreSQL)</label>
+          <input
+            ref={ref}
+            className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && sanitized) onConfirm(sanitized); if (e.key === 'Escape') onClose(); }}
+            placeholder="my_schema"
+          />
+          {name && name !== sanitized && (
+            <p className="text-[10px] text-gray-400 dark:text-slate-500">Will be saved as: <span className="font-mono">{sanitized || '—'}</span></p>
+          )}
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button onClick={() => sanitized && onConfirm(sanitized)} disabled={!sanitized}
+            className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
+            Add Schema
+          </button>
+          <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 function SchemaDesignerInner() {
   const { authenticated, loading: authLoading } = useAuth();
+  const router = useRouter();
 
   // Connections
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
@@ -1382,6 +1823,11 @@ function SchemaDesignerInner() {
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('designer');
   const [showNewTable, setShowNewTable] = useState(false);
+  const [newTableDefaultSchema, setNewTableDefaultSchema] = useState<string | undefined>(undefined);
+
+  // Schema tree (PG only)
+  const [designerSchemas, setDesignerSchemas] = useState<string[]>(['public']);
+  const [showNewSchema, setShowNewSchema] = useState(false);
 
   // Seed + execute state
   const [seedSql, setSeedSql] = useState('');
@@ -1449,11 +1895,25 @@ function SchemaDesignerInner() {
     }
   };
 
+  const handleAddSchema = (name: string) => {
+    setDesignerSchemas(p => p.includes(name) ? p : [...p, name]);
+    setShowNewSchema(false);
+  };
+
+  const handleAddTableFor = (schema: string) => {
+    setNewTableDefaultSchema(schema);
+    setShowNewTable(true);
+  };
+
   const handleAddTable = (name: string, schema: string) => {
     const t = mkTable(name, schema, dbType);
     setTables(p => [...p, t]);
     setSelectedTableId(t.id);
     setShowNewTable(false);
+    setNewTableDefaultSchema(undefined);
+    if (dbType === 'postgresql') {
+      setDesignerSchemas(p => p.includes(schema) ? p : [...p, schema]);
+    }
   };
 
   const handleDeleteTable = (id: string) => {
@@ -1571,7 +2031,10 @@ function SchemaDesignerInner() {
         <select
           className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[200px] focus:outline-none focus:border-blue-400 cursor-pointer"
           value={selectedConnId ?? ''}
-          onChange={e => setSelectedConnId(e.target.value ? Number(e.target.value) : null)}
+          onChange={e => {
+            if (e.target.value === '__new_conn__') { void router.push('/connections'); return; }
+            setSelectedConnId(e.target.value ? Number(e.target.value) : null);
+          }}
         >
           <option value="">— select connection —</option>
           {(['postgres', 'mysql'] as const).map(type => {
@@ -1583,9 +2046,10 @@ function SchemaDesignerInner() {
               </optgroup>
             );
           })}
+          <option value="__new_conn__">+ New Connection →</option>
         </select>
 
-        {/* Database selector */}
+        {/* Database selector — includes New Database option */}
         {selectedConn && (
           loadingDbs
             ? <span className="text-xs text-gray-400 dark:text-slate-500 animate-pulse">Loading databases…</span>
@@ -1593,31 +2057,22 @@ function SchemaDesignerInner() {
               <select
                 className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[140px] focus:outline-none focus:border-blue-400 cursor-pointer font-mono"
                 value={selectedDb}
-                onChange={e => setSelectedDb(e.target.value)}
-                disabled={!databases.length}
+                onChange={e => {
+                  if (e.target.value === '__new_db__') { setShowNewDb(true); return; }
+                  setSelectedDb(e.target.value);
+                }}
               >
                 {!selectedDb && <option value="">— select db —</option>}
                 {databases.map(d => <option key={d} value={d}>{d}</option>)}
+                <option value="__new_db__">+ New Database…</option>
               </select>
             )
         )}
 
-        {/* New DB button */}
-        {selectedConn && !loadingDbs && (
-          <button onClick={() => setShowNewDb(true)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors shrink-0">
-            <FolderPlus size={12} /> New DB
-          </button>
-        )}
-
-        {/* DB type badge */}
-        {selectedConn && (
-          <span className={`shrink-0 inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium border ${
-            selectedConn.db_type === 'postgres'
-              ? 'bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-100 dark:border-blue-900'
-              : 'bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 border-orange-100 dark:border-orange-900'
-          }`}>
-            {selectedConn.db_type === 'postgres' ? 'PostgreSQL' : 'MySQL'}
+        {/* PostgreSQL badge — only shown when connected to PostgreSQL */}
+        {selectedConn?.db_type === 'postgres' && (
+          <span className="shrink-0 inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium border bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-100 dark:border-blue-900">
+            PostgreSQL
           </span>
         )}
 
@@ -1646,6 +2101,9 @@ function SchemaDesignerInner() {
             )}
           </button>
         ))}
+        <div className="ml-auto pr-1 flex items-center">
+          <GuidePopover />
+        </div>
       </div>
 
       {/* ── Tab Content ── */}
@@ -1660,9 +2118,12 @@ function SchemaDesignerInner() {
                 tables={tables}
                 selectedId={selectedTableId}
                 dbType={dbType}
+                schemas={designerSchemas}
                 onSelect={setSelectedTableId}
                 onDelete={handleDeleteTable}
-                onAdd={() => setShowNewTable(true)}
+                onAdd={() => { setNewTableDefaultSchema(undefined); setShowNewTable(true); }}
+                onAddSchema={() => setShowNewSchema(true)}
+                onAddTableFor={handleAddTableFor}
               />
             </div>
 
@@ -1671,6 +2132,7 @@ function SchemaDesignerInner() {
               {selectedTable ? (
                 <ColumnEditorPanel
                   table={selectedTable}
+                  tables={tables}
                   dbType={dbType}
                   onUpdate={handleUpdateTable}
                   onDeleteTable={() => handleDeleteTable(selectedTable.id)}
@@ -1726,8 +2188,15 @@ function SchemaDesignerInner() {
       {showNewTable && (
         <NewTableDialog
           dbType={dbType}
+          defaultSchema={newTableDefaultSchema}
           onConfirm={handleAddTable}
-          onClose={() => setShowNewTable(false)}
+          onClose={() => { setShowNewTable(false); setNewTableDefaultSchema(undefined); }}
+        />
+      )}
+      {showNewSchema && (
+        <NewSchemaDialog
+          onConfirm={handleAddSchema}
+          onClose={() => setShowNewSchema(false)}
         />
       )}
       {showNewDb && (
