@@ -1,10 +1,10 @@
 'use client';
 import Head from 'next/head';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, createContext } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
 import {
-  ReactFlow, Background, Controls, MiniMap,
+  ReactFlow, Background, MiniMap,
   useNodesState, useEdgesState, addEdge,
   BaseEdge, getSmoothStepPath,
   Handle, Position, type Node, type Edge, type Connection, type EdgeProps,
@@ -12,10 +12,12 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
-  ChevronRight, Database, Table2, Search,
+  ChevronRight, ChevronDown, Database, Table2, Search, HelpCircle,
   Plug, Unplug, RefreshCw, Download, FileSpreadsheet,
   Code2, Network, Columns, Check, X, Maximize2,
-  ExternalLink, Printer, ArrowLeft, Layers,
+  ExternalLink, Printer, ArrowLeft, Layers, ZoomIn, ZoomOut,
+  ArrowRight, ArrowDown, ArrowLeft as ArrowLeftIcon, ArrowUp,
+  AlignJustify, LayoutGrid, SortAsc, GitBranch, Minus, Hand, MousePointer2,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 import type { ConnectionRow } from './api/connections/index';
@@ -32,6 +34,15 @@ function getStoredToken(): string {
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type ActiveTab = 'columns' | 'erd' | 'export';
+type LayoutDir     = 'LR' | 'TB' | 'RL' | 'BT';
+type LayoutSpacing = 'compact' | 'normal' | 'loose';
+type LayoutSort    = 'none' | 'name' | 'columns' | 'connections';
+type LayoutAlgo    = 'hierarchical' | 'grid';
+type EdgeStyle     = 'crowfoot' | 'simple';
+
+// ── Highlight context (edge hover → blue border on connected nodes) ───────────
+
+const HighlightCtx = createContext<Set<string>>(new Set());
 
 interface ConnPayload {
   type: 'postgresql' | 'mysql';
@@ -56,16 +67,18 @@ function connToPayload(c: ConnectionRow): ConnPayload {
 // ── ERD Node ─────────────────────────────────────────────────────────────────
 
 function TableNode({ data }: { data: { label: string; columns: ColumnInfo[]; onNavigate: () => void } }) {
+  const highlighted = useContext(HighlightCtx);
+  const isHighlighted = highlighted.has(data.label);
   return (
-    <div className="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-lg shadow-md min-w-[220px] text-xs overflow-hidden">
-      <Handle type="target" position={Position.Left} className="!bg-blue-500" />
-      <Handle type="source" position={Position.Right} className="!bg-blue-500" />
-      <div className="bg-blue-600 dark:bg-blue-700 text-white px-3 py-1.5 font-semibold text-[11px] tracking-wide flex items-center justify-between">
+    <div className={`bg-white dark:bg-slate-800 border rounded-lg shadow-md min-w-[220px] text-xs overflow-hidden transition-all duration-150 ${isHighlighted ? 'border-red-500 shadow-red-500/30 shadow-lg ring-2 ring-red-500/40' : 'border-gray-300 dark:border-slate-600'}`}>
+      <Handle type="target" position={Position.Left} className={isHighlighted ? '!bg-red-500' : '!bg-blue-500'} />
+      <Handle type="source" position={Position.Right} className={isHighlighted ? '!bg-red-500' : '!bg-blue-500'} />
+      <div className={`text-white px-3 py-1.5 font-semibold text-[11px] tracking-wide flex items-center justify-between transition-colors duration-150 ${isHighlighted ? 'bg-red-600 dark:bg-red-700' : 'bg-blue-600 dark:bg-blue-700'}`}>
         <span className="truncate">{data.label}</span>
         <button
           onMouseDown={e => { e.stopPropagation(); data.onNavigate(); }}
           title="View columns"
-          className="shrink-0 ml-1.5 p-0.5 rounded hover:bg-blue-500/60 transition-colors"
+          className={`shrink-0 ml-1.5 p-0.5 rounded transition-colors ${isHighlighted ? 'hover:bg-red-500/60' : 'hover:bg-blue-500/60'}`}
         >
           <ExternalLink size={10} />
         </button>
@@ -89,28 +102,30 @@ function TableNode({ data }: { data: { label: string; columns: ColumnInfo[]; onN
 
 const nodeTypes = { table: TableNode };
 
-// ── Crow's foot edge ──────────────────────────────────────────────────────────
+// ── Edge components ───────────────────────────────────────────────────────────
 
 function CrowsFootEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
+  const highlighted = useContext(HighlightCtx);
+  const src = String((data as Record<string,unknown>)?.sourceTable ?? '');
+  const tgt = String((data as Record<string,unknown>)?.targetTable ?? '');
+  const isHighlighted = highlighted.has(src) || highlighted.has(tgt);
   const [edgePath] = getSmoothStepPath({
     sourceX, sourceY, sourcePosition,
     targetX, targetY, targetPosition,
     borderRadius: 12,
   });
   const isOneToOne = Boolean(data?.isOneToOne);
-  const color = '#3b82f6';
+  const color = isHighlighted ? '#ef4444' : '#3b82f6';
   const manyId = `cfm-${id}`;
   const oneId  = `cfo-${id}`;
   return (
     <g>
       <defs>
-        {/* Many-end (source/FK table): bar + crow's foot, fans out from source handle */}
         <marker id={manyId} markerWidth="20" markerHeight="12" refX="1" refY="6"
           orient="auto" markerUnits="userSpaceOnUse">
           <line x1="1" y1="0" x2="1" y2="12" stroke={color} strokeWidth="1.5" />
           <path d="M3,6 L18,0 M3,6 L18,12 M3,6 L18,6" stroke={color} strokeWidth="1.5" fill="none" />
         </marker>
-        {/* One-end (target/referenced table): single bar at path end */}
         <marker id={oneId} markerWidth="8" markerHeight="12" refX="0" refY="6"
           orient="auto" markerUnits="userSpaceOnUse">
           <line x1="2" y1="0" x2="2" y2="12" stroke={color} strokeWidth="1.5" />
@@ -119,7 +134,7 @@ function CrowsFootEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
       <BaseEdge
         id={id}
         path={edgePath}
-        style={{ stroke: color, strokeWidth: 1.5 }}
+        style={{ stroke: color, strokeWidth: isHighlighted ? 2.5 : 1.5 }}
         markerStart={`url(#${isOneToOne ? oneId : manyId})`}
         markerEnd={`url(#${oneId})`}
       />
@@ -127,17 +142,76 @@ function CrowsFootEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
   );
 }
 
-const edgeTypes = { crowsFoot: CrowsFootEdge };
+function SimpleEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
+  const highlighted = useContext(HighlightCtx);
+  const src = String((data as Record<string,unknown>)?.sourceTable ?? '');
+  const tgt = String((data as Record<string,unknown>)?.targetTable ?? '');
+  const isHighlighted = highlighted.has(src) || highlighted.has(tgt);
+  const [edgePath] = getSmoothStepPath({
+    sourceX, sourceY, sourcePosition,
+    targetX, targetY, targetPosition,
+    borderRadius: 12,
+  });
+  const color = isHighlighted ? '#ef4444' : '#3b82f6';
+  const arrowId = `arr-${id}`;
+  return (
+    <g>
+      <defs>
+        <marker id={arrowId} markerWidth="10" markerHeight="10" refX="9" refY="5"
+          orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L0,10 L10,5 z" fill={color} />
+        </marker>
+      </defs>
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        style={{ stroke: color, strokeWidth: isHighlighted ? 2.5 : 1.5 }}
+        markerEnd={`url(#${arrowId})`}
+      />
+    </g>
+  );
+}
 
-// ── ERD hierarchical layout helper ───────────────────────────────────────────
+const edgeTypes = { crowsFoot: CrowsFootEdge, simple: SimpleEdge };
+
+// ── Layout helpers ────────────────────────────────────────────────────────────
+
+const SPACING_CFG = {
+  compact: { COL_W: 250, H_GAP: 60,  V_GAP: 24 },
+  normal:  { COL_W: 270, H_GAP: 120, V_GAP: 48 },
+  loose:   { COL_W: 290, H_GAP: 200, V_GAP: 80 },
+} as const;
+const ROW_H = 26, BASE_H = 52;
+
+function nodeColCount(node: Node) {
+  return ((node.data as Record<string, unknown>)?.columns as unknown[] | undefined)?.length ?? 5;
+}
+function nodeHeight(node: Node) { return BASE_H + nodeColCount(node) * ROW_H; }
+
+function sortIds(ids: string[], sort: LayoutSort, nodes: Node[], edges: Edge[]) {
+  if (sort === 'none') return ids;
+  const edgeDeg = new Map<string, number>();
+  edges.forEach(e => {
+    edgeDeg.set(e.source, (edgeDeg.get(e.source) ?? 0) + 1);
+    edgeDeg.set(e.target, (edgeDeg.get(e.target) ?? 0) + 1);
+  });
+  return [...ids].sort((a, b) => {
+    if (sort === 'name') return a.localeCompare(b);
+    if (sort === 'columns') {
+      const na = nodes.find(n => n.id === a), nb = nodes.find(n => n.id === b);
+      return nodeColCount(nb!) - nodeColCount(na!);
+    }
+    if (sort === 'connections') return (edgeDeg.get(b) ?? 0) - (edgeDeg.get(a) ?? 0);
+    return 0;
+  });
+}
 
 function computeHierarchicalLayout(
-  nodes: Node[],
-  edges: Edge[],
+  nodes: Node[], edges: Edge[],
+  dir: LayoutDir = 'LR', spacing: LayoutSpacing = 'normal', sort: LayoutSort = 'none',
 ): Map<string, { x: number; y: number }> {
-  const COL_W = 270, H_GAP = 120, V_GAP = 48, ROW_H = 26, BASE_H = 52;
+  const { COL_W, H_GAP, V_GAP } = SPACING_CFG[spacing];
 
-  // "Pure parent" = table that is only referenced (no outgoing FK edges)
   const outCount = new Map<string, number>();
   nodes.forEach(n => outCount.set(n.id, 0));
   edges.forEach(e => outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1));
@@ -145,7 +219,6 @@ function computeHierarchicalLayout(
   const roots = nodes.filter(n => outCount.get(n.id) === 0).map(n => n.id);
   if (roots.length === 0) nodes.forEach(n => roots.push(n.id));
 
-  // BFS along reverse edges (referenced → FK holder) to assign column levels
   const reverseAdj = new Map<string, string[]>();
   nodes.forEach(n => reverseAdj.set(n.id, []));
   edges.forEach(e => reverseAdj.get(e.target)?.push(e.source));
@@ -164,35 +237,63 @@ function computeHierarchicalLayout(
   }
   nodes.forEach(n => { if (!level.has(n.id)) level.set(n.id, 0); });
 
-  // Group by level
   const byLevel = new Map<number, string[]>();
   nodes.forEach(n => {
     const l = level.get(n.id)!;
-    const list = byLevel.get(l) ?? [];
-    list.push(n.id);
-    byLevel.set(l, list);
+    byLevel.set(l, [...(byLevel.get(l) ?? []), n.id]);
   });
 
+  const isHoriz = dir === 'LR' || dir === 'RL';
   const levels = [...byLevel.keys()].sort((a, b) => a - b);
   const positioned = new Map<string, { x: number; y: number }>();
-  let x = 0;
+  let primary = 0;
 
   levels.forEach(l => {
-    const ids = byLevel.get(l)!;
-    const heights = ids.map(id => {
+    const ids = sortIds(byLevel.get(l)!, sort, nodes, edges);
+    const sizes = ids.map(id => {
       const node = nodes.find(n => n.id === id);
-      const colCount = ((node?.data as Record<string, unknown>)?.columns as unknown[] | undefined)?.length ?? 5;
-      return BASE_H + colCount * ROW_H;
+      return isHoriz ? nodeHeight(node!) : COL_W;
     });
-    const totalH = heights.reduce((s, h) => s + h + V_GAP, -V_GAP);
-    let y = -totalH / 2;
+    const crossSize = isHoriz ? COL_W : (nodes.find(n => n.id === ids[0]) ? nodeHeight(nodes.find(n => n.id === ids[0])!) : BASE_H);
+    const total = sizes.reduce((s, h) => s + h + V_GAP, -V_GAP);
+    let secondary = -total / 2;
     ids.forEach((id, i) => {
-      positioned.set(id, { x, y });
-      y += heights[i] + V_GAP;
+      if (isHoriz) {
+        positioned.set(id, { x: primary, y: secondary });
+      } else {
+        positioned.set(id, { x: secondary, y: primary });
+      }
+      secondary += sizes[i] + V_GAP;
     });
-    x += COL_W + H_GAP;
+    primary += (isHoriz ? crossSize + H_GAP : crossSize + H_GAP);
   });
 
+  // Flip axis for RL / BT
+  if (dir === 'RL' || dir === 'BT') {
+    const maxP = Math.max(...[...positioned.values()].map(p => isHoriz ? p.x : p.y));
+    positioned.forEach((pos, id) => {
+      if (isHoriz) positioned.set(id, { ...pos, x: maxP - pos.x });
+      else positioned.set(id, { ...pos, y: maxP - pos.y });
+    });
+  }
+
+  return positioned;
+}
+
+function computeGridLayout(
+  nodes: Node[], edges: Edge[],
+  spacing: LayoutSpacing = 'normal', sort: LayoutSort = 'none',
+): Map<string, { x: number; y: number }> {
+  const { COL_W, H_GAP, V_GAP } = SPACING_CFG[spacing];
+  const cols = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
+  const sorted = sortIds(nodes.map(n => n.id), sort, nodes, edges);
+  const positioned = new Map<string, { x: number; y: number }>();
+  sorted.forEach((id, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const node = nodes.find(n => n.id === id);
+    positioned.set(id, { x: col * (COL_W + H_GAP), y: row * (nodeHeight(node!) + V_GAP) });
+  });
   return positioned;
 }
 
@@ -206,19 +307,36 @@ function ERDInner({
   erdTableKeys,
   columnsCache,
   onTableClick,
+  paperSize,
+  orientation,
+  onCapturingChange,
+  captureRef,
 }: {
   erdTableKeys: string[];
   columnsCache: Record<string, TableColumnsResult>;
   onTableClick: (key: string) => void;
+  paperSize: PaperSize;
+  orientation: Orientation;
+  onCapturingChange: (v: boolean) => void;
+  captureRef: React.MutableRefObject<{ triggerPng: () => Promise<void>; triggerPrint: () => Promise<void> } | null>;
 }) {
-  const { fitView } = useReactFlow();
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
   const containerRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [printOpen, setPrintOpen] = useState(false);
-  const [paperSize, setPaperSize] = useState<PaperSize>('a4');
-  const [orientation, setOrientation] = useState<Orientation>('landscape');
-  const [capturing, setCapturing] = useState(false);
+
+  // Layout options
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const [layoutDir, setLayoutDir] = useState<LayoutDir>('LR');
+  const [layoutSpacing, setLayoutSpacing] = useState<LayoutSpacing>('normal');
+  const [layoutSort, setLayoutSort] = useState<LayoutSort>('none');
+  const [layoutAlgo, setLayoutAlgo] = useState<LayoutAlgo>('hierarchical');
+  const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>('crowfoot');
+  const [selectMode, setSelectMode] = useState(false);
+
+  // Edge hover highlight + tooltip
+  const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set());
+  const [edgeTooltip, setEdgeTooltip] = useState<{ x: number; y: number; label: string } | null>(null);
 
   const capture = async () => {
     const el = containerRef.current?.querySelector<HTMLElement>('.react-flow');
@@ -228,19 +346,18 @@ function ERDInner({
       backgroundColor: document.documentElement.classList.contains('dark') ? '#0f172a' : '#f9fafb',
       width: el.offsetWidth,
       height: el.offsetHeight,
-      // exclude the Panel overlay from capture
+      pixelRatio: 3,
       filter: node => !(node instanceof HTMLElement && node.classList.contains('react-flow__panel')),
     });
   };
 
   const prepareCapture = async () => {
-    setPrintOpen(false);   // close dialog before capturing
-    fitView({ duration: 0, padding: 0.06 });   // fit all nodes into view
-    await new Promise(r => setTimeout(r, 180)); // wait for layout to settle
+    fitView({ duration: 0, padding: 0.06 });
+    await new Promise(r => setTimeout(r, 180));
   };
 
   const handlePng = async () => {
-    setCapturing(true);
+    onCapturingChange(true);
     try {
       await prepareCapture();
       const dataUrl = await capture();
@@ -249,11 +366,11 @@ function ERDInner({
       a.href = dataUrl;
       a.download = `erd-${Date.now()}.png`;
       a.click();
-    } finally { setCapturing(false); }
+    } finally { onCapturingChange(false); }
   };
 
   const handlePrint = async () => {
-    setCapturing(true);
+    onCapturingChange(true);
     try {
       await prepareCapture();
       const dataUrl = await capture();
@@ -266,17 +383,22 @@ function ERDInner({
         img{max-width:100%;height:auto}
       </style></head><body><img src="${dataUrl}"/><script>window.onload=()=>{window.print();window.close()}</script></body></html>`);
       win.document.close();
-    } finally { setCapturing(false); }
+    } finally { onCapturingChange(false); }
   };
 
-  const applyLayout = useCallback((overrideNodes?: Node[], overrideEdges?: Edge[]) => {
+  const applyLayout = useCallback((
+    overrideNodes?: Node[], overrideEdges?: Edge[],
+    dir = layoutDir, spacing = layoutSpacing, sort = layoutSort, algo = layoutAlgo,
+  ) => {
     const n = overrideNodes ?? nodes;
     const e = overrideEdges ?? edges;
     if (n.length === 0) return;
-    const positioned = computeHierarchicalLayout(n, e);
+    const positioned = algo === 'grid'
+      ? computeGridLayout(n, e, spacing, sort)
+      : computeHierarchicalLayout(n, e, dir, spacing, sort);
     setNodes(prev => prev.map(node => ({ ...node, position: positioned.get(node.id) ?? node.position })));
     setTimeout(() => fitView({ padding: 0.12 }), 80);
-  }, [nodes, edges, fitView, setNodes]);
+  }, [nodes, edges, fitView, setNodes, layoutDir, layoutSpacing, layoutSort, layoutAlgo]);
 
   useEffect(() => {
     const newNodes: Node[] = [];
@@ -305,8 +427,8 @@ function ERDInner({
             id: edgeId,
             source: key,
             target: targetKey,
-            type: 'crowsFoot',
-            data: { isOneToOne },
+            type: edgeStyle === 'crowfoot' ? 'crowsFoot' : 'simple',
+            data: { isOneToOne, sourceTable: key, targetTable: targetKey, fromCol: fk.fromCol, toCol: fk.toCol },
             label: `${fk.fromCol}→${fk.toCol}`,
             labelStyle: { fontSize: 8, fill: '#94a3b8' },
           });
@@ -314,7 +436,6 @@ function ERDInner({
       });
     });
 
-    // Apply hierarchical layout immediately
     const positioned = computeHierarchicalLayout(newNodes, newEdges);
     const laid = newNodes.map(n => ({ ...n, position: positioned.get(n.id) ?? n.position }));
 
@@ -323,95 +444,199 @@ function ERDInner({
     setTimeout(() => fitView({ padding: 0.12 }), 100);
   }, [erdTableKeys, columnsCache]);
 
+  // Sync edge type when edgeStyle changes
+  useEffect(() => {
+    setEdges(prev => prev.map(e => ({ ...e, type: edgeStyle === 'crowfoot' ? 'crowsFoot' : 'simple' })));
+  }, [edgeStyle]);
+
   const onConnect = useCallback((params: Connection) => setEdges(e => addEdge(params, e)), []);
 
+  // Expose capture functions to parent via ref (updated on every render so always current)
+  captureRef.current = { triggerPng: handlePng, triggerPrint: handlePrint };
+
   return (
+    <HighlightCtx.Provider value={highlightedNodes}>
     <div ref={containerRef} className="flex-1 relative h-full">
+      {/* Edge hover tooltip */}
+      {edgeTooltip && (
+        <div
+          className="pointer-events-none fixed z-50 px-2 py-1.5 rounded-lg bg-slate-900 text-slate-100 text-[11px] shadow-xl border border-slate-700 max-w-[240px]"
+          style={{ left: edgeTooltip.x + 12, top: edgeTooltip.y - 10 }}
+        >
+          {edgeTooltip.label}
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onEdgeMouseEnter={(_evt, edge) => {
+          const src = String((edge.data as Record<string,unknown>)?.sourceTable ?? edge.source);
+          const tgt = String((edge.data as Record<string,unknown>)?.targetTable ?? edge.target);
+          const fromCol = String((edge.data as Record<string,unknown>)?.fromCol ?? '');
+          const toCol = String((edge.data as Record<string,unknown>)?.toCol ?? '');
+          setHighlightedNodes(new Set([src, tgt]));
+          setEdgeTooltip({
+            x: _evt.clientX,
+            y: _evt.clientY,
+            label: `${src} · ${fromCol} → ${tgt} · ${toCol}`,
+          });
+        }}
+        onEdgeMouseLeave={() => { setHighlightedNodes(new Set()); setEdgeTooltip(null); }}
         onConnect={onConnect}
         onNodeClick={(_evt, node) => onTableClick(node.id)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        selectionOnDrag={selectMode}
+        panOnDrag={!selectMode}
+        onSelectionChange={({ nodes: sel }) => {
+          if (!selectMode || sel.length === 0) return;
+          // Delay zoom until after XYFlow finishes computing the selection rect
+          setTimeout(() => {
+            fitView({ nodes: sel, padding: 0.25, duration: 350 });
+            // Reset select mode after animation completes
+            setTimeout(() => setSelectMode(false), 400);
+          }, 80);
+        }}
         fitView
         minZoom={0.05}
         maxZoom={2}
         className="bg-gray-50 dark:bg-slate-900"
       >
         <Background gap={20} size={1} color="#e5e7eb" />
-        <Controls />
-        <MiniMap nodeColor="#3b82f6" className="!bg-white dark:!bg-slate-800" />
-        <Panel position="top-right" className="flex items-center gap-2">
-          {/* Auto layout */}
-          <button
-            onClick={() => applyLayout()}
-            title="Re-arrange tables by FK hierarchy"
-            className="px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-sm"
-          >
-            <Layers size={12} /> Layout
-          </button>
-
-          {/* Print dropdown */}
-          <div className="relative">
+        <MiniMap nodeColor="#3b82f6" />
+        <Panel position="top-left" className="flex flex-col items-start gap-2">
+          <div className="flex items-center gap-2">
+            {/* Pan / Select area toggle */}
             <button
-              onClick={() => setPrintOpen(v => !v)}
-              title="Print / Export PNG"
-              className="px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-sm"
+              onClick={() => setSelectMode(v => !v)}
+              title={selectMode ? 'Select mode — drag to zoom area (click to switch to pan)' : 'Pan mode (click to switch to select area)'}
+              className={`p-1.5 rounded-lg border text-xs shadow-sm transition-colors flex items-center gap-1 ${selectMode ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700' : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
             >
-              <Printer size={12} /> {capturing ? 'Capturing…' : 'Export'}
+              {selectMode ? <MousePointer2 size={13} /> : <Hand size={13} />}
             </button>
-            {printOpen && (
-              <div className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-lg z-50 p-3 space-y-3">
-                {/* Paper size */}
-                <div>
-                  <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1">Paper</p>
-                  <div className="grid grid-cols-4 gap-1">
-                    {(['a4','a3','letter','legal'] as PaperSize[]).map(s => (
-                      <button key={s} onClick={() => setPaperSize(s)}
-                        className={`py-1 text-[10px] rounded border transition-colors ${paperSize === s ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300'}`}>
-                        {PAPER_LABELS[s]}
-                      </button>
-                    ))}
+
+            {/* Layout dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setLayoutOpen(v => !v)}
+                title="Layout options"
+                className="px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-sm"
+              >
+                <Layers size={12} /> Layout
+              </button>
+              {layoutOpen && (
+                <div className="absolute left-0 top-full mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl z-50 p-3 space-y-3">
+
+                  {/* Algorithm */}
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><GitBranch size={9} /> Algorithm</p>
+                    <div className="grid grid-cols-2 gap-1">
+                      {([['hierarchical','Hierarchical'],['grid','Grid']] as [LayoutAlgo,string][]).map(([v,label]) => (
+                        <button key={v} onClick={() => { setLayoutAlgo(v); applyLayout(undefined, undefined, layoutDir, layoutSpacing, layoutSort, v); }}
+                          className={`py-1 text-[10px] rounded border transition-colors ${layoutAlgo === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-                {/* Orientation */}
-                <div>
-                  <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1">Orientation</p>
-                  <div className="grid grid-cols-2 gap-1">
-                    {(['landscape','portrait'] as Orientation[]).map(o => (
-                      <button key={o} onClick={() => setOrientation(o)}
-                        className={`py-1 text-[10px] rounded border transition-colors capitalize ${orientation === o ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300'}`}>
-                        {o}
-                      </button>
-                    ))}
+
+                  {/* Direction (hierarchical only) */}
+                  {layoutAlgo === 'hierarchical' && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><ArrowRight size={9} /> Direction</p>
+                      <div className="grid grid-cols-4 gap-1">
+                        {([
+                          ['LR', <ArrowDown size={10} key="lr" />, 'Horizontal (Left → Right)'],
+                          ['RL', <ArrowUp size={10} key="rl" />, 'Horizontal (Right → Left)'],
+                          ['TB', <ArrowRight size={10} key="tb" />, 'Vertical (Top → Bottom)'],
+                          ['BT', <ArrowLeftIcon size={10} key="bt" />, 'Vertical (Bottom → Top)'],
+                        ] as [LayoutDir, React.ReactNode, string][]).map(([v, icon, tip]) => (
+                          <button key={v} onClick={() => { setLayoutDir(v); applyLayout(undefined, undefined, v, layoutSpacing, layoutSort, layoutAlgo); }}
+                            title={tip}
+                            className={`py-1.5 flex items-center justify-center rounded border transition-colors ${layoutDir === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                            {icon}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Spacing */}
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><AlignJustify size={9} /> Spacing</p>
+                    <div className="grid grid-cols-3 gap-1">
+                      {([['compact','Compact'],['normal','Normal'],['loose','Loose']] as [LayoutSpacing,string][]).map(([v,label]) => (
+                        <button key={v} onClick={() => { setLayoutSpacing(v); applyLayout(undefined, undefined, layoutDir, v, layoutSort, layoutAlgo); }}
+                          className={`py-1 text-[10px] rounded border transition-colors ${layoutSpacing === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-                {/* Actions */}
-                <div className="grid grid-cols-2 gap-1 pt-1 border-t border-gray-100 dark:border-slate-700">
-                  <button onClick={() => void handlePrint()} disabled={capturing}
-                    className="flex items-center justify-center gap-1 py-1.5 text-[11px] rounded-lg bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors">
-                    <Printer size={11} /> Print
+
+                  {/* Sort */}
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><SortAsc size={9} /> Sort within level</p>
+                    <div className="grid grid-cols-2 gap-1">
+                      {([['none','Default'],['name','Name'],['columns','Columns'],['connections','Connections']] as [LayoutSort,string][]).map(([v,label]) => (
+                        <button key={v} onClick={() => { setLayoutSort(v); applyLayout(undefined, undefined, layoutDir, layoutSpacing, v, layoutAlgo); }}
+                          className={`py-1 text-[10px] rounded border transition-colors ${layoutSort === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Edge style */}
+                  <div className="pt-2 border-t border-gray-100 dark:border-slate-700">
+                    <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><Minus size={9} /> Edge style</p>
+                    <div className="grid grid-cols-2 gap-1">
+                      <button onClick={() => setEdgeStyle('crowfoot')}
+                        className={`py-1 text-[10px] rounded border transition-colors ${edgeStyle === 'crowfoot' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                        Crow&apos;s foot
+                      </button>
+                      <button onClick={() => setEdgeStyle('simple')}
+                        className={`py-1 text-[10px] rounded border transition-colors ${edgeStyle === 'simple' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                        Simple arrow
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Apply button */}
+                  <button onClick={() => { applyLayout(); setLayoutOpen(false); }}
+                    className="w-full py-1.5 text-[11px] rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium">
+                    Apply Layout
                   </button>
-                  <button onClick={() => void handlePng()} disabled={capturing}
-                    className="flex items-center justify-center gap-1 py-1.5 text-[11px] rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                    <Download size={11} /> PNG
-                  </button>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+
+
           </div>
-          <button
-            onClick={() => fitView({ padding: 0.15 })}
-            className="px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-sm"
-          >
-            <Maximize2 size={12} /> Fit
-          </button>
+
+          {/* Zoom + Fit combined pill */}
+          <div className="flex items-center rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden">
+            <button onClick={() => zoomOut({ duration: 200 })} title="Zoom out"
+              className="px-2 py-1.5 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+              <ZoomOut size={13} />
+            </button>
+            <div className="w-px h-4 bg-gray-200 dark:bg-slate-700" />
+            <button onClick={() => fitView({ padding: 0.15, duration: 300 })} title="Fit to view"
+              className="px-2.5 py-1.5 text-[10px] font-medium text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-1">
+              <Maximize2 size={11} /> Fit
+            </button>
+            <div className="w-px h-4 bg-gray-200 dark:bg-slate-700" />
+            <button onClick={() => zoomIn({ duration: 200 })} title="Zoom in"
+              className="px-2 py-1.5 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+              <ZoomIn size={13} />
+            </button>
+          </div>
         </Panel>
       </ReactFlow>
     </div>
+    </HighlightCtx.Provider>
   );
 }
 
@@ -478,6 +703,8 @@ export default function SchemaExplorer() {
   const [loadingSchemas, setLoadingSchemas] = useState(false);
   const [loadingTables, setLoadingTables] = useState<Set<string>>(new Set());
   const [treeSearch, setTreeSearch] = useState('');
+  const [collapsedSchemas, setCollapsedSchemas] = useState<Set<string>>(new Set());
+  const [guideOpen, setGuideOpen] = useState(false);
 
   // Selection
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
@@ -494,8 +721,13 @@ export default function SchemaExplorer() {
   const [exportFormat, setExportFormat] = useState<'sql' | 'xlsx'>('sql');
   const [exporting, setExporting] = useState(false);
 
+  // Canvas capture (state lives here so Export tab can show/control it)
+  const [paperSize, setPaperSize] = useState<PaperSize>('a4');
+  const [orientation, setOrientation] = useState<Orientation>('landscape');
+  const [capturing, setCapturing] = useState(false);
+  const captureRef = useRef<{ triggerPng: () => Promise<void>; triggerPrint: () => Promise<void> } | null>(null);
+
   // ERD schema filter
-  const [erdSchemaFilter, setErdSchemaFilter] = useState<string>('all');
 
   // Records
   const RECORDS_LIMIT = 50;
@@ -656,7 +888,7 @@ export default function SchemaExplorer() {
       const url = URL.createObjectURL(new Blob([resp.data as BlobPart]));
       const a = document.createElement('a');
       a.href = url;
-      a.download = exportFormat === 'xlsx' ? 'data-model.xlsx' : 'migration.sql';
+      a.download = exportFormat === 'xlsx' ? 'schema-overview.xlsx' : 'migration.sql';
       a.click();
       URL.revokeObjectURL(url);
     } catch { /* ignore */ } finally {
@@ -788,18 +1020,18 @@ export default function SchemaExplorer() {
 
           {/* ── Left panel — flat grouped table list ───────────────────── */}
           <aside className="w-64 shrink-0 flex flex-col border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
-            {/* search */}
-            <div className="p-2 border-b border-gray-100 dark:border-slate-800">
-              <div className="relative">
-                <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input value={treeSearch} onChange={e => setTreeSearch(e.target.value)}
-                  placeholder="Filter schemas / tables…"
-                  className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+            <div className="flex-1 overflow-y-auto sidebar-scroll">
+              {/* Sticky search */}
+              <div className="sticky top-0 z-20 px-2 py-1.5 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
+                <div className="relative">
+                  <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input value={treeSearch} onChange={e => setTreeSearch(e.target.value)}
+                    placeholder="Filter schemas / tables…"
+                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
               </div>
-            </div>
 
-            <div className="flex-1 overflow-y-auto">
               {!connected && (
                 <div className="px-4 py-8 text-center">
                   <Database size={28} className="mx-auto text-gray-300 dark:text-slate-600 mb-2" />
@@ -819,57 +1051,75 @@ export default function SchemaExplorer() {
                 const isLoadingT = loadingTables.has(s.schema);
                 const allChecked = schemaTables.length > 0 && schemaTables.every(t => erdTables.has(`${t.schema}.${t.name}`));
                 const someChecked = !allChecked && schemaTables.some(t => erdTables.has(`${t.schema}.${t.name}`));
+                const isCollapsed = collapsedSchemas.has(s.schema);
+                const toggleCollapse = () => setCollapsedSchemas(prev => {
+                  const next = new Set(prev);
+                  next.has(s.schema) ? next.delete(s.schema) : next.add(s.schema);
+                  return next;
+                });
 
                 return (
                   <div key={s.schema}>
                     {/* Schema header */}
-                    <div className="flex items-center gap-1.5 px-2 py-1.5 bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-0 z-10">
+                    <div className="flex items-center gap-1 px-2 py-1.5 bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-[38px] z-10">
                       <input
                         type="checkbox"
                         checked={allChecked}
                         ref={el => { if (el) el.indeterminate = someChecked; }}
                         onChange={() => toggleSchemaErd(s.schema)}
+                        onClick={e => e.stopPropagation()}
                         className="shrink-0 accent-blue-600 cursor-pointer"
                         title={allChecked ? 'Uncheck all' : 'Check all'}
                       />
-                      <Database size={11} className="text-blue-500 shrink-0" />
-                      <span className="text-[11px] font-semibold text-gray-600 dark:text-slate-300 flex-1 truncate">{s.schema}</span>
-                      <span className="text-[10px] text-gray-400 dark:text-slate-500 shrink-0">
+                      <button
+                        onClick={toggleCollapse}
+                        className="flex items-center gap-1 flex-1 min-w-0 text-left"
+                      >
+                        {isCollapsed
+                          ? <ChevronRight size={11} className="shrink-0 text-gray-400 dark:text-slate-500" />
+                          : <ChevronDown size={11} className="shrink-0 text-gray-400 dark:text-slate-500" />
+                        }
+                        <Database size={11} className="text-blue-500 shrink-0" />
+                        <span className="text-[11px] font-semibold text-gray-600 dark:text-slate-300 flex-1 truncate ml-0.5">{s.schema}</span>
+                      </button>
+                      <span className="text-[10px] text-gray-400 dark:text-slate-500 shrink-0 ml-1">
                         {isLoadingT ? '…' : schemaTables.length}
                       </span>
                     </div>
 
-                    {/* Table rows */}
-                    {isLoadingT ? (
-                      <div className="pl-8 py-1.5 text-[10px] text-gray-400 animate-pulse">Loading…</div>
-                    ) : (
-                      schemaTables.map(t => {
-                        const key = `${t.schema}.${t.name}`;
-                        const isSelected = selectedTable === key;
-                        const inErd = erdTables.has(key);
-                        return (
-                          <div
-                            key={key}
-                            className={`flex items-center gap-1.5 pl-4 pr-2 py-1 cursor-pointer ${
-                              isSelected
-                                ? 'bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400'
-                                : 'hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400'
-                            }`}
-                            onClick={() => selectTable(key)}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={inErd}
-                              onChange={e => { e.stopPropagation(); toggleErd(key); }}
-                              onClick={e => e.stopPropagation()}
-                              className="shrink-0 accent-blue-600 cursor-pointer"
-                            />
-                            <Table2 size={11} className="shrink-0 text-gray-400 dark:text-slate-500" />
-                            <span className="text-xs flex-1 truncate">{t.name}</span>
-                            <span className="text-[10px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
-                          </div>
-                        );
-                      })
+                    {/* Table rows — hidden when collapsed */}
+                    {!isCollapsed && (
+                      isLoadingT ? (
+                        <div className="pl-8 py-1.5 text-[10px] text-gray-400 animate-pulse">Loading…</div>
+                      ) : (
+                        schemaTables.map(t => {
+                          const key = `${t.schema}.${t.name}`;
+                          const isSelected = selectedTable === key;
+                          const inErd = erdTables.has(key);
+                          return (
+                            <div
+                              key={key}
+                              className={`flex items-center gap-1.5 pl-4 pr-2 py-1 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400'
+                                  : 'hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400'
+                              }`}
+                              onClick={() => selectTable(key)}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={inErd}
+                                onChange={e => { e.stopPropagation(); toggleErd(key); }}
+                                onClick={e => e.stopPropagation()}
+                                className="shrink-0 accent-blue-600 cursor-pointer"
+                              />
+                              <Table2 size={11} className="shrink-0 text-gray-400 dark:text-slate-500" />
+                              <span className="text-xs flex-1 truncate">{t.name}</span>
+                              <span className="text-[10px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
+                            </div>
+                          );
+                        })
+                      )
                     )}
                   </div>
                 );
@@ -881,12 +1131,12 @@ export default function SchemaExplorer() {
           <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
             {/* Tab bar */}
-            <div className="shrink-0 flex items-center gap-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4">
+            <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
               {([
-                { key: 'columns',    label: 'Columns',    Icon: Columns },
-                { key: 'erd',        label: 'ERD',        Icon: Network },
-                { key: 'export',     label: 'Export',     Icon: Download },
-              ] as { key: ActiveTab; label: string; Icon: React.FC<any> }[]).map(({ key, label, Icon }) => (
+                { key: 'columns', label: 'Columns', Icon: Columns },
+                { key: 'erd',     label: 'ERD',     Icon: Network },
+                { key: 'export',  label: 'Export',  Icon: Download },
+              ] as { key: ActiveTab; label: string; Icon: React.FC<{size:number}> }[]).map(({ key, label, Icon }) => (
                 <button key={key} onClick={() => setActiveTab(key)}
                   className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${
                     activeTab === key
@@ -902,23 +1152,68 @@ export default function SchemaExplorer() {
                 </button>
               ))}
 
-              {/* Columns context: table label + back to ERD */}
-              {selectedTable && activeTab === 'columns' && (
-                <div className="ml-auto flex items-center gap-2">
+              {/* Right side: columns context + ? Guide flush right */}
+              <div className="ml-auto flex items-center pr-2">
+                {selectedTable && activeTab === 'columns' && (
+                  <div className="flex items-center gap-2 pr-3 mr-1 border-r border-gray-200 dark:border-slate-700">
+                    <button
+                      onClick={() => setActiveTab('erd')}
+                      className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+                      title="View in ERD"
+                    >
+                      <Network size={11} /> ERD
+                    </button>
+                    <span className="text-xs text-gray-400 dark:text-slate-500 font-mono">{selectedTable}</span>
+                  </div>
+                )}
+
+                {/* ? Guide popover — far right of tab bar */}
+                <div className="relative">
                   <button
-                    onClick={() => setActiveTab('erd')}
-                    className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
-                    title="View in ERD"
+                    onClick={() => setGuideOpen(v => !v)}
+                    title="How to use Schema Explorer"
+                    className="p-1.5 rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
                   >
-                    <Network size={11} /> ERD
+                    <HelpCircle size={14} />
                   </button>
-                  <span className="text-xs text-gray-400 dark:text-slate-500 font-mono">{selectedTable}</span>
+                  {guideOpen && (
+                    <div className="absolute right-0 top-full mt-1 w-80 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl z-50 p-4 text-xs text-gray-600 dark:text-slate-300 space-y-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="font-semibold text-gray-800 dark:text-slate-100 text-[13px]">Schema Explorer — Guide</p>
+                        <button onClick={() => setGuideOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200">
+                          <X size={13} />
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        <div>
+                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Database size={11} className="text-blue-500" /> Left Panel</p>
+                          <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Click a schema name to collapse or expand its tables. Use the checkbox to select or deselect all tables in a schema for the ERD.</p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Columns size={11} className="text-blue-500" /> Columns tab</p>
+                          <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Click any table in the left panel to view its columns, data types, PK/FK keys, and sample records.</p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Network size={11} className="text-blue-500" /> ERD tab</p>
+                          <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Checked tables appear on the ERD canvas. Hover over a relationship line to highlight connected tables. Use the Layout button to change direction, spacing, and algorithm.</p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><MousePointer2 size={11} className="text-blue-500" /> Area zoom</p>
+                          <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Toggle the <span className="font-mono bg-gray-100 dark:bg-slate-700 px-1 rounded">Hand / Select</span> icon in the canvas to enter select mode — drag a box around nodes to zoom into that area.</p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Download size={11} className="text-blue-500" /> Export tab</p>
+                          <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Download selected tables as SQL (CREATE TABLE + FK constraints) or XLSX (single-sheet schema overview). Also export the ERD canvas as a PNG or send to the printer.</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
 
             {/* ── Tab content ─────────────────────────────────────────── */}
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 overflow-hidden relative">
 
               {/* Columns tab */}
               {activeTab === 'columns' && (
@@ -1075,45 +1370,11 @@ export default function SchemaExplorer() {
                 </div>
               )}
 
-              {/* ERD tab */}
-              {activeTab === 'erd' && (() => {
-                const visibleKeys = [...erdTables].filter(k =>
-                  erdSchemaFilter === 'all' || k.startsWith(erdSchemaFilter + '.')
-                );
-                const schemaOptions = [...new Set([...erdTables].map(k => k.split('.')[0]))].sort();
+              {/* ERD tab — always mounted so captureRef stays valid from Export tab */}
+              {(() => {
+                const visibleKeys = [...erdTables];
                 return (
-                  <div className="h-full flex flex-col">
-                    {/* Schema filter bar */}
-                    {erdTables.size > 0 && (
-                      <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-                        <span className="text-xs text-gray-500 dark:text-slate-400">Schema</span>
-                        <select
-                          value={erdSchemaFilter}
-                          onChange={e => setErdSchemaFilter(e.target.value)}
-                          className="px-2 py-1 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200"
-                        >
-                          <option value="all">All ({erdTables.size} tables)</option>
-                          {schemaOptions.map(s => {
-                            const count = [...erdTables].filter(k => k.startsWith(s + '.')).length;
-                            return <option key={s} value={s}>{s} ({count})</option>;
-                          })}
-                        </select>
-                        <span className="text-xs text-gray-400 dark:text-slate-500">
-                          {visibleKeys.length} visible
-                        </span>
-                        <button
-                          onClick={() => {
-                            const keys = erdSchemaFilter === 'all'
-                              ? [...erdTables]
-                              : [...erdTables].filter(k => k.startsWith(erdSchemaFilter + '.'));
-                            keys.forEach(k => setErdTables(prev => { const n = new Set(prev); n.delete(k); return n; }));
-                          }}
-                          className="ml-auto text-xs text-gray-400 hover:text-rose-500 transition-colors"
-                        >
-                          Uncheck {erdSchemaFilter === 'all' ? 'all' : erdSchemaFilter}
-                        </button>
-                      </div>
-                    )}
+                  <div className={activeTab === 'erd' ? 'h-full flex flex-col' : 'absolute inset-0 invisible pointer-events-none'}>
 
                     {erdTables.size === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
@@ -1128,6 +1389,10 @@ export default function SchemaExplorer() {
                           erdTableKeys={visibleKeys}
                           columnsCache={columnsCache}
                           onTableClick={selectTable}
+                          paperSize={paperSize}
+                          orientation={orientation}
+                          onCapturingChange={setCapturing}
+                          captureRef={captureRef}
                         />
                       </ReactFlowProvider>
                     )}
@@ -1152,9 +1417,9 @@ export default function SchemaExplorer() {
                       <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Format</p>
                       <div className="flex gap-3">
                         {([
-                          { v: 'sql',  label: 'Migration SQL',    Icon: Code2,          desc: 'CREATE TABLE statements with FK constraints' },
-                          { v: 'xlsx', label: 'Data Model XLSX',  Icon: FileSpreadsheet, desc: 'One sheet per table with column definitions' },
-                        ] as { v: 'sql'|'xlsx'; label: string; Icon: React.FC<any>; desc: string }[]).map(({ v, label, Icon, desc }) => (
+                          { v: 'sql',  label: 'Migration SQL',       Icon: Code2,           desc: 'CREATE TABLE statements with FK constraints' },
+                          { v: 'xlsx', label: 'Schema Overview XLSX', Icon: FileSpreadsheet,  desc: 'Single sheet — all tables × columns in one file' },
+                        ] as { v: 'sql'|'xlsx'; label: string; Icon: React.FC<{size:number;className:string}>; desc: string }[]).map(({ v, label, Icon, desc }) => (
                           <button key={v} onClick={() => setExportFormat(v)}
                             className={`flex-1 flex flex-col items-start gap-1 p-3 rounded-xl border-2 text-left transition-colors ${
                               exportFormat === v
@@ -1197,6 +1462,60 @@ export default function SchemaExplorer() {
                       <Download size={14} />
                       {exporting ? 'Exporting…' : `Export ${exportFormat === 'xlsx' ? 'XLSX' : 'SQL'}`}
                     </button>
+
+                    {/* ── Canvas image export ─────────────────────────── */}
+                    <div className="pt-4 border-t border-gray-100 dark:border-slate-800 space-y-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-0.5">Canvas Image</h3>
+                        <p className="text-xs text-gray-500 dark:text-slate-400">Print or save the ERD canvas as a PNG image.</p>
+                      </div>
+
+                      {/* Paper size */}
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Paper size</p>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {(['a4','a3','letter','legal'] as PaperSize[]).map(s => (
+                            <button key={s} onClick={() => setPaperSize(s)}
+                              className={`py-1.5 text-xs rounded-lg border transition-colors ${paperSize === s ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                              {PAPER_LABELS[s]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Orientation */}
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Orientation</p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {(['landscape','portrait'] as Orientation[]).map(o => (
+                            <button key={o} onClick={() => setOrientation(o)}
+                              className={`py-1.5 text-xs rounded-lg border transition-colors capitalize ${orientation === o ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                              {o}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Print + PNG buttons */}
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => void captureRef.current?.triggerPrint()}
+                          disabled={capturing || erdTables.size === 0}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                        >
+                          <Printer size={13} />
+                          {capturing ? 'Capturing…' : 'Print'}
+                        </button>
+                        <button
+                          onClick={() => void captureRef.current?.triggerPng()}
+                          disabled={capturing || erdTables.size === 0}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                        >
+                          <Download size={13} />
+                          {capturing ? 'Capturing…' : 'Export PNG'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

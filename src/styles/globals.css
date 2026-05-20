@@ -83,3 +83,37 @@ html { scroll-behavior: smooth; }
     @apply bg-slate-800 text-slate-100 border-slate-700;
   }
 }
+
+/* Left panel hover scrollbar */
+.sidebar-scroll::-webkit-scrollbar { width: 5px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+.sidebar-scroll:hover::-webkit-scrollbar-thumb { background: rgb(148 163 184 / 0.5); }
+html.dark .sidebar-scroll:hover::-webkit-scrollbar-thumb { background: rgb(71 85 105 / 0.7); }
+.sidebar-scroll { scrollbar-width: none; }
+.sidebar-scroll:hover { scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / 0.5) transparent; }
+
+/* XYFlow / ReactFlow dark mode overrides */
+html.dark .react-flow__controls {
+  background: transparent;
+  border-color: rgb(51 65 85); /* slate-700 */
+}
+
+html.dark .react-flow__controls-button {
+  background: rgb(30 41 59); /* slate-800 */
+  border-color: rgb(51 65 85); /* slate-700 */
+  color: rgb(148 163 184); /* slate-400 */
+  fill: rgb(148 163 184);
+}
+
+html.dark .react-flow__controls-button:hover {
+  background: rgb(51 65 85); /* slate-700 */
+}
+
+html.dark .react-flow__minimap {
+  background: rgb(30 41 59) !important; /* slate-800 */
+}
+
+html.dark .react-flow__minimap-mask {
+  fill: rgba(15 23 42 / 0.6); /* slate-950 semi-transparent */
+}
