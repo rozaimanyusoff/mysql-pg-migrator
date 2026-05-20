@@ -3,6 +3,13 @@
 ---
 
 ## 2026-05-21
+- **revision** — Schema Explorer: Styled XLSX export + UI polish
+  - Refactored XLSX export (`src/pages/api/schema-explorer/export.ts`) with styled workbook: title row, generated timestamp, blue column headers, per-table group rows, alternating data row fill, and outer/inner borders via helper functions (`makeCell`, `setRange`, `THIN`, `MEDIUM`)
+  - Column queries batched per connection (single query for all selected tables) instead of one query per table — improves perf on large selections; both PG and MySQL paths updated
+  - UI updates in `src/pages/schema-explorer.tsx` and `src/styles/globals.css` to align with new export flow
+  - Status: done
+
+## 2026-05-21
 - **revision** — Schema Designer: Fix Load job restore + remove duplicate Load buttons
   - `handleLoadJob` was silently skipping `setTables` if `parseSqlToTables` returned empty (two nested guards). Removed both guards — now always calls `setTables`, `setDesignerSchemas`, `setSelectedTableId`. Also clears `importParsed`/`selectedParsedId` and switches `designerMode` to `'create'` so loaded tables appear in the tree immediately
   - `JobRunCard`: removed Load button and row-level `onClick={() => onLoad(job)}` — historical run rows now only have the chevron to expand the execution log. Removed `onLoad` prop entirely
