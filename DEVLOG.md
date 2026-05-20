@@ -2,7 +2,158 @@
 
 ---
 
+## 2026-05-21
+- **revision** — Schema Designer: Fix Load job restore + remove duplicate Load buttons
+  - `handleLoadJob` was silently skipping `setTables` if `parseSqlToTables` returned empty (two nested guards). Removed both guards — now always calls `setTables`, `setDesignerSchemas`, `setSelectedTableId`. Also clears `importParsed`/`selectedParsedId` and switches `designerMode` to `'create'` so loaded tables appear in the tree immediately
+  - `JobRunCard`: removed Load button and row-level `onClick={() => onLoad(job)}` — historical run rows now only have the chevron to expand the execution log. Removed `onLoad` prop entirely
+  - `JobGroupCard` call site updated: `<JobRunCard>` no longer passes `onLoad`. Top-level Load button on the group card remains as the single load entry point
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: Remove Execute tab, fix Save button visibility, fix Add Column/FK position
+  - Removed Execute tab button and `ExecutePanel` render block; removed `activeTab` state, `ActiveTab` type, and `setActiveTab` calls — Execute function is fully handled by the header Execute button + modal
+  - Toolbar bar replaces tab bar: shows "Designer" label with table count badge; Save/Execute buttons remain in header right
+  - Save button condition widened: now shows when `tables.length > 0 || importParsed.length > 0` (was only `tables.length > 0`, missed import mode before merge)
+  - Add Column button and FK Relationships section moved inside the `overflow-auto` scroll container, directly after `</table>` — they now sit immediately below the last column row instead of being fixed to the bottom of the panel
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: ColumnEditorPanel layout — Add Column moved to bottom-right, FK below
+  - Removed `+ Add Column` button from the table header row (was between column count label and delete button)
+  - Added `+ Add Column` as a right-aligned styled button (`flex justify-end`) in its own footer row, above FK Relationships section
+  - Reordered bottom section: Add Column footer → border separator → FK Relationships (was FK → Add Column)
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: DDL Generator shows selected table's DDL; SQL import strip only when no table selected
+  - Added `activeParsedTable`, `activeEditTable`, `activeEditTableDdl`, `tableDdlCopied` computed state to `SchemaDesignerInner`
+  - Middle panel DDL strip: now shows `activeEditTable`'s DDL whenever any table (tree or parsed list) is selected — works in both create and import mode
+  - SQL import strip: only rendered when `!activeEditTable && designerMode === 'import'`
+  - Column editor replaced IIFE with direct `activeEditTable` reference; `onUpdate` and `onDeleteTable` route to parsed or main tables depending on `activeParsedTable`
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: Save/Execute in tab header, dirty tracking, schema assign modal, import strip light mode fix, job card cleanup
+  - **Import strip dark bg fix**: changed content area from `bg-slate-950` to `bg-gray-50 dark:bg-slate-950`; all text/border/input colors updated to light/dark variants
+  - **Save moved to tab header**: removed Save button from Saved Jobs panel; tab header now shows Save + Execute buttons when tables exist. Save turns amber (`border-amber-400 bg-amber-50`) when `loadedJob` is set and current DDL differs from saved state (`isDirty` via `useEffect`)
+  - **Execute button**: appears in tab header after job is loaded (`loadedJob !== null`); opens `ExecuteJobModal` with the loaded job
+  - **Dirty tracking**: `useEffect` compares `generateDDL(tables)` against `loadedJob.schema_sql`; `handleSaveJob` updates `loadedJob.schema_sql` to reset dirty flag
+  - **Schema assign modal** (`SchemaAssignModal`): shown before `SaveJobModal` in import mode when any tables have `schema='public'`; user picks existing schema or enters new one; "Keep public" skips assignment
+  - **Job cards**: `JobRunCard` and `JobGroupCard` — removed Run (Play) button; replaced group-level action with Load (FolderOpen); `onExecute` prop removed from both components and all call sites
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: parsed table list UX — no fixed height, clickable, column editor wired
+  - Removed `maxHeight: 140` from parsed list; uses `sidebar-scroll overflow-y-auto` with natural flex height (no hard pixel cap)
+  - Parsed table rows are now clickable — selected row highlights in emerald; sets `selectedParsedId` state
+  - Column editor (below import strip in middle panel) renders the selected parsed table via `ColumnEditorPanel`, with full add/remove/edit column support before merging; updates go back to `importParsed` state via `handleUpdateParsedTable`; delete removes from `importParsed` and clears selection
+  - Switching to Create mode or merging clears `selectedParsedId`
+  - Empty state hint updates contextually for import mode (no tables vs tables present vs table selected)
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **remove** — Schema Designer: Import tab removed; function consolidated into Designer tab
+  - Removed "Import" tab from tab bar (`ActiveTab` now `'designer' | 'execute'`) and removed `ImportPanel` render block
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: left panel mode toggle (Create / Import SQL), multi-source import in middle panel
+  - Removed TABLES label from left panel header entirely; replaced with a segmented toggle: "Create" (manual schema → tables) vs "Import SQL"
+  - Create mode: shows `+ Schema` and `+ Table` action buttons below toggle; `+ Table` disabled until a schema exists; DDL preview strip hidden — column editor full height
+  - Import mode: 200px strip in middle panel shows source tabs (Paste SQL | .sql | CSV | XLSX) + context-sensitive upload/parse button. Content area changes per source: paste textarea, .sql upload dropzone, CSV upload + table name input, XLSX upload dropzone. All sources populate `importParsed` state
+  - After parsing/uploading, parsed tables appear in left panel below a dashed "Parsed · N" separator with a Merge button. Merge calls `mergeTables()`, auto-registers schemas, clears state
+  - Hover `+` on schema headers conditionally hidden in Import mode via `allowAddTable` prop
+  - Fixed TypeScript errors: removed no-longer-valid `onAdd`/`onAddSchema` props from `TableTreePanel` call
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
 ## 2026-05-20
+- **implement** — Schema Designer: 3-panel layout, disabled Add Table until schema exists, DDL in middle panel
+  - Designer tab reestructured as 3 panels: Left (schema/table tree, w-56), Middle (DDL preview strip 188px + column editor flex-1), Right (Saved Jobs, collapsible with notch, w-72)
+  - Right panel notch: 24px strip on left edge of panel, always visible, click to collapse/expand with ChevronRight/ChevronLeft icon and smooth width transition (`transition-all duration-200`)
+  - DDL preview strip in middle panel: always-visible generated SQL (postgresql), auto-updates as tables change (`useMemo`), Copy + Download buttons; lifted state (`ddlText`, `ddlCopied`, `downloadDdl`, `copyDdl`, `groupedJobs`) into SchemaDesignerInner
+  - Middle panel empty state: removed "Add a table to get started" + "Add Table" button. Shows contextual hint: create schema first → add table → select table
+  - Left panel: `designerSchemas` initial state changed `['public']` → `[]`; "+ Table" button disabled with tooltip "Create a schema first (PostgreSQL standard)" when `schemas.length === 0`
+  - Added `ChevronLeft` to lucide imports
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **fix** — Schema Explorer: Print/PNG from Export tab not working, ? Guide position + rewrite
+  - Root cause: ERD canvas unmounts when switching tabs, so `captureRef.current` was null on Export tab. Fix: ERD section now always mounted — uses `absolute inset-0 invisible pointer-events-none` when not active tab (preserves DOM dimensions for html-to-image), vs `h-full flex flex-col` when active
+  - ? Guide button moved from just-after-tabs to far right of tab bar using `ml-auto` wrapper that also holds the columns context; popover flipped to `right-0` since button is now at edge
+  - Guide rewritten in English only; removed Malay text; Export tab entry updated to mention PNG and Print
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **revision** — Schema Explorer: XLSX styling, move Print/PNG to Export tab, fix PNG quality
+  - XLSX export kini ada border (thin gray), title row (merged, blue bg, white bold 14pt), generated timestamp row, per-table group header (light blue bg), column header row (blue bg, white bold), alternating row fill, freeze panes — ditulis dengan `cellStyles: true`
+  - Print & PNG dipindah dari canvas Export dropdown ke Export tab — Export tab kini ada section "Canvas Image" dengan paper size picker, orientation toggle, Print + Export PNG buttons
+  - Canvas Export button dibuang sepenuhnya dari ERD Panel — Panel kini hanya ada Hand/Select toggle, Layout dropdown, dan Zoom pill
+  - State `paperSize`, `orientation`, `capturing` dilift ke parent `SchemaExplorer`; ERDInner expose `triggerPng` dan `triggerPrint` via `captureRef` prop (mutable ref pattern — updated setiap render)
+  - PNG quality fix: tambah `pixelRatio: 3` dalam `toPng()` call — hasilkan gambar 3× resolution, kandungan node tidak lagi kabur bila zoom in
+  - Files: `src/pages/schema-explorer.tsx`, `src/pages/api/schema-explorer/export.ts`
+  - Status: done
+
+- **implement** — Schema Explorer: collapsible schema groups, hover scrollbar, search sticky, ? guide
+  - Schema groups kini collapsible — chevron toggle (▶/▼) pada setiap schema header; checkbox kekal berfungsi (stopPropagation dari collapse toggle)
+  - Search field pindah masuk ke dalam scroll area sebagai sticky header (`top-0 z-20`), schema header sticky pada `top-[38px]` supaya tidak overlap
+  - Scrollbar left panel: hidden by default, muncul bila hover menggunakan `.sidebar-scroll` CSS class (`globals.css`)
+  - Tab bar kini flush kiri (buang `px-4` outer div), columns context button tambah `pr-4` untuk spacing
+  - Tambah `?` (HelpCircle) button sebelah tab buttons — buka popover guide penerangan cara guna Schema Explorer (5 section: Left Panel, Columns, ERD, Select-to-zoom, Export)
+  - Buang `React.FC<any>` → `React.FC<{size:number}>` untuk type safety
+  - Files: `src/pages/schema-explorer.tsx`, `src/styles/globals.css`
+  - Status: done
+
+- **fix** — Schema Explorer: XLSX single-sheet, combined export, auto-zoom bug fix
+  - XLSX export diubah: satu query batch untuk semua tables → satu sheet "Schema Overview" (Schema|Table|Column|Type|Nullable|Default|PK|FK|Comment). Sebelum ni N queries + N sheets = lambat untuk schema besar
+  - Canvas Export dropdown dikembangkan: kini ada dua section — "Canvas image" (Print/PNG, paper size, orientation) dan "Schema data" (SQL/XLSX toggle + Download button). ERDInner kini terima `exportFormat`, `setExportFormat`, `onExportData`, `exportingData` sebagai props
+  - Export tab description dikemaskini: XLSX kini labelled "Schema Overview XLSX — Single sheet, all tables × columns"
+  - Auto-zoom bug fix: `onSelectionChange` kini gunakan delay 80ms sebelum `fitView` + 400ms sebelum reset `selectMode` supaya XYFlow sempat compute selection bounds
+  - Files: `src/pages/schema-explorer.tsx`, `src/pages/api/schema-explorer/export.ts`
+  - Status: done
+
+- **revision** — Schema Explorer: buang ERD header bar, pindah Panel ke top-left
+  - Buang schema filter bar (Schema dropdown, "X visible", "Uncheck all") dari ERD tab
+  - `visibleKeys` kini guna semua `erdTables` tanpa filter — buang state `erdSchemaFilter`/`setErdSchemaFilter`
+  - Panel tukar dari `top-right` ke `top-left`, `items-end` → `items-start`
+  - Export dropdown flip dari `right-0` ke `left-0` supaya tak tersembunyi diluar skrin
+  - File: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **revision** — Schema Explorer: hover highlight merah, direction icons fix, zoom pill, select-to-zoom
+  - Tukar warna highlight dari biru ke merah: border, ring, header TableNode, handle, edge line semua jadi merah masa hover
+  - Direction icons diswap supaya match user expectation: ↓=LR (horizontal), ↑=RL, →=TB (menegak), ←=BT
+  - Fit + Zoom digabung jadi satu pill: [−] [⊡ Fit] [+]
+  - Toggle Hand/Select button sebelah Layout: `Hand` icon = pan mode, `MousePointer2` icon (biru) = select mode; dalam select mode, drag area pilih nodes → auto `fitView` ke nodes terpilih then balik ke pan mode
+  - Files: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **implement** — Schema Explorer: Layout dropdown enhanced + edge toggle + edge hover highlight
+  - Layout button tukar jadi dropdown dengan 4 section: Algorithm (Hierarchical/Grid), Direction (LR/TB/RL/BT), Spacing (Compact/Normal/Loose), Sort (Default/Name/Columns/Connections)
+  - Edge style toggle dalam Layout dropdown: Crow's foot ↔ Simple arrow — sync via `useEffect` pada `edgeStyle` state
+  - Edge hover: `onEdgeMouseEnter`/`onEdgeMouseLeave` pada ReactFlow → `highlightedNodes` set via `HighlightCtx` context
+  - `TableNode` baca `HighlightCtx` — border biru + ring glow bila edge hover
+  - Floating tooltip muncul di cursor bila hover edge — tunjuk `sourceTable.fromCol → targetTable.toCol`
+  - `computeHierarchicalLayout` diupdate: terima `dir`, `spacing`, `sort` params; support LR/TB/RL/BT; flip axis untuk RL/BT
+  - Tambah `computeGridLayout` — square-root grid arrangement, sortable
+  - `applyLayout` pass semua params secara langsung — button dalam dropdown trigger layout terus tanpa tutup menu
+  - File: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **revision** — Schema Explorer: pindah zoom controls (+/-) ke bawah Fit button di top-right
+  - Keluarkan `<Controls />` component (bottom-left) — gantikan dengan zoom buttons dalam Panel
+  - Panel top-right kini `flex-col items-end`: row atas (Layout, Export, Fit), row bawah (ZoomIn | ZoomOut)
+  - Tambah `zoomIn`, `zoomOut` dari `useReactFlow()` hook; tambah `ZoomIn`, `ZoomOut` icons dari lucide-react
+  - File: `src/pages/schema-explorer.tsx`
+  - Status: done
+
+- **fix** — Schema Explorer: ReactFlow Controls dan MiniMap putih dalam dark mode
+  - XYFlow Controls button guna `background: white` dari CSS mereka sendiri — tak ikut Tailwind dark mode
+  - Tambah CSS override dalam `src/styles/globals.css` untuk `.react-flow__controls-button`, `.react-flow__controls`, `.react-flow__minimap`, `.react-flow__minimap-mask` bawah `html.dark`
+  - Buang `!bg-white dark:!bg-slate-800` dari `<MiniMap>` — kini dikontrol sepenuhnya oleh CSS global
+  - Files: `src/styles/globals.css`, `src/pages/schema-explorer.tsx`
+  - Status: done
+
 - **revision** — Schema Designer overhaul: connection-free design, PostgreSQL-only, execute via modal
   - Removed connection selector from page header — designer now works fully locally without any DB connection
   - PostgreSQL-only: removed all MySQL branching from `TableTreePanel`, `ColumnEditorPanel`, `NewTableDialog`, DDL generation

@@ -7,7 +7,7 @@ import axios from 'axios';
 import {
   ArrowLeft, Database, Plus, Trash2, Table2, Upload, Play, Copy,
   Check, RefreshCw, FileSpreadsheet, FileCode2, FileText, CheckCircle2,
-  XCircle, Loader2, X, ChevronRight, ChevronDown, ChevronUp, Download,
+  XCircle, Loader2, X, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Download,
   Columns, Sprout, Save, Clock,
   FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info, HelpCircle, BookOpen,
 } from 'lucide-react';
@@ -23,7 +23,6 @@ import { parseExcelFile } from '../lib/excel-parser';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DbType = 'postgresql' | 'mysql';
-type ActiveTab = 'designer' | 'import' | 'execute';
 
 interface DesignerColumn {
   id: string;
@@ -390,23 +389,17 @@ function SeedAnalysisBadge({ a }: { a: SeedAnalysis }) {
 
 // ─── Job Cards ────────────────────────────────────────────────────────────────
 
-function JobRunCard({ job, onLoad, onExecute }: { job: SchemaJob; onLoad: (j: SchemaJob) => void; onExecute: (j: SchemaJob) => void }) {
+function JobRunCard({ job }: { job: SchemaJob }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div className={`rounded-lg border text-xs overflow-hidden ${job.status === 'success' ? 'border-emerald-200 dark:border-emerald-800/60' : job.status === 'failed' ? 'border-rose-200 dark:border-rose-800/60' : 'border-gray-200 dark:border-slate-700'}`}>
-      <div className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer" onClick={() => onLoad(job)}>
+      <div className="flex items-center gap-2 px-3 py-2">
         <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded font-semibold text-[10px] ${job.status === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : job.status === 'failed' ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'}`}>{job.status}</span>
         <span className="flex items-center gap-1 text-gray-400 dark:text-slate-500 shrink-0"><Clock size={9} />{timeAgo(job.created_at)}</span>
         {job.target_database && <span className="text-gray-500 dark:text-slate-400 truncate flex-1">{job.target_database}</span>}
         <div className="flex items-center gap-1 ml-auto shrink-0">
-          <button onClick={e => { e.stopPropagation(); onExecute(job); }} title="Execute this job against a database" className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-950/60 transition-colors">
-            <Play size={9} /> Run
-          </button>
-          <button onClick={e => { e.stopPropagation(); onLoad(job); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-950/60 transition-colors">
-            <FolderOpen size={9} /> Load
-          </button>
           {job.log && job.log.length > 0 && (
-            <button onClick={e => { e.stopPropagation(); setExpanded(v => !v); }} className="p-0.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
+            <button onClick={() => setExpanded(v => !v)} className="p-0.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
               {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
           )}
@@ -426,7 +419,7 @@ function JobRunCard({ job, onLoad, onExecute }: { job: SchemaJob; onLoad: (j: Sc
   );
 }
 
-function JobGroupCard({ group, onLoad, onExecute }: { group: JobGroup; onLoad: (j: SchemaJob) => void; onExecute: (j: SchemaJob) => void }) {
+function JobGroupCard({ group, onLoad }: { group: JobGroup; onLoad: (j: SchemaJob) => void }) {
   const [expanded, setExpanded] = useState(false);
   const latest = group.runs[0];
   const hasFailure = group.runs.some(r => r.status === 'failed');
@@ -443,11 +436,11 @@ function JobGroupCard({ group, onLoad, onExecute }: { group: JobGroup; onLoad: (
         </button>
         <div className="flex items-center gap-1.5 shrink-0">
           <button
-            onClick={() => onExecute(latest)}
-            title="Execute latest run against a database"
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-950/60 transition-colors"
+            onClick={() => onLoad(latest)}
+            title="Load latest schema into designer"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-950/60 transition-colors"
           >
-            <Play size={10} /> Run
+            <FolderOpen size={10} /> Load
           </button>
           <button onClick={() => setExpanded(v => !v)} className="p-1 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
             {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
@@ -456,7 +449,7 @@ function JobGroupCard({ group, onLoad, onExecute }: { group: JobGroup; onLoad: (
       </div>
       {expanded && (
         <div className="border-t border-gray-100 dark:border-slate-800 px-3 pb-3 pt-2 space-y-1.5">
-          {group.runs.map(run => <JobRunCard key={run.id} job={run} onLoad={onLoad} onExecute={onExecute} />)}
+          {group.runs.map(run => <JobRunCard key={run.id} job={run} />)}
         </div>
       )}
     </div>
@@ -662,19 +655,12 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
           />
         </>
         <span className="ml-auto text-[11px] text-gray-400 dark:text-slate-500">{table.columns.length} column{table.columns.length !== 1 ? 's' : ''}</span>
-        <button
-          onClick={addCol}
-          title="Add column"
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
-        >
-          <Plus size={11} /> Add Column
-        </button>
         <button onClick={onDeleteTable} title="Delete table" className="p-1 text-gray-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
           <Trash2 size={13} />
         </button>
       </div>
 
-      {/* Column table */}
+      {/* Column table + Add Column + FK — all scroll together */}
       <div className="flex-1 overflow-auto">
         <table className="w-full text-[11px] border-collapse" style={{ minWidth: 880 }}>
           <thead className="sticky top-0 z-10">
@@ -775,51 +761,51 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
             )}
           </tbody>
         </table>
-      </div>
 
-      {/* FK Relationships summary */}
-      {(fkCols.length > 0 || incomingFks.length > 0) && (
-        <div className="shrink-0 px-5 py-3 border-t border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/40 space-y-2.5">
-          {fkCols.length > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                <Link2 size={10} /> Outgoing FK{fkCols.length !== 1 ? 's' : ''} ({fkCols.length})
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {fkCols.map(c => (
-                  <div key={c.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 text-[10px]">
-                    <span className="font-mono font-medium text-gray-700 dark:text-slate-200">{c.name}</span>
-                    <span className="text-blue-400">→</span>
-                    <span className="font-mono text-blue-600 dark:text-blue-400">{c.fkRef}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {incomingFks.length > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                <ChevronRight size={10} /> Referenced by ({incomingFks.length})
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {incomingFks.map(({ fromTable, fromCol }) => (
-                  <div key={`${fromTable.id}-${fromCol.id}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 text-[10px]">
-                    <span className="font-mono text-purple-600 dark:text-purple-400">{fromTable.name}.{fromCol.name}</span>
-                    <span className="text-purple-400">→</span>
-                    <span className="font-mono font-medium text-gray-600 dark:text-slate-300">this</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        {/* Add Column — right-aligned, immediately after last row */}
+        <div className="flex justify-end px-4 py-2.5 border-t border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <button onClick={addCol} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+            <Plus size={11} /> Add Column
+          </button>
         </div>
-      )}
 
-      {/* Add column */}
-      <div className="shrink-0 px-4 py-2.5 border-t border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <button onClick={addCol} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors">
-          <Plus size={12} /> Add Column
-        </button>
+        {/* FK Relationships summary */}
+        {(fkCols.length > 0 || incomingFks.length > 0) && (
+          <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/40 space-y-2.5">
+            {fkCols.length > 0 && (
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                  <Link2 size={10} /> Outgoing FK{fkCols.length !== 1 ? 's' : ''} ({fkCols.length})
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {fkCols.map(c => (
+                    <div key={c.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 text-[10px]">
+                      <span className="font-mono font-medium text-gray-700 dark:text-slate-200">{c.name}</span>
+                      <span className="text-blue-400">→</span>
+                      <span className="font-mono text-blue-600 dark:text-blue-400">{c.fkRef}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {incomingFks.length > 0 && (
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                  <ChevronRight size={10} /> Referenced by ({incomingFks.length})
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {incomingFks.map(({ fromTable, fromCol }) => (
+                    <div key={`${fromTable.id}-${fromCol.id}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 text-[10px]">
+                      <span className="font-mono text-purple-600 dark:text-purple-400">{fromTable.name}.{fromCol.name}</span>
+                      <span className="text-purple-400">→</span>
+                      <span className="font-mono font-medium text-gray-600 dark:text-slate-300">this</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* FK Picker Modal */}
@@ -838,15 +824,14 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
 
 // ─── Table Tree Panel ─────────────────────────────────────────────────────────
 
-function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd, onAddSchema, onAddTableFor }: {
+function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAddTableFor, allowAddTable = true }: {
   tables: DesignerTable[];
   selectedId: string | null;
   schemas: string[];
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
-  onAdd: () => void;
-  onAddSchema: () => void;
   onAddTableFor: (schema: string) => void;
+  allowAddTable?: boolean;
 }) {
   const grouped = useMemo(() => {
     const m = new Map<string, DesignerTable[]>();
@@ -864,29 +849,6 @@ function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="shrink-0 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800 space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
-            Tables{tables.length > 0 ? ` (${tables.length})` : ''}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={onAddSchema}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
-          >
-            <Plus size={11} /> Schema
-          </button>
-          <button
-            onClick={onAdd}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
-          >
-            <Plus size={11} /> Table
-          </button>
-        </div>
-      </div>
-
       {/* Tree */}
       <div className="flex-1 overflow-y-auto py-1">
         {Array.from(grouped.entries()).map(([schema, schemaTables]) => (
@@ -902,13 +864,15 @@ function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd
                 <span>{schema || 'public'}</span>
                 {schemaTables.length > 0 && <span className="opacity-60">({schemaTables.length})</span>}
               </button>
-              <button
-                onClick={() => onAddTableFor(schema)}
-                title={`Add table to ${schema}`}
-                className="opacity-0 group-hover/schema:opacity-100 p-1.5 mr-1 text-gray-400 hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400 transition-all shrink-0"
-              >
-                <Plus size={11} />
-              </button>
+              {allowAddTable && (
+                <button
+                  onClick={() => onAddTableFor(schema)}
+                  title={`Add table to ${schema}`}
+                  className="opacity-0 group-hover/schema:opacity-100 p-1.5 mr-1 text-gray-400 hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400 transition-all shrink-0"
+                >
+                  <Plus size={11} />
+                </button>
+              )}
             </div>
 
             {/* Tables under schema */}
@@ -1425,7 +1389,7 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
           ) : (
             <div className="p-4 space-y-2">
               {groupedJobs.map(g => (
-                <JobGroupCard key={g.job_name} group={g} onLoad={onLoadJob} onExecute={onExecuteJob} />
+                <JobGroupCard key={g.job_name} group={g} onLoad={onLoadJob} />
               ))}
             </div>
           )}
@@ -1650,6 +1614,69 @@ function GuidePopover() {
   );
 }
 
+// ─── Schema Assign Modal ──────────────────────────────────────────────────────
+
+function SchemaAssignModal({ existingSchemas, onAssign, onSkip, onClose }: {
+  existingSchemas: string[];
+  onAssign: (schema: string) => void;
+  onSkip: () => void;
+  onClose: () => void;
+}) {
+  const hasExisting = existingSchemas.length > 0;
+  const [mode, setMode] = useState<'existing' | 'new'>(hasExisting ? 'existing' : 'new');
+  const [selected, setSelected] = useState(existingSchemas[0] ?? '');
+  const [custom, setCustom] = useState('');
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (mode === 'new') ref.current?.focus(); }, [mode]);
+  const sanitized = custom.toLowerCase().replace(/[^a-z0-9_]/g, '');
+  const value = mode === 'existing' ? selected : sanitized;
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <Layers size={15} className="text-blue-500" />
+            <p className="font-semibold text-sm text-gray-900 dark:text-slate-100">Assign Schema</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            Imported tables without an explicit schema (defaulted to <span className="font-mono text-gray-700 dark:text-slate-200">public</span>) will be reassigned to:
+          </p>
+          {hasExisting && (
+            <div className="flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden text-xs font-medium">
+              <button onClick={() => setMode('existing')} className={`flex-1 py-1.5 transition-colors ${mode === 'existing' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>Use existing</button>
+              <button onClick={() => setMode('new')} className={`flex-1 py-1.5 border-l border-gray-200 dark:border-slate-700 transition-colors ${mode === 'new' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>New schema</button>
+            </div>
+          )}
+          {mode === 'existing' && hasExisting && (
+            <select value={selected} onChange={e => setSelected(e.target.value)}
+              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono focus:outline-none focus:border-blue-400 cursor-pointer">
+              {existingSchemas.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          {mode === 'new' && (
+            <input ref={ref} value={custom} onChange={e => setCustom(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && sanitized) onAssign(sanitized); }}
+              placeholder="schema_name"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
+            />
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button onClick={onSkip} className="px-4 py-2 text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">Keep public</button>
+          <button onClick={() => value && onAssign(value)} disabled={!value}
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
+            <Layers size={13} /> Assign & Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── New Schema Dialog ────────────────────────────────────────────────────────
 
 function NewSchemaDialog({ onConfirm, onClose }: {
@@ -1860,12 +1887,11 @@ function SchemaDesignerInner() {
   // Designer state
   const [tables, setTables] = useState<DesignerTable[]>([]);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<ActiveTab>('designer');
   const [showNewTable, setShowNewTable] = useState(false);
   const [newTableDefaultSchema, setNewTableDefaultSchema] = useState<string | undefined>(undefined);
 
-  // Schema tree
-  const [designerSchemas, setDesignerSchemas] = useState<string[]>(['public']);
+  // Schema tree — start empty; user must create a schema first (PostgreSQL standard)
+  const [designerSchemas, setDesignerSchemas] = useState<string[]>([]);
   const [showNewSchema, setShowNewSchema] = useState(false);
 
   // Seed SQL
@@ -1874,8 +1900,12 @@ function SchemaDesignerInner() {
   // Loaded job tracking
   const [loadedJob, setLoadedJob] = useState<SchemaJob | null>(null);
 
-  // Save modal
+  // Save modal + schema assign
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showSchemaAssign, setShowSchemaAssign] = useState(false);
+
+  // Dirty tracking: amber Save when loaded job has unsaved changes
+  const [isDirty, setIsDirty] = useState(false);
 
   // Execute job modal
   const [showExecModal, setShowExecModal] = useState(false);
@@ -1885,7 +1915,117 @@ function SchemaDesignerInner() {
   const [jobs, setJobs] = useState<SchemaJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
 
+  // Right panel (collapsible)
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+
+  // Left panel mode toggle
+  const [designerMode, setDesignerMode] = useState<'create' | 'import'>('create');
+  const [importSource, setImportSource] = useState<'paste' | 'sql-file' | 'csv' | 'xlsx'>('paste');
+  const [importSql, setImportSql] = useState('');
+  const [importCsvName, setImportCsvName] = useState('');
+  const [importXlsxLoading, setImportXlsxLoading] = useState(false);
+  const [importParsed, setImportParsed] = useState<DesignerTable[]>([]);
+  const [selectedParsedId, setSelectedParsedId] = useState<string | null>(null);
+  const importSqlFileRef = useRef<HTMLInputElement>(null);
+  const importCsvFileRef = useRef<HTMLInputElement>(null);
+  const importXlsxFileRef = useRef<HTMLInputElement>(null);
+
+  // DDL preview in middle panel
+  const [ddlCopied, setDdlCopied] = useState(false);
+  const ddlText = useMemo(() => generateDDL(tables, 'postgresql').join('\n\n'), [tables]);
+  const groupedJobs = useMemo(() => groupJobs(jobs), [jobs]);
+
+  useEffect(() => {
+    if (!loadedJob) { setIsDirty(false); return; }
+    const currentDdl = generateDDL(tables, 'postgresql').join('\n\n');
+    setIsDirty(currentDdl !== (loadedJob.schema_sql ?? ''));
+  }, [tables, loadedJob]);
+
+  const downloadDdl = () => {
+    if (!ddlText) return;
+    const blob = new Blob([ddlText], { type: 'text/sql' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'schema.sql'; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyDdl = async () => {
+    await navigator.clipboard.writeText(ddlText);
+    setDdlCopied(true);
+    setTimeout(() => setDdlCopied(false), 1500);
+  };
+
+  const handleParseImport = () => {
+    const parsed = parseSqlToTables(importSql);
+    setImportParsed(parsed);
+  };
+
+  const handleApplyImport = () => {
+    if (!importParsed.length) return;
+    setTables(p => mergeTables(p, importParsed));
+    const schemas = [...new Set(importParsed.map(t => t.schema || 'public'))];
+    setDesignerSchemas(p => [...new Set([...p, ...schemas])]);
+    setImportParsed([]);
+    setImportSql('');
+    setImportCsvName('');
+    setSelectedParsedId(null);
+  };
+
+  const handleUpdateParsedTable = (updated: DesignerTable) => {
+    setImportParsed(p => p.map(t => t.id === updated.id ? updated : t));
+  };
+
+  const handleDeleteParsedTable = (id: string) => {
+    setImportParsed(p => p.filter(t => t.id !== id));
+    setSelectedParsedId(null);
+  };
+
+  const handleImportSqlFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const text = e.target?.result as string;
+      setImportParsed(parseSqlToTables(text));
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImportCsvFile = (file: File) => {
+    const name = importCsvName || file.name.replace(/\.csv$/i, '');
+    if (!importCsvName) setImportCsvName(name);
+    const reader = new FileReader();
+    reader.onload = e => {
+      const text = e.target?.result as string;
+      setImportParsed([parseCsvToTable(text, name || 'imported')]);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImportXlsx = async (file: File) => {
+    setImportXlsxLoading(true);
+    try {
+      const pts = await parseExcelFile(file);
+      setImportParsed(pts.map(pt => ({
+        id: crypto.randomUUID(), schema: 'public', name: pt.name,
+        columns: pt.columns.map(c => ({
+          id: crypto.randomUUID(), name: c.name, type: c.type,
+          length: c.type === 'VARCHAR' ? '255' : '',
+          nullable: c.nullable, isPk: false, isUnique: false,
+          isAutoIncrement: false, defaultValue: '', comment: '', fkRef: '',
+        })),
+      })));
+    } catch { /* ignore */ } finally { setImportXlsxLoading(false); }
+  };
+
   const selectedTable = tables.find(t => t.id === selectedTableId) ?? null;
+  const activeParsedTable = designerMode === 'import'
+    ? (importParsed.find(t => t.id === selectedParsedId) ?? null)
+    : null;
+  const activeEditTable = activeParsedTable ?? selectedTable;
+  const activeEditTableDdl = activeEditTable
+    ? generateDDL([activeEditTable], 'postgresql').join('\n\n')
+    : '';
+  const [tableDdlCopied, setTableDdlCopied] = useState(false);
 
   // Load connections for ImportPanel + ExecuteJobModal
   useEffect(() => {
@@ -1933,6 +2073,21 @@ function SchemaDesignerInner() {
 
   useEffect(() => { if (authenticated) void loadJobs(); }, [authenticated, loadJobs]);
 
+  const handleSaveClick = () => {
+    if (designerMode === 'import' && tables.some(t => t.schema === 'public')) {
+      setShowSchemaAssign(true);
+    } else {
+      setShowSaveModal(true);
+    }
+  };
+
+  const handleSchemaAssigned = (schema: string) => {
+    setTables(p => p.map(t => t.schema === 'public' ? { ...t, schema } : t));
+    setDesignerSchemas(p => p.includes(schema) ? p : [...p, schema]);
+    setShowSchemaAssign(false);
+    setShowSaveModal(true);
+  };
+
   const handleSaveJob = async (name: string, desc: string) => {
     const schemaSql = generateDDL(tables, 'postgresql').join('\n\n');
     try {
@@ -1945,22 +2100,29 @@ function SchemaDesignerInner() {
         log: null,
       }, { headers: authH() });
       void loadJobs();
+      setLoadedJob(prev => ({
+        ...(prev ?? { id: Date.now(), created_at: new Date().toISOString() } as SchemaJob),
+        job_name: name,
+        description: desc,
+        schema_sql: schemaSql,
+        seed_sql: seedSql,
+        status: 'pending',
+        log: null,
+      }));
     } catch { /* ignore */ } finally { setShowSaveModal(false); }
   };
 
   const handleLoadJob = (job: SchemaJob) => {
-    if (job.schema_sql) {
-      const parsed = parseSqlToTables(job.schema_sql);
-      if (parsed.length) {
-        setTables(parsed);
-        setSelectedTableId(parsed[0].id);
-        const schemas = [...new Set(parsed.map(t => t.schema || 'public'))];
-        setDesignerSchemas(schemas);
-      }
-    }
+    const parsed = job.schema_sql ? parseSqlToTables(job.schema_sql) : [];
+    const schemas = [...new Set(parsed.map(t => t.schema || 'public'))];
+    setTables(parsed);
+    setDesignerSchemas(schemas.length ? schemas : []);
+    setSelectedTableId(parsed.length ? parsed[0].id : null);
+    setImportParsed([]);
+    setSelectedParsedId(null);
+    setDesignerMode('create');
     setSeedSql(job.seed_sql ?? '');
     setLoadedJob(job);
-    setActiveTab('designer');
   };
 
   if (authLoading) {
@@ -2012,29 +2174,35 @@ function SchemaDesignerInner() {
         </nav>
       </header>
 
-      {/* ── Tab bar ── */}
-      <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5">
-        {([
-          { key: 'designer' as ActiveTab, label: 'Designer', Icon: Table2 },
-          { key: 'import' as ActiveTab, label: 'Import', Icon: Upload },
-          { key: 'execute' as ActiveTab, label: 'Execute', Icon: Play },
-        ]).map(({ key, label, Icon }) => (
-          <button key={key} onClick={() => setActiveTab(key)}
-            className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${activeTab === key ? 'border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'}`}>
-            <Icon size={13} /> {label}
-            {key === 'designer' && tables.length > 0 && (
-              <span className="ml-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">{tables.length}</span>
-            )}
-          </button>
-        ))}
+      {/* ── Toolbar ── */}
+      <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-1.5">
+        <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 dark:text-slate-300">
+          <Table2 size={13} className="text-blue-500" /> Designer
+          {tables.length > 0 && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">{tables.length}</span>
+          )}
+        </div>
         <div className="ml-auto pr-1 flex items-center gap-2">
-          {activeTab === 'designer' && tables.length > 0 && (
-            <button
-              onClick={() => setShowSaveModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
-            >
-              <Save size={12} /> Save Schema
-            </button>
+          {(tables.length > 0 || importParsed.length > 0) && (
+            <>
+              <button
+                onClick={handleSaveClick}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border transition-colors
+                  ${isDirty && loadedJob
+                    ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                    : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+              >
+                <Save size={12} /> {isDirty && loadedJob ? 'Save Changes' : 'Save'}
+              </button>
+              {loadedJob && (
+                <button
+                  onClick={() => { setExecModalJob(loadedJob); setShowExecModal(true); }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                >
+                  <Play size={12} /> Execute
+                </button>
+              )}
+            </>
           )}
           <GuidePopover />
         </div>
@@ -2044,68 +2212,349 @@ function SchemaDesignerInner() {
       <div className="flex-1 overflow-hidden">
 
         {/* Designer */}
-        {activeTab === 'designer' && (
-          <div className="flex h-full">
-            {/* Table tree */}
-            <div className="w-56 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col">
-              <TableTreePanel
-                tables={tables}
-                selectedId={selectedTableId}
-                schemas={designerSchemas}
-                onSelect={setSelectedTableId}
-                onDelete={handleDeleteTable}
-                onAdd={() => { setNewTableDefaultSchema(undefined); setShowNewTable(true); }}
-                onAddSchema={() => setShowNewSchema(true)}
-                onAddTableFor={handleAddTableFor}
-              />
+        <div className="flex h-full overflow-hidden">
+
+            {/* ── Left: Schema & Table tree ── */}
+            <div className="w-56 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
+
+              {/* Mode toggle + action buttons */}
+              <div className="shrink-0 border-b border-gray-200 dark:border-slate-800 p-2 space-y-2">
+                <div className="flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
+                  <button
+                    onClick={() => { setDesignerMode('create'); setSelectedParsedId(null); }}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium transition-colors ${designerMode === 'create' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                  >
+                    <Plus size={11} /> Create
+                  </button>
+                  <button
+                    onClick={() => setDesignerMode('import')}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium border-l border-gray-200 dark:border-slate-700 transition-colors ${designerMode === 'import' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                  >
+                    <Upload size={11} /> Import SQL
+                  </button>
+                </div>
+                {designerMode === 'create' && (
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => setShowNewSchema(true)}
+                      className="flex-1 inline-flex items-center justify-center gap-1 py-1 text-[11px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      <Layers size={10} /> Schema
+                    </button>
+                    <button
+                      onClick={() => { setNewTableDefaultSchema(undefined); setShowNewTable(true); }}
+                      disabled={designerSchemas.length === 0}
+                      title={designerSchemas.length === 0 ? 'Create a schema first' : 'Add table'}
+                      className="flex-1 inline-flex items-center justify-center gap-1 py-1 text-[11px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <Table2 size={10} /> Table
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Pending import — shown immediately below toggle */}
+              {designerMode === 'import' && importParsed.length > 0 && (
+                <div className="shrink-0 border-b border-dashed border-gray-300 dark:border-slate-700 bg-emerald-50/30 dark:bg-emerald-900/10">
+                  <div className="flex items-center justify-between px-3 py-2">
+                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">
+                      Parsed · {importParsed.length}
+                    </span>
+                    <button
+                      onClick={handleApplyImport}
+                      className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                    >
+                      Merge
+                    </button>
+                  </div>
+                  <div className="sidebar-scroll overflow-y-auto">
+                    {importParsed.map(t => (
+                      <div
+                        key={t.id}
+                        onClick={() => setSelectedParsedId(t.id)}
+                        className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors
+                          ${selectedParsedId === t.id
+                            ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
+                            : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
+                      >
+                        <Table2 size={11} className={`shrink-0 ${selectedParsedId === t.id ? 'text-emerald-500' : 'text-emerald-500 dark:text-emerald-700'}`} />
+                        <span className="flex-1 text-[11px] font-medium truncate">
+                          {t.schema !== 'public' ? `${t.schema}.` : ''}{t.name}
+                        </span>
+                        <span className="text-[10px] text-gray-400 dark:text-slate-600">{t.columns.length}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Tree */}
+              <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                <TableTreePanel
+                  tables={tables}
+                  selectedId={selectedTableId}
+                  schemas={designerSchemas}
+                  onSelect={setSelectedTableId}
+                  onDelete={handleDeleteTable}
+                  onAddTableFor={handleAddTableFor}
+                  allowAddTable={designerMode === 'create'}
+                />
+              </div>
             </div>
 
-            {/* Column editor */}
-            <div className="flex-1 overflow-hidden bg-white dark:bg-slate-900">
-              {selectedTable ? (
-                <ColumnEditorPanel
-                  table={selectedTable}
-                  tables={tables}
-                  onUpdate={handleUpdateTable}
-                  onDeleteTable={() => handleDeleteTable(selectedTable.id)}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full gap-3">
-                  <Columns size={36} className="text-gray-200 dark:text-slate-700" />
-                  <p className="text-sm text-gray-400 dark:text-slate-500">
-                    {tables.length === 0 ? 'Add a table to get started.' : 'Select a table to edit its columns.'}
-                  </p>
-                  <button onClick={() => setShowNewTable(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">
-                    <Plus size={13} /> Add Table
-                  </button>
+            {/* ── Middle: DDL preview + Column editor ── */}
+            <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+
+              {/* DDL Generator — shows selected table's DDL (both modes) */}
+              {activeEditTable && (
+                <div className="shrink-0 flex flex-col border-b border-gray-200 dark:border-slate-800" style={{ height: 200 }}>
+                  <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
+                    <FileCode2 size={13} className="text-emerald-500" />
+                    <span className="text-[11px] font-semibold text-gray-600 dark:text-slate-300">DDL Generator</span>
+                    <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 ml-1">
+                      {activeEditTable.schema}.{activeEditTable.name}
+                    </span>
+                    <div className="ml-auto flex items-center gap-1.5">
+                      <button
+                        onClick={() => void navigator.clipboard.writeText(activeEditTableDdl).then(() => { setTableDdlCopied(true); setTimeout(() => setTableDdlCopied(false), 1500); })}
+                        disabled={!activeEditTableDdl}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                      >
+                        {tableDdlCopied ? <><Check size={10} className="text-emerald-500" /> Copied</> : <><Copy size={10} /> Copy</>}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-auto bg-gray-50 dark:bg-slate-950 px-4 py-3">
+                    <pre className="text-[10px] font-mono text-gray-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{activeEditTableDdl}</pre>
+                  </div>
+                </div>
+              )}
+
+              {/* SQL import area — import mode only, no table selected */}
+              {!activeEditTable && designerMode === 'import' && (
+                <div className="shrink-0 flex flex-col border-b border-gray-200 dark:border-slate-800" style={{ height: 200 }}>
+                  {/* Toolbar: source tabs + action */}
+                  <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
+                    <div className="flex rounded-md border border-gray-200 dark:border-slate-700 overflow-hidden">
+                      {([
+                        { key: 'paste' as const, label: 'Paste SQL', Icon: FileCode2 },
+                        { key: 'sql-file' as const, label: '.sql', Icon: Upload },
+                        { key: 'csv' as const, label: 'CSV', Icon: FileText },
+                        { key: 'xlsx' as const, label: 'XLSX', Icon: FileSpreadsheet },
+                      ]).map(({ key, label, Icon }) => (
+                        <button
+                          key={key}
+                          onClick={() => { setImportSource(key); setImportParsed([]); }}
+                          className={`flex items-center gap-1 px-2 py-1 text-[10px] font-medium border-l first:border-l-0 border-gray-200 dark:border-slate-700 transition-colors
+                            ${importSource === key ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                        >
+                          <Icon size={10} /> {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="ml-auto flex items-center gap-1.5">
+                      {importSource === 'paste' && (
+                        <button onClick={handleParseImport} disabled={!importSql.trim()}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
+                          <RefreshCw size={10} /> Parse
+                        </button>
+                      )}
+                      {importSource === 'sql-file' && (
+                        <button onClick={() => importSqlFileRef.current?.click()}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                          <Upload size={10} /> Choose .sql
+                        </button>
+                      )}
+                      {importSource === 'csv' && (
+                        <button onClick={() => importCsvFileRef.current?.click()}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                          <Upload size={10} /> Choose .csv
+                        </button>
+                      )}
+                      {importSource === 'xlsx' && (
+                        <button onClick={() => importXlsxFileRef.current?.click()} disabled={importXlsxLoading}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
+                          {importXlsxLoading ? <Loader2 size={10} className="animate-spin" /> : <Upload size={10} />} Choose .xlsx
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Content area */}
+                  <div className="flex-1 overflow-hidden bg-gray-50 dark:bg-slate-950">
+                    {importSource === 'paste' && (
+                      <textarea
+                        className="w-full h-full px-4 py-3 text-[10px] font-mono text-gray-700 dark:text-slate-300 bg-transparent resize-none focus:outline-none placeholder-gray-400 dark:placeholder-slate-600 leading-relaxed"
+                        placeholder={'-- Paste CREATE TABLE statements here…\n-- e.g. CREATE TABLE users (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL);'}
+                        value={importSql}
+                        onChange={e => { setImportSql(e.target.value); if (importParsed.length) setImportParsed([]); }}
+                      />
+                    )}
+                    {importSource === 'sql-file' && (
+                      <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
+                        {importParsed.length > 0 ? (
+                          <>
+                            <CheckCircle2 size={20} className="text-emerald-500" />
+                            <p className="text-[11px] text-gray-500 dark:text-slate-400">{importParsed.length} table{importParsed.length !== 1 ? 's' : ''} parsed — click Merge in the left panel</p>
+                            <button onClick={() => importSqlFileRef.current?.click()} className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
+                          </>
+                        ) : (
+                          <>
+                            <Upload size={20} className="text-gray-400 dark:text-slate-600" />
+                            <p className="text-[11px] text-gray-500 dark:text-slate-500">Upload a .sql file with CREATE TABLE statements</p>
+                            <button onClick={() => importSqlFileRef.current?.click()}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[11px] transition-colors">
+                              <Upload size={11} /> Choose File
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {importSource === 'csv' && (
+                      <div className="flex flex-col gap-2 px-4 py-3 h-full">
+                        <div className="flex items-center gap-2 shrink-0">
+                          <label className="text-[11px] text-gray-500 dark:text-slate-400 shrink-0">Table name:</label>
+                          <input
+                            className="flex-1 text-[11px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500 placeholder-gray-400 dark:placeholder-slate-600"
+                            placeholder="my_table"
+                            value={importCsvName}
+                            onChange={e => setImportCsvName(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center">
+                          {importParsed.length > 0 ? (
+                            <>
+                              <CheckCircle2 size={18} className="text-emerald-500" />
+                              <p className="text-[11px] text-gray-500 dark:text-slate-400">
+                                <span className="font-mono">{importParsed[0].name}</span> — {importParsed[0].columns.length} columns detected
+                              </p>
+                              <button onClick={() => importCsvFileRef.current?.click()} className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
+                            </>
+                          ) : (
+                            <>
+                              <FileText size={18} className="text-gray-400 dark:text-slate-600" />
+                              <p className="text-[11px] text-gray-500 dark:text-slate-500">First row as headers · types inferred from data</p>
+                              <button onClick={() => importCsvFileRef.current?.click()}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[11px] transition-colors">
+                                <Upload size={11} /> Choose File
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {importSource === 'xlsx' && (
+                      <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
+                        {importXlsxLoading ? (
+                          <><Loader2 size={20} className="text-gray-400 dark:text-slate-500 animate-spin" /><p className="text-[11px] text-gray-500 dark:text-slate-500">Parsing…</p></>
+                        ) : importParsed.length > 0 ? (
+                          <>
+                            <CheckCircle2 size={20} className="text-emerald-500" />
+                            <p className="text-[11px] text-gray-500 dark:text-slate-400">{importParsed.length} sheet{importParsed.length !== 1 ? 's' : ''} parsed as tables</p>
+                            <button onClick={() => importXlsxFileRef.current?.click()} className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
+                          </>
+                        ) : (
+                          <>
+                            <FileSpreadsheet size={20} className="text-gray-400 dark:text-slate-600" />
+                            <p className="text-[11px] text-gray-500 dark:text-slate-500">Each sheet becomes a table · types inferred from data</p>
+                            <button onClick={() => importXlsxFileRef.current?.click()}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[11px] transition-colors">
+                              <Upload size={11} /> Choose File
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Hidden file inputs */}
+                  <input ref={importSqlFileRef} type="file" accept=".sql,.txt" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleImportSqlFile(f); e.target.value = ''; }} />
+                  <input ref={importCsvFileRef} type="file" accept=".csv" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleImportCsvFile(f); e.target.value = ''; }} />
+                  <input ref={importXlsxFileRef} type="file" accept=".xlsx,.xls" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) void handleImportXlsx(f); e.target.value = ''; }} />
+                </div>
+              )}
+
+              {/* Column editor */}
+              <div className="flex-1 overflow-hidden bg-white dark:bg-slate-900">
+                {activeEditTable ? (
+                  <ColumnEditorPanel
+                    table={activeEditTable}
+                    tables={activeParsedTable ? [...tables, ...importParsed] : tables}
+                    onUpdate={activeParsedTable ? handleUpdateParsedTable : handleUpdateTable}
+                    onDeleteTable={() => activeParsedTable
+                      ? handleDeleteParsedTable(activeParsedTable.id)
+                      : handleDeleteTable(activeEditTable.id)
+                    }
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
+                    <Columns size={32} className="text-gray-200 dark:text-slate-700" />
+                    <p className="text-sm text-gray-400 dark:text-slate-500">
+                      {designerMode === 'import'
+                        ? (importParsed.length > 0
+                          ? 'Select a parsed table to review and edit its columns.'
+                          : 'Paste or upload SQL / CSV / XLSX to import tables.')
+                        : designerSchemas.length === 0
+                          ? 'Create a schema in the left panel first.'
+                          : tables.length === 0
+                            ? 'Add a table from the left panel.'
+                            : 'Select a table to edit its columns.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Right: Saved Jobs (collapsible) ── */}
+            <div className={`shrink-0 flex border-l border-gray-200 dark:border-slate-800 overflow-hidden transition-all duration-200 ${rightPanelOpen ? 'w-72' : 'w-6'}`}>
+
+              {/* Notch — always-visible toggle strip */}
+              <button
+                onClick={() => setRightPanelOpen(v => !v)}
+                title={rightPanelOpen ? 'Collapse jobs panel' : 'Expand jobs panel'}
+                className="w-6 shrink-0 flex flex-col items-center justify-center gap-1.5 bg-gray-50 dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-r border-gray-100 dark:border-slate-800 transition-colors"
+              >
+                {rightPanelOpen
+                  ? <ChevronRight size={12} className="text-gray-400 dark:text-slate-500" />
+                  : <ChevronLeft size={12} className="text-gray-400 dark:text-slate-500" />}
+              </button>
+
+              {/* Panel content */}
+              {rightPanelOpen && (
+                <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-slate-900 min-w-0">
+                  <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-slate-800">
+                    <Clock size={13} className="text-gray-400 dark:text-slate-500" />
+                    <span className="text-xs font-semibold text-gray-700 dark:text-slate-200">Saved Jobs</span>
+                    {loadingJobs && <Loader2 size={10} className="animate-spin text-gray-400" />}
+                  </div>
+                  <div className="flex-1 overflow-auto">
+                    {groupedJobs.length === 0 && !loadingJobs ? (
+                      <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
+                        <Clock size={24} className="text-gray-200 dark:text-slate-700" />
+                        <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">
+                          No saved jobs yet. Save your schema to create a job record.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-3 space-y-2">
+                        {groupedJobs.map(g => (
+                          <JobGroupCard
+                            key={g.job_name}
+                            group={g}
+                            onLoad={handleLoadJob}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-          </div>
-        )}
 
-        {/* Import */}
-        {activeTab === 'import' && (
-          <ImportPanel
-            connections={connections}
-            onMerge={incoming => setTables(p => mergeTables(p, incoming))}
-          />
-        )}
-
-        {/* Execute */}
-        {activeTab === 'execute' && (
-          <ExecutePanel
-            tables={tables}
-            seedSql={seedSql}
-            onSeedSqlChange={setSeedSql}
-            onSaveJob={() => setShowSaveModal(true)}
-            jobs={jobs}
-            loadingJobs={loadingJobs}
-            onLoadJob={handleLoadJob}
-            onExecuteJob={job => { setExecModalJob(job); setShowExecModal(true); }}
-          />
-        )}
+        </div>
       </div>
 
       {/* Dialogs */}
@@ -2120,6 +2569,14 @@ function SchemaDesignerInner() {
         <NewSchemaDialog
           onConfirm={handleAddSchema}
           onClose={() => setShowNewSchema(false)}
+        />
+      )}
+      {showSchemaAssign && (
+        <SchemaAssignModal
+          existingSchemas={designerSchemas.filter(s => s !== 'public')}
+          onAssign={handleSchemaAssigned}
+          onSkip={() => { setShowSchemaAssign(false); setShowSaveModal(true); }}
+          onClose={() => setShowSchemaAssign(false)}
         />
       )}
       {showSaveModal && (
