@@ -1,3 +1,4 @@
+'use client';
 import Head from 'next/head';
 import Link from 'next/link';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -6,13 +7,15 @@ import JSZip from 'jszip';
 import {
   ChevronRight, UploadCloud, Download, RefreshCw, Play, CheckCircle2,
   XCircle, Loader2, Database, Server, FileCode2, ArrowRightLeft,
-  AlertCircle, Table2, ChevronDown, ChevronUp, Copy, Check,
-  ArrowRight, Info, FileSpreadsheet, Filter, Clock, Trash2,
-  Eye, ShieldAlert, Plus,
+  AlertCircle, Table2, Copy, Check, ChevronLeft,
+  Info, FileSpreadsheet, Filter, Clock, Trash2,
+  Eye, ShieldAlert, Plus, HelpCircle, BookOpen, X,
 } from 'lucide-react';
 import type { ConnectionRow } from './api/connections/index';
-import type { ConnCfg, ExportInclude, ConflictStrategy, TableInfo } from '../lib/sql-exporter';
+import type { ConnCfg, ExportInclude, ConflictStrategy } from '../lib/sql-exporter';
 import type { HistoryEntry } from './api/export-import/history';
+import type { ExplorerConn } from '../lib/explorer-db';
+import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import {
   PG_TYPES, type PgColumnType, type ParsedColumn, type ParsedTable,
   parseExcelFile, generateSeedSqlFromTables,
@@ -22,13 +25,12 @@ import {
 
 type Tab = 'export' | 'import' | 'sync';
 type ExportFormat = 'sql' | 'csv';
-
 interface LogLine { step: string; ok: boolean; text: string }
-
 interface DryRunSummary {
   total: number; creates: number; inserts: number;
   drops: number; alters: number; truncates: number; updates: number;
 }
+interface TableEntry { schema: string; name: string; rowCount: number; }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -41,6 +43,15 @@ function connToCfg(conn: ConnectionRow, database?: string): ConnCfg {
     db_type: conn.db_type, host: conn.host, port: conn.port,
     user: conn.username, password: conn.password_enc ?? '',
     database: database ?? conn.database_name, ssl: conn.ssl_enabled,
+  };
+}
+
+function connToExplorerConn(conn: ConnectionRow, database: string): ExplorerConn {
+  return {
+    type: conn.db_type === 'postgres' ? 'postgresql' : 'mysql',
+    host: conn.host, port: conn.port,
+    username: conn.username, password: conn.password_enc ?? '',
+    database,
   };
 }
 
@@ -85,421 +96,6 @@ async function saveHistory(entry: Partial<HistoryEntry>) {
   } catch { /* non-critical */ }
 }
 
-// ── Connection picker ──────────────────────────────────────────────────────────
-
-function ConnPicker({
-  label, connections, value, onChange, filterType,
-}: {
-  label: string; connections: ConnectionRow[];
-  value: number | ''; onChange: (id: number | '') => void;
-  filterType?: 'mysql' | 'postgres';
-}) {
-  const filtered = filterType ? connections.filter((c) => c.db_type === filterType) : connections;
-  return (
-    <div>
-      <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-2">{label}</p>
-      {filtered.length === 0 ? (
-        <p className="text-xs text-gray-400 dark:text-slate-500 italic">No connections saved.</p>
-      ) : (
-        <div className="grid gap-2">
-          {filtered.map((c) => (
-            <button key={c.id} type="button" onClick={() => onChange(c.id === value ? '' : c.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
-                value === c.id
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 ring-1 ring-blue-500'
-                  : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 hover:border-gray-300 dark:hover:border-slate-600'
-              }`}>
-              <Server size={14} className="text-gray-400 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{c.label}</p>
-                <p className="text-[10px] text-gray-400 dark:text-slate-500 truncate">{c.host}:{c.port} / {c.database_name}</p>
-              </div>
-              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${dbTypeBadge(c.db_type)}`}>
-                {c.db_type === 'mysql' ? 'MySQL' : 'PG'}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Database selector ──────────────────────────────────────────────────────────
-
-function DbSelector({ conn, value, onChange, allowCreate }: {
-  conn: ConnectionRow | null; value: string; onChange: (db: string) => void;
-  allowCreate?: boolean;
-}) {
-  const [dbs, setDbs]           = useState<string[]>([]);
-  const [loading, setLoading]   = useState(false);
-  const [mode, setMode]         = useState<'existing' | 'new'>('existing');
-  const [newName, setNewName]   = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createMsg, setCreateMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  const load = useCallback(async (c: ConnectionRow) => {
-    setLoading(true); setDbs([]);
-    try {
-      if (c.db_type === 'postgres') {
-        const { data } = await axios.post('/api/pg-databases', {
-          host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '', ssl: c.ssl_enabled,
-        });
-        setDbs((data as { databases: string[] }).databases);
-      } else {
-        const { data } = await axios.post('/api/list-databases', {
-          host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '',
-        });
-        setDbs((data as { databases: string[] }).databases);
-      }
-    } catch { setDbs([]); }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => {
-    if (conn) void load(conn);
-    else { setDbs([]); onChange(''); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn?.id]);
-
-  useEffect(() => {
-    if (dbs.length > 0 && !value) onChange(dbs[0]);
-  }, [dbs, value, onChange]);
-
-  const handleCreate = async () => {
-    if (!conn || !newName.trim()) return;
-    setCreating(true); setCreateMsg(null);
-    try {
-      const { data } = await axios.post('/api/create-database', {
-        db_type: conn.db_type, host: conn.host, port: conn.port,
-        user: conn.username, password: conn.password_enc ?? '',
-        ssl: conn.ssl_enabled, dbName: newName.trim(),
-      }, { headers: authHeader() });
-      setCreateMsg({ ok: true, text: (data as { message: string }).message });
-      await load(conn);
-      onChange(newName.trim());
-      setMode('existing');
-      setNewName('');
-    } catch (err: unknown) {
-      setCreateMsg({ ok: false, text: axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err) });
-    } finally { setCreating(false); }
-  };
-
-  if (!conn) return null;
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-gray-500 dark:text-slate-400">Database</p>
-        <div className="flex items-center gap-2">
-          {allowCreate && (
-            <div className="flex gap-1">
-              {(['existing', 'new'] as const).map((m) => (
-                <button key={m} type="button"
-                  onClick={() => { setMode(m); setCreateMsg(null); }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                    mode === m
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400'
-                      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300'
-                  }`}>
-                  {m === 'existing' ? 'Existing' : 'New'}
-                </button>
-              ))}
-            </div>
-          )}
-          <button type="button" onClick={() => void load(conn)}
-            className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
-            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-          </button>
-        </div>
-      </div>
-
-      {mode === 'existing' ? (
-        <select value={value} onChange={(e) => onChange(e.target.value)}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500">
-          {dbs.map((db) => <option key={db} value={db}>{db}</option>)}
-        </select>
-      ) : (
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            <input type="text" value={newName}
-              onChange={(e) => { setNewName(e.target.value); setCreateMsg(null); }}
-              placeholder="new_database_name"
-              className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <button type="button" onClick={() => void handleCreate()}
-              disabled={creating || !newName.trim()}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors">
-              {creating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-              {creating ? 'Creating…' : 'Create'}
-            </button>
-          </div>
-          {createMsg && (
-            <p className={`flex items-center gap-1.5 text-xs ${createMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-              {createMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
-              {createMsg.text}
-            </p>
-          )}
-          <p className="text-[10px] text-gray-400 dark:text-slate-500">Letters, digits, and underscores only.</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Table selector with row counts ────────────────────────────────────────────
-
-function TableSelector({ conn, database, value, onChange }: {
-  conn: ConnectionRow | null; database: string;
-  value: string[] | 'all'; onChange: (v: string[] | 'all') => void;
-}) {
-  const [tableInfos, setTableInfos] = useState<TableInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-
-  useEffect(() => {
-    if (!conn || !database) { setTableInfos([]); return; }
-    void (async () => {
-      setLoading(true);
-      try {
-        const { data } = await axios.post('/api/export-import/tables',
-          { cfg: connToCfg(conn, database) }, { headers: authHeader() });
-        setTableInfos((data as { tables: TableInfo[] }).tables);
-      } catch { setTableInfos([]); }
-      finally { setLoading(false); }
-    })();
-  }, [conn?.id, database]);
-
-  const allSelected = value === 'all';
-  const selected = allSelected ? tableInfos.map((t) => t.name) : value;
-  const totalRows = tableInfos.reduce((s, t) => s + t.rowCount, 0);
-  const hasLarge  = tableInfos.some((t) => t.rowCount > 50_000);
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
-          Tables {loading && <Loader2 size={10} className="inline animate-spin ml-1" />}
-        </p>
-        <button type="button" onClick={() => setExpanded((v) => !v)}
-          className="flex items-center gap-1 text-[10px] text-blue-600 dark:text-blue-400 hover:underline">
-          {expanded ? 'collapse' : `${allSelected ? tableInfos.length : selected.length} selected`}
-          {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-        </button>
-      </div>
-
-      <div className="flex gap-2 mb-2">
-        {(['all', 'custom'] as const).map((m) => (
-          <button key={m} type="button" onClick={() => onChange(m === 'all' ? 'all' : [])}
-            className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
-              (m === 'all' ? allSelected : !allSelected)
-                ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400'
-                : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300'
-            }`}>{m === 'all' ? 'All tables' : 'Custom'}</button>
-        ))}
-      </div>
-
-      {hasLarge && (
-        <div className="flex items-center gap-1.5 mb-2 px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 text-[10px] text-amber-700 dark:text-amber-400">
-          <ShieldAlert size={11} /> Some tables have &gt;50k rows — export may be slow.
-        </div>
-      )}
-
-      {expanded && !allSelected && tableInfos.length > 0 && (
-        <div className="border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
-          {tableInfos.map((t) => (
-            <label key={t.name}
-              className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer border-b border-gray-100 dark:border-slate-800 last:border-0">
-              <input type="checkbox" checked={selected.includes(t.name)}
-                onChange={(e) => {
-                  const next = e.target.checked ? [...selected, t.name] : selected.filter((x) => x !== t.name);
-                  onChange(next);
-                }}
-                className="accent-blue-600" />
-              <Table2 size={11} className="text-gray-400 shrink-0" />
-              <span className="text-xs text-gray-700 dark:text-slate-300 font-mono flex-1">{t.name}</span>
-              <span className={`text-[10px] font-mono shrink-0 ${t.rowCount > 50_000 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
-                {fmtRows(t.rowCount)}
-              </span>
-            </label>
-          ))}
-        </div>
-      )}
-
-      {tableInfos.length > 0 && (
-        <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1.5">
-          {tableInfos.length} table{tableInfos.length !== 1 ? 's' : ''} · {fmtRows(totalRows)} total rows
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ── Include + format pickers ───────────────────────────────────────────────────
-
-function IncludePicker({ value, onChange }: { value: ExportInclude; onChange: (v: ExportInclude) => void }) {
-  const opts: { v: ExportInclude; label: string; desc: string }[] = [
-    { v: 'both',   label: 'Schema + Data', desc: 'DDL and all rows' },
-    { v: 'schema', label: 'Schema only',   desc: 'DDL — no data' },
-    { v: 'data',   label: 'Data only',     desc: 'INSERTs — no DDL' },
-  ];
-  return (
-    <div>
-      <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-2">Include</p>
-      <div className="flex gap-2 flex-wrap">
-        {opts.map(({ v, label, desc }) => (
-          <button key={v} type="button" onClick={() => onChange(v)}
-            className={`px-3 py-1.5 rounded-lg text-xs border transition-colors text-left ${
-              value === v
-                ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400'
-                : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300'
-            }`}>
-            <p className="font-medium">{label}</p>
-            <p className="text-[10px] opacity-70">{desc}</p>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function FormatPicker({ value, onChange }: { value: ExportFormat; onChange: (v: ExportFormat) => void }) {
-  return (
-    <div>
-      <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-2">Format</p>
-      <div className="flex gap-2">
-        {([['sql', 'SQL Dump', '.sql file'], ['csv', 'CSV', '.zip with one CSV per table']] as const).map(([v, label, desc]) => (
-          <button key={v} type="button" onClick={() => onChange(v)}
-            className={`px-3 py-1.5 rounded-lg text-xs border transition-colors text-left ${
-              value === v
-                ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400'
-                : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300'
-            }`}>
-            <p className="font-medium">{label}</p>
-            <p className="text-[10px] opacity-70">{desc}</p>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── Conflict strategy picker ───────────────────────────────────────────────────
-
-function ConflictPicker({ value, onChange }: { value: ConflictStrategy; onChange: (v: ConflictStrategy) => void }) {
-  const opts: { v: ConflictStrategy; label: string; desc: string }[] = [
-    { v: 'insert_only',      label: 'INSERT only',        desc: 'Fail if row exists' },
-    { v: 'truncate_insert',  label: 'TRUNCATE + INSERT',  desc: 'Clear target tables first' },
-    { v: 'upsert',           label: 'Upsert',             desc: 'Skip if row exists' },
-  ];
-  return (
-    <div>
-      <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-2">Conflict Strategy</p>
-      <div className="flex gap-2 flex-wrap">
-        {opts.map(({ v, label, desc }) => (
-          <button key={v} type="button" onClick={() => onChange(v)}
-            className={`px-3 py-1.5 rounded-lg text-xs border transition-colors text-left ${
-              value === v
-                ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-400'
-                : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300'
-            }`}>
-            <p className="font-medium">{label}</p>
-            <p className="text-[10px] opacity-70">{desc}</p>
-          </button>
-        ))}
-      </div>
-      {value === 'truncate_insert' && (
-        <p className="mt-1.5 text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-          <AlertCircle size={10} /> Target tables will be cleared before inserting.
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ── Log panel ──────────────────────────────────────────────────────────────────
-
-function LogPanel({ lines, running }: { lines: LogLine[]; running: boolean }) {
-  if (lines.length === 0 && !running) return null;
-  return (
-    <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/60">
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
-        <FileCode2 size={13} className="text-gray-500" />
-        <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Execution Log</p>
-      </div>
-      <div className="p-4 space-y-1.5 font-mono text-xs max-h-64 overflow-y-auto">
-        {lines.map((l, i) => {
-          const isRollback = l.text.startsWith('[ROLLBACK]');
-          const isInfo     = l.text.startsWith('[START]') || l.text.startsWith('[DONE]');
-          const colorCls   = l.ok
-            ? isInfo ? 'text-gray-500 dark:text-slate-400' : 'text-emerald-600 dark:text-emerald-400'
-            : isRollback ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400';
-          const Icon = l.ok ? (isInfo ? Info : CheckCircle2) : isRollback ? AlertCircle : XCircle;
-          return (
-            <div key={i} className={`flex items-start gap-2 ${colorCls}`}>
-              <Icon size={12} className="mt-0.5 shrink-0" />
-              <span><span className="opacity-50 mr-1.5">[{l.step}]</span>{l.text}</span>
-            </div>
-          );
-        })}
-        {running && <div className="flex items-center gap-2 text-gray-400"><Loader2 size={12} className="animate-spin" /> Running…</div>}
-      </div>
-    </div>
-  );
-}
-
-// ── SQL preview + download ─────────────────────────────────────────────────────
-
-function SqlPreview({ sql, filename }: { sql: string; filename: string }) {
-  const [copied, setCopied] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-
-  const copy = async () => {
-    await navigator.clipboard.writeText(sql);
-    setCopied(true); setTimeout(() => setCopied(false), 2000);
-  };
-
-  const download = () => {
-    const blob = new Blob([sql], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/60">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
-        <div className="flex items-center gap-2">
-          <FileCode2 size={13} className="text-gray-500" />
-          <p className="text-xs font-medium text-gray-600 dark:text-slate-400">
-            SQL Output <span className="opacity-60">({(sql.length / 1024).toFixed(1)} KB)</span>
-          </p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button type="button" onClick={() => setExpanded((v) => !v)}
-            className="px-2 py-1 text-[10px] rounded text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700">
-            {expanded ? 'Collapse' : 'Preview'}
-          </button>
-          <button type="button" onClick={copy}
-            className="flex items-center gap-1 px-2 py-1 text-[10px] rounded text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700">
-            {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? 'Copied' : 'Copy'}
-          </button>
-          <button type="button" onClick={download}
-            className="flex items-center gap-1.5 px-3 py-1 text-[10px] rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700">
-            <Download size={11} /> Download
-          </button>
-        </div>
-      </div>
-      {expanded && (
-        <pre className="p-4 text-[10px] font-mono text-gray-600 dark:text-slate-300 max-h-80 overflow-y-auto whitespace-pre-wrap break-words">
-          {sql.slice(0, 8000)}{sql.length > 8000 ? '\n… (truncated for preview)' : ''}
-        </pre>
-      )}
-    </div>
-  );
-}
-
 // ── Dry-run preview modal ──────────────────────────────────────────────────────
 
 function DryRunModal({ sql, onConfirm, onCancel }: {
@@ -507,7 +103,6 @@ function DryRunModal({ sql, onConfirm, onCancel }: {
 }) {
   const s = parseDryRun(sql);
   const hasDestructive = s.drops > 0 || s.truncates > 0;
-
   return (
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl">
@@ -518,12 +113,9 @@ function DryRunModal({ sql, onConfirm, onCancel }: {
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-2">
             {([
-              ['Total statements', s.total],
-              ['CREATE TABLE', s.creates],
-              ['INSERT', s.inserts],
-              ['ALTER TABLE', s.alters],
-              ['DROP TABLE', s.drops],
-              ['TRUNCATE', s.truncates],
+              ['Total statements', s.total], ['CREATE TABLE', s.creates],
+              ['INSERT', s.inserts], ['ALTER TABLE', s.alters],
+              ['DROP TABLE', s.drops], ['TRUNCATE', s.truncates],
             ] as [string, number][]).map(([label, count]) => (
               <div key={label} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs ${
                 (label === 'DROP TABLE' || label === 'TRUNCATE') && count > 0
@@ -535,7 +127,6 @@ function DryRunModal({ sql, onConfirm, onCancel }: {
               </div>
             ))}
           </div>
-
           {hasDestructive && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
               <AlertCircle size={13} className="mt-0.5 shrink-0" />
@@ -556,12 +147,10 @@ function DryRunModal({ sql, onConfirm, onCancel }: {
   );
 }
 
-// ── Excel preview modal (for Import tab) ─────────────────────────────────────
+// ── Excel preview modal ────────────────────────────────────────────────────────
 
 function ExcelImportModal({ tables: initial, onApply, onClose }: {
-  tables: ParsedTable[];
-  onApply: (sql: string) => void;
-  onClose: () => void;
+  tables: ParsedTable[]; onApply: (sql: string) => void; onClose: () => void;
 }) {
   const [tables, setTables] = useState(initial);
   const [activeSheet, setActive] = useState(initial[0]?.sheetName ?? '');
@@ -569,9 +158,7 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
 
   const updateCol = (sheetName: string, idx: number, patch: Partial<ParsedColumn>) =>
     setTables((prev) => prev.map((t) =>
-      t.sheetName === sheetName
-        ? { ...t, columns: t.columns.map((c, i) => i === idx ? { ...c, ...patch } : c) }
-        : t
+      t.sheetName === sheetName ? { ...t, columns: t.columns.map((c, i) => i === idx ? { ...c, ...patch } : c) } : t
     ));
 
   return (
@@ -585,7 +172,6 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"><XCircle size={16} /></button>
         </div>
-
         <div className="flex flex-1 min-h-0">
           <nav className="w-40 shrink-0 border-r border-gray-100 dark:border-slate-800 p-2 space-y-1 overflow-y-auto">
             {tables.map((t) => (
@@ -600,7 +186,6 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
               </button>
             ))}
           </nav>
-
           {active && (
             <div className="flex-1 p-4 overflow-y-auto min-w-0 space-y-3">
               <p className="text-xs text-gray-500 dark:text-slate-400">
@@ -639,7 +224,6 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
             </div>
           )}
         </div>
-
         <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100 dark:border-slate-800 shrink-0">
           <p className="text-xs text-gray-400 dark:text-slate-500">
             Generates INSERT statements for {tables.reduce((s, t) => s + t.rowCount, 0)} rows
@@ -647,8 +231,7 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
           <div className="flex items-center gap-3">
             <button type="button" onClick={onClose}
               className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
-            <button type="button"
-              onClick={() => onApply(generateSeedSqlFromTables(tables))}
+            <button type="button" onClick={() => onApply(generateSeedSqlFromTables(tables))}
               className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700">
               <CheckCircle2 size={13} /> Apply as SQL
             </button>
@@ -659,42 +242,35 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
   );
 }
 
-// ── Drag-drop SQL import field ──────────────────────────────────────────────────
+// ── SQL drag-drop import field ─────────────────────────────────────────────────
 
 function SqlImportField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-
   const readFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => onChange(e.target?.result as string ?? '');
     reader.readAsText(file);
   };
-
   return (
     <div
-      className={`relative rounded-xl border-2 border-dashed transition-colors ${dragging ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-700'}`}
+      className={`relative flex flex-col flex-1 rounded-xl border-2 border-dashed transition-colors ${dragging ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-700'}`}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) readFile(f); }}
     >
       <textarea value={value} onChange={(e) => onChange(e.target.value)}
-        placeholder="Paste SQL here or drag & drop a .sql file…" rows={10}
-        className="w-full px-4 py-3 text-xs font-mono bg-transparent rounded-xl text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y"
+        placeholder="Paste SQL here or drag & drop a .sql file…"
+        className="flex-1 px-4 py-3 text-xs font-mono bg-transparent text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none resize-none"
       />
-      <div className="px-4 pb-3 flex items-center gap-2">
+      <div className="shrink-0 px-4 pb-3 flex items-center gap-2 border-t border-gray-100 dark:border-slate-800">
         <button type="button" onClick={() => fileRef.current?.click()}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">
           <UploadCloud size={12} /> Browse .sql
         </button>
-        {value && (
-          <button type="button" onClick={() => onChange('')}
-            className="text-[10px] text-gray-400 hover:text-rose-500">Clear</button>
-        )}
+        {value && <button type="button" onClick={() => onChange('')} className="text-[10px] text-gray-400 hover:text-rose-500">Clear</button>}
         {value.trim() && (
-          <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500 font-mono">
-            ~{parseDryRun(value).total} statements
-          </span>
+          <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500 font-mono">~{parseDryRun(value).total} statements</span>
         )}
         <input ref={fileRef} type="file" accept=".sql,.txt" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); }} />
@@ -703,9 +279,525 @@ function SqlImportField({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-// ── History panel ──────────────────────────────────────────────────────────────
+// ── Log panel ──────────────────────────────────────────────────────────────────
 
-function HistoryPanel({ tab }: { tab: Tab }) {
+function LogPanel({ lines, running }: { lines: LogLine[]; running: boolean }) {
+  if (lines.length === 0 && !running) return null;
+  return (
+    <div className="shrink-0 border-t border-gray-200 dark:border-slate-800">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
+        <FileCode2 size={12} className="text-gray-400" />
+        <p className="text-[11px] font-medium text-gray-500 dark:text-slate-400">Execution Log</p>
+      </div>
+      <div className="p-3 space-y-1 font-mono text-[10px] max-h-44 sidebar-scroll overflow-y-auto">
+        {lines.map((l, i) => {
+          const isRollback = l.text.startsWith('[ROLLBACK]');
+          const isInfo     = l.text.startsWith('[START]') || l.text.startsWith('[DONE]');
+          const colorCls   = l.ok
+            ? isInfo ? 'text-gray-400 dark:text-slate-500' : 'text-emerald-600 dark:text-emerald-400'
+            : isRollback ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400';
+          const Icon = l.ok ? (isInfo ? Info : CheckCircle2) : isRollback ? AlertCircle : XCircle;
+          return (
+            <div key={i} className={`flex items-start gap-1.5 ${colorCls}`}>
+              <Icon size={10} className="mt-0.5 shrink-0" />
+              <span><span className="opacity-50 mr-1">[{l.step}]</span>{l.text}</span>
+            </div>
+          );
+        })}
+        {running && <div className="flex items-center gap-1.5 text-gray-400"><Loader2 size={10} className="animate-spin" /> Running…</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── SQL preview + download ─────────────────────────────────────────────────────
+
+function SqlPreview({ sql, filename }: { sql: string; filename: string }) {
+  const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(sql);
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
+  };
+  const download = () => {
+    const blob = new Blob([sql], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="shrink-0 border-t border-gray-200 dark:border-slate-800">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
+        <FileCode2 size={12} className="text-emerald-500" />
+        <p className="text-[11px] font-medium text-gray-500 dark:text-slate-400">
+          SQL Output <span className="opacity-60">({(sql.length / 1024).toFixed(1)} KB)</span>
+        </p>
+        <div className="ml-auto flex items-center gap-1">
+          <button type="button" onClick={() => setExpanded(v => !v)}
+            className="px-2 py-0.5 text-[10px] rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700">
+            {expanded ? 'Collapse' : 'Preview'}
+          </button>
+          <button type="button" onClick={copy}
+            className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700">
+            {copied ? <Check size={10} /> : <Copy size={10} />} {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button type="button" onClick={download}
+            className="flex items-center gap-1 px-2.5 py-0.5 text-[10px] rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700">
+            <Download size={10} /> Download
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <pre className="px-4 py-3 text-[10px] font-mono text-gray-600 dark:text-slate-300 max-h-52 sidebar-scroll overflow-y-auto whitespace-pre-wrap break-words">
+          {sql.slice(0, 8000)}{sql.length > 8000 ? '\n… (truncated)' : ''}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// ── Cross-DB alert modal ───────────────────────────────────────────────────────
+
+function CrossDbAlertModal({ srcType, tgtType, onClose }: {
+  srcType: 'mysql' | 'postgres'; tgtType: 'mysql' | 'postgres'; onClose: () => void;
+}) {
+  const label = (t: 'mysql' | 'postgres') => t === 'mysql' ? 'MySQL' : 'PostgreSQL';
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 rounded-2xl shadow-2xl">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-rose-100 dark:border-rose-900">
+          <AlertCircle size={15} className="text-rose-500 shrink-0" />
+          <p className="font-semibold text-sm text-gray-900 dark:text-slate-100">Cross-DB Sync Not Supported</p>
+        </div>
+        <div className="px-5 py-4 space-y-3 text-sm text-gray-600 dark:text-slate-300">
+          <p>Source and target are different database types:</p>
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs font-semibold">
+            <span className={srcType === 'mysql' ? 'text-orange-600 dark:text-orange-400' : 'text-blue-600 dark:text-blue-400'}>{label(srcType)}</span>
+            <ArrowRightLeft size={12} className="text-rose-400 shrink-0" />
+            <span className={tgtType === 'mysql' ? 'text-orange-600 dark:text-orange-400' : 'text-blue-600 dark:text-blue-400'}>{label(tgtType)}</span>
+          </div>
+          <p className="text-[11px] text-gray-400 dark:text-slate-500">
+            Use the <strong className="text-gray-600 dark:text-slate-300">Migration</strong> module to move data between MySQL and PostgreSQL.
+          </p>
+        </div>
+        <div className="px-5 py-4 border-t border-gray-100 dark:border-slate-800 flex justify-end">
+          <button onClick={onClose}
+            className="px-5 py-2 rounded-lg text-sm font-medium bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
+            OK, understood
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Guide Popover ──────────────────────────────────────────────────────────────
+
+function GuidePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as HTMLElement)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const pill = (text: string) => (
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{text}</span>
+  );
+  const h3 = 'flex items-center gap-1.5 text-xs font-semibold text-gray-800 dark:text-slate-100';
+  const sec = 'mt-2 space-y-1.5 text-[11px] text-gray-600 dark:text-slate-300 leading-relaxed';
+  const sep = 'border-t border-gray-100 dark:border-slate-800';
+
+  return (
+    <div ref={ref} className="relative flex items-center">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors border ${open
+          ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+          : 'text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-transparent hover:border-blue-200 dark:hover:border-blue-800'}`}
+      >
+        <HelpCircle size={13} /> Guide
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-50 w-[420px] max-h-[74vh] flex flex-col bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+          <div className="shrink-0 flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 dark:border-slate-800">
+            <BookOpen size={14} className="text-blue-500" />
+            <p className="flex-1 font-semibold text-sm text-gray-900 dark:text-slate-100">Export & Import Guide</p>
+            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={14} /></button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-[11px]">
+
+            <div>
+              <p className={h3}><Info size={12} className="text-blue-500" /> Navigation</p>
+              <div className={sec}>
+                <p>Use the <strong>5-panel flow</strong> left to right: pick a connection → database → schema → tables. Then click the action button in the toolbar.</p>
+                <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
+                  <li><strong>Panel 1</strong> — saved connections. Click to select one.</li>
+                  <li><strong>Panel 2</strong> — databases for the selected connection. Auto-loads on connection select.</li>
+                  <li><strong>Panel 3</strong> — schemas (PostgreSQL only). Filters the table list. "All" shows every table.</li>
+                  <li><strong>Panel 4</strong> — table selection + action workspace (input / result / log).</li>
+                  <li><strong>Saved Jobs</strong> (right, collapsible) — history of past operations.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className={sep} />
+
+            <div>
+              <p className={h3}><Download size={12} className="text-blue-500" /> Export</p>
+              <div className={sec}>
+                <p>Select connection → database → schema → tables, then configure options in the toolbar and click {pill('Export')}.</p>
+                <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
+                  <li><strong>Include</strong> — Schema+Data (DDL + rows), Schema only (DDL), Data only (INSERTs).</li>
+                  <li><strong>Format</strong> — SQL (.sql file) or CSV (.zip, one file per table).</li>
+                  <li><strong>WHERE filter</strong> — optional clause applied to all data SELECT queries.</li>
+                </ul>
+                <p>SQL output appears below the table list with Copy and Download options.</p>
+              </div>
+            </div>
+
+            <div className={sep} />
+
+            <div>
+              <p className={h3}><UploadCloud size={12} className="text-emerald-500" /> Import</p>
+              <div className={sec}>
+                <p>Select <strong>target</strong> connection → database, then paste or upload SQL. Click {pill('Import')} (or {pill('Preview')} first).</p>
+                <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
+                  <li>{pill('SQL')} — paste SQL directly or drag a .sql file into the text area.</li>
+                  <li>{pill('Excel')} — upload .xlsx/.xls; each sheet becomes INSERT statements.</li>
+                  <li>{pill('Preview')} — shows a dry-run breakdown (CREATE/INSERT/DROP counts) before executing.</li>
+                  <li>Import runs with per-statement rollback — a failed statement rolls back only that statement.</li>
+                </ul>
+                <p className="text-[10px] text-gray-400 dark:text-slate-500">Panels 3 (Schema) and 4 (Tables) are not applicable for Import — table selection comes from the SQL input itself.</p>
+              </div>
+            </div>
+
+            <div className={sep} />
+
+            <div>
+              <p className={h3}><ArrowRightLeft size={12} className="text-violet-500" /> Sync</p>
+              <div className={sec}>
+                <p>Copy data from a source database to a target database of the <strong>same type</strong> (MySQL→MySQL or PG→PG).</p>
+                <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
+                  <li>Source — select in panels 1–4 as usual.</li>
+                  <li>Target — pick connection and database in the target section of Panel 4.</li>
+                  <li><strong>Conflict Strategy</strong>: INSERT only (fail if row exists), TRUNCATE+INSERT (clear first), Upsert (skip duplicates).</li>
+                  <li>Cross-DB sync (MySQL ↔ PostgreSQL) is not supported — use the Migration module instead.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className={sep} />
+
+            <div>
+              <p className={h3}><Clock size={12} className="text-gray-500" /> Saved Jobs</p>
+              <div className={sec}>
+                <p>Every completed Export, Import, or Sync operation is saved automatically. Click the chevron notch on the right edge to collapse/expand the panel.</p>
+                <p>Each entry shows status, timestamp, source/target databases, table count, format, and conflict strategy. Click {pill('×')} to delete an entry.</p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Panel 1: Connections ───────────────────────────────────────────────────────
+
+function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgtChange }: {
+  connections: ConnectionRow[];
+  value: number | '';
+  onChange: (id: number | '') => void;
+  label?: string;
+  tgtValue?: number | '';
+  onTgtChange?: (id: number | '') => void;
+}) {
+  const isDual = tgtValue !== undefined && onTgtChange !== undefined;
+
+  const renderList = (
+    selected: number | '',
+    onSelect: (id: number | '') => void,
+    accent: 'blue' | 'violet',
+  ) => (
+    <div className="flex-1 sidebar-scroll overflow-y-auto p-2 space-y-1">
+      {connections.length === 0 ? (
+        <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center py-6 italic">
+          No saved connections.<br />
+          <Link href="/connections" className="text-blue-500 hover:underline not-italic">Add one →</Link>
+        </p>
+      ) : (
+        connections.map((c) => {
+          const active = selected === c.id;
+          const sel = accent === 'blue'
+            ? 'border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-950/30'
+            : 'border-violet-400 dark:border-violet-600 bg-violet-50 dark:bg-violet-950/30';
+          const selIcon = accent === 'blue' ? 'text-blue-500' : 'text-violet-500';
+          const selText = accent === 'blue' ? 'text-blue-700 dark:text-blue-300' : 'text-violet-700 dark:text-violet-300';
+          return (
+            <button key={c.id} type="button"
+              onClick={() => onSelect(c.id === selected ? '' : c.id)}
+              className={`w-full flex items-start gap-2 px-2.5 py-2 rounded-lg text-left transition-all border ${
+                active ? sel : 'border-transparent hover:bg-gray-50 dark:hover:bg-slate-800/60'
+              }`}>
+              <Database size={12} className={`mt-0.5 shrink-0 ${active ? selIcon : 'text-gray-400 dark:text-slate-500'}`} />
+              <div className="flex-1 min-w-0">
+                <p className={`text-[11px] font-medium truncate ${active ? selText : 'text-gray-800 dark:text-slate-200'}`}>{c.label}</p>
+                <p className="text-[10px] text-gray-400 dark:text-slate-500 truncate font-mono">{c.host}:{c.port}</p>
+              </div>
+              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${dbTypeBadge(c.db_type)}`}>
+                {c.db_type === 'mysql' ? 'MySQL' : 'PG'}
+              </span>
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+
+  return (
+    <div className="w-52 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
+      {isDual ? (
+        <>
+          <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-200 dark:border-slate-800">
+            <Server size={12} className="text-blue-500 shrink-0" />
+            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Source</span>
+          </div>
+          {renderList(value, onChange, 'blue')}
+          <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
+            <Server size={12} className="text-violet-500 shrink-0" />
+            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Target</span>
+          </div>
+          {renderList(tgtValue!, onTgtChange!, 'violet')}
+        </>
+      ) : (
+        <>
+          <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
+            <Server size={12} className="text-blue-500 shrink-0" />
+            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">{label ?? 'Connection'}</span>
+            {connections.length > 0 && (
+              <span className="ml-auto text-[10px] font-mono text-gray-400 dark:text-slate-500">{connections.length}</span>
+            )}
+          </div>
+          {renderList(value, onChange, 'blue')}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Panel 2: Databases ─────────────────────────────────────────────────────────
+
+function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress }: {
+  conn: ConnectionRow | null;
+  value: string;
+  onChange: (db: string) => void;
+  allowCreate?: boolean;
+  syncProgress?: { current: number; total: number; label: string } | null;
+}) {
+  const [dbs, setDbs]           = useState<string[]>([]);
+  const [loading, setLoading]   = useState(false);
+  const [showNew, setShowNew]   = useState(false);
+  const [newName, setNewName]   = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState<string | null>(null);
+
+  const load = useCallback(async (c: ConnectionRow) => {
+    setLoading(true); setDbs([]);
+    try {
+      if (c.db_type === 'postgres') {
+        const { data } = await axios.post('/api/pg-databases',
+          { host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '', ssl: c.ssl_enabled });
+        setDbs((data as { databases: string[] }).databases);
+      } else {
+        const { data } = await axios.post('/api/list-databases',
+          { host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '' });
+        setDbs((data as { databases: string[] }).databases);
+      }
+    } catch { setDbs([]); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (conn) void load(conn); else { setDbs([]); onChange(''); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn?.id]);
+
+  useEffect(() => {
+    if (dbs.length > 0 && !value) onChange(dbs[0]);
+  }, [dbs, value, onChange]);
+
+  const handleCreate = async () => {
+    if (!conn || !newName.trim()) return;
+    setCreating(true); setCreateErr(null);
+    try {
+      await axios.post('/api/create-database', {
+        db_type: conn.db_type, host: conn.host, port: conn.port,
+        user: conn.username, password: conn.password_enc ?? '', ssl: conn.ssl_enabled, dbName: newName.trim(),
+      }, { headers: authHeader() });
+      await load(conn); onChange(newName.trim()); setShowNew(false); setNewName('');
+    } catch (err: unknown) {
+      setCreateErr(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
+    } finally { setCreating(false); }
+  };
+
+  const pct = syncProgress
+    ? Math.round((syncProgress.current / Math.max(syncProgress.total, 1)) * 100)
+    : null;
+
+  return (
+    <div className="w-full h-full bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
+      <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
+        <Database size={12} className="text-purple-500 shrink-0" />
+        <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Database</span>
+        {conn && (
+          <button type="button" onClick={() => void load(conn)} title="Refresh"
+            className="ml-auto p-0.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
+            {loading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+          </button>
+        )}
+      </div>
+      <div className="flex-1 sidebar-scroll overflow-y-auto">
+        {!conn ? (
+          <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a connection first</p>
+        ) : (
+          <div className="p-2 space-y-0.5">
+            {dbs.map(db => {
+              const active = value === db;
+              return (
+                <div key={db}>
+                  <button type="button" onClick={() => onChange(db)}
+                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
+                      active
+                        ? 'bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300'
+                        : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
+                    }`}>
+                    <Database size={10} className={active ? 'text-purple-400 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
+                    <span className="text-[11px] font-mono truncate flex-1">{db}</span>
+                    {active && pct !== null && (
+                      <span className="text-[9px] font-mono text-violet-500 dark:text-violet-400 shrink-0">{pct}%</span>
+                    )}
+                  </button>
+                  {active && pct !== null && (
+                    <div className="mx-2.5 mt-0.5 h-1 rounded-full bg-gray-100 dark:bg-slate-800 overflow-hidden">
+                      <div className="h-full bg-violet-500 rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {allowCreate && conn && (
+        <div className="shrink-0 border-t border-gray-100 dark:border-slate-800 p-2">
+          {showNew ? (
+            <div className="space-y-1.5">
+              <input type="text" value={newName} onChange={e => { setNewName(e.target.value); setCreateErr(null); }}
+                placeholder="new_db_name" autoFocus
+                className="w-full px-2 py-1.5 text-[11px] font-mono rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+              {createErr && <p className="text-[10px] text-rose-500">{createErr}</p>}
+              <div className="flex gap-1">
+                <button type="button" onClick={() => void handleCreate()} disabled={creating || !newName.trim()}
+                  className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-[10px] rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+                  {creating ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />} Create
+                </button>
+                <button type="button" onClick={() => { setShowNew(false); setCreateErr(null); setNewName(''); }}
+                  className="px-2 py-1.5 text-[10px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setShowNew(true)}
+              className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+              <Plus size={11} /> New Database…
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Panel 3: Schemas ───────────────────────────────────────────────────────────
+
+function SchemaPanel({ conn, database, value, onChange }: {
+  conn: ConnectionRow | null;
+  database: string;
+  value: string;
+  onChange: (s: string) => void;
+}) {
+  const [schemas, setSchemas] = useState<{ schema: string; tableCount: number }[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async (c: ConnectionRow, db: string) => {
+    setLoading(true); setSchemas([]);
+    try {
+      const { data } = await axios.post('/api/schema-explorer/schemas',
+        connToExplorerConn(c, db), { headers: authHeader() });
+      setSchemas((data as { schemas: { schema: string; tableCount: number }[] }).schemas);
+    } catch { setSchemas([]); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (conn && database) void load(conn, database);
+    else { setSchemas([]); onChange(''); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn?.id, database]);
+
+  const isPg = conn?.db_type === 'postgres';
+
+  return (
+    <div className="w-full h-full bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
+      <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
+        <Server size={12} className={isPg ? 'text-teal-500 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
+        <span className={`text-[11px] font-semibold ${isPg ? 'text-gray-700 dark:text-slate-200' : 'text-gray-400 dark:text-slate-600'}`}>Schema</span>
+        {loading && <Loader2 size={10} className="animate-spin text-gray-400 ml-auto" />}
+      </div>
+      <div className="flex-1 sidebar-scroll overflow-y-auto">
+        {!isPg ? (
+          <p className="text-[10px] text-gray-400 dark:text-slate-600 text-center py-8 px-2 italic">PostgreSQL only</p>
+        ) : !conn || !database ? (
+          <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a DB first</p>
+        ) : (
+          <div className="p-2 space-y-0.5">
+            <button type="button" onClick={() => onChange('')}
+              className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
+                value === '' ? 'bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/60'
+              }`}>
+              <span className="text-[11px]">All schemas</span>
+            </button>
+            {schemas.map(s => (
+              <button key={s.schema} type="button" onClick={() => onChange(s.schema)}
+                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
+                  value === s.schema ? 'bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
+                }`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-mono truncate">{s.schema}</p>
+                  <p className="text-[9px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Panel 5: Saved Jobs (collapsible) ─────────────────────────────────────────
+
+function SavedJobsPanel({ tab, collapsed, onToggle, refreshKey }: {
+  tab: Tab; collapsed: boolean; onToggle: () => void; refreshKey: number;
+}) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -718,448 +810,158 @@ function HistoryPanel({ tab }: { tab: Tab }) {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
-
-  const filtered = history.filter((h) => h.operation === tab);
+  useEffect(() => { void load(); }, [load, refreshKey]);
 
   const handleDelete = async (id: number) => {
     try {
       await axios.delete(`/api/export-import/history?id=${id}`, { headers: authHeader() });
-      setHistory((prev) => prev.filter((h) => h.id !== id));
+      setHistory(prev => prev.filter(h => h.id !== id));
     } catch { /* ignore */ }
   };
 
-  return (
-    <aside className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-gray-800 dark:text-slate-200">History</p>
-        <button type="button" onClick={() => void load()} disabled={loading}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800">
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-        </button>
-      </div>
-
-      {filtered.length === 0 && !loading ? (
-        <div className="text-center py-8 border border-dashed border-gray-200 dark:border-slate-700 rounded-xl text-xs text-gray-400 dark:text-slate-500">
-          No {tab} history yet.
-        </div>
-      ) : (
-        <div className="space-y-2 max-h-[calc(100vh-200px)] overflow-y-auto pr-0.5">
-          {filtered.map((h) => (
-            <div key={h.id} className={`rounded-xl border text-xs overflow-hidden ${
-              h.status === 'success' ? 'border-emerald-200 dark:border-emerald-800/60'
-              : h.status === 'failed' ? 'border-rose-200 dark:border-rose-800/60'
-              : 'border-gray-200 dark:border-slate-700'
-            }`}>
-              <div className="flex items-start gap-2 px-3 py-2.5 bg-white dark:bg-slate-900/60">
-                <div className="flex-1 min-w-0 space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                      h.status === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
-                      : h.status === 'failed' ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400'
-                      : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'
-                    }`}>{h.status}</span>
-                    <span className="flex items-center gap-0.5 text-gray-400 dark:text-slate-500">
-                      <Clock size={9} />{timeAgo(h.created_at)}
-                    </span>
-                  </div>
-
-                  {h.source_db && (
-                    <p className="text-gray-600 dark:text-slate-400 truncate">
-                      <span className="opacity-60">from</span> <span className="font-mono">{h.source_db}</span>
-                      {h.target_db && <> → <span className="font-mono">{h.target_db}</span></>}
-                    </p>
-                  )}
-
-                  <div className="flex items-center gap-2 text-[10px] text-gray-400 dark:text-slate-500">
-                    {h.tables_count > 0 && <span>{h.tables_count} table{h.tables_count !== 1 ? 's' : ''}</span>}
-                    {h.include && <span>{h.include}</span>}
-                    {h.format && h.format !== 'sql' && <span>{h.format.toUpperCase()}</span>}
-                    {h.conflict && h.conflict !== 'insert_only' && <span>{h.conflict.replace('_', ' ')}</span>}
-                    {h.where_clause && (
-                      <span className="flex items-center gap-0.5"><Filter size={8} />filtered</span>
-                    )}
-                  </div>
-                </div>
-
-                <button type="button" onClick={() => void handleDelete(h.id)}
-                  className="shrink-0 p-1 text-gray-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
-                  <Trash2 size={11} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </aside>
-  );
-}
-
-// ── Export tab ─────────────────────────────────────────────────────────────────
-
-function ExportTab({ connections }: { connections: ConnectionRow[] }) {
-  const [connId, setConnId]     = useState<number | ''>('');
-  const [database, setDatabase] = useState('');
-  const [tables, setTables]     = useState<string[] | 'all'>('all');
-  const [include, setInclude]   = useState<ExportInclude>('both');
-  const [format, setFormat]     = useState<ExportFormat>('sql');
-  const [whereClause, setWhere] = useState('');
-  const [showFilter, setShowFilter] = useState(false);
-  const [running, setRunning]   = useState(false);
-  const [result, setResult]     = useState<{ sql: string; tables: string[] } | null>(null);
-  const [error, setError]       = useState<string | null>(null);
-
-  const conn = connections.find((c) => c.id === connId) ?? null;
-
-  const handleExport = async () => {
-    if (!conn || !database) return;
-    setRunning(true); setResult(null); setError(null);
-    try {
-      const { data } = await axios.post('/api/export-import/export',
-        { cfg: connToCfg(conn, database), tables, include, format, whereClause: whereClause.trim() || undefined },
-        { headers: authHeader() });
-
-      if (format === 'csv') {
-        const csvData = data as { csvFiles: { table: string; csv: string }[]; tables: string[] };
-        const zip = new JSZip();
-        for (const { table, csv } of csvData.csvFiles) zip.file(`${table}.csv`, csv);
-        const blob = await zip.generateAsync({ type: 'blob' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = `${database}_${new Date().toISOString().slice(0, 10)}.zip`; a.click();
-        URL.revokeObjectURL(url);
-        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: csvData.tables.length, include, format: 'csv', where_clause: whereClause.trim() || undefined, status: 'success' });
-      } else {
-        const sqlData = data as { sql: string; tables: string[] };
-        setResult(sqlData);
-        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: sqlData.tables.length, include, format: 'sql', where_clause: whereClause.trim() || undefined, status: 'success' });
-      }
-    } catch (err: unknown) {
-      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err);
-      setError(msg);
-      await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: 0, include, format, status: 'failed' });
-    } finally { setRunning(false); }
-  };
-
-  const filename = `${database}_${include}_${new Date().toISOString().slice(0, 10)}.sql`;
+  const filtered = history.filter(h => h.operation === tab);
 
   return (
-    <div className="grid xl:grid-cols-[1fr_280px] gap-6 items-start">
-      <div className="space-y-6">
-        <div className="grid xl:grid-cols-2 gap-6">
-          <section className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <Database size={15} className="text-blue-500" />
-              <p className="font-semibold text-sm text-gray-800 dark:text-slate-200">Source</p>
-            </div>
-            <ConnPicker label="Connection" connections={connections} value={connId} onChange={setConnId} />
-            <DbSelector conn={conn} value={database} onChange={setDatabase} />
-            <TableSelector conn={conn} database={database} value={tables} onChange={setTables} />
-          </section>
+    <div className={`shrink-0 border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex transition-all duration-200 ${collapsed ? 'w-6' : 'w-64'}`}>
+      {/* Notch */}
+      <button
+        onClick={onToggle}
+        className="w-6 shrink-0 flex items-center justify-center text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+        title={collapsed ? 'Expand Saved Jobs' : 'Collapse Saved Jobs'}
+      >
+        {collapsed ? <ChevronLeft size={13} /> : <ChevronRight size={13} />}
+      </button>
 
-          <section className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <Download size={15} className="text-blue-500" />
-              <p className="font-semibold text-sm text-gray-800 dark:text-slate-200">Options</p>
-            </div>
-            <IncludePicker value={include} onChange={setInclude} />
-            <FormatPicker value={format} onChange={setFormat} />
-
-            <div>
-              <button type="button" onClick={() => setShowFilter((v) => !v)}
-                className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline">
-                <Filter size={11} /> {showFilter ? 'Hide' : 'Add'} WHERE filter
+      {!collapsed && (
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
+            <Clock size={12} className="text-gray-400 shrink-0" />
+            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Saved Jobs</span>
+            <div className="ml-auto flex items-center gap-1">
+              {filtered.length > 0 && (
+                <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500">{filtered.length}</span>
+              )}
+              <button type="button" onClick={() => void load()} disabled={loading}
+                className="p-0.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
+                {loading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
               </button>
-              {showFilter && (
-                <div className="mt-2">
-                  <input type="text" value={whereClause} onChange={(e) => setWhere(e.target.value)}
-                    placeholder="e.g. created_at > '2025-01-01'"
-                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1">Applied to all data SELECT queries. Leave blank to export all rows.</p>
-                </div>
-              )}
             </div>
+          </div>
 
-            <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-3">
-              <button type="button" onClick={() => void handleExport()} disabled={!conn || !database || running}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                {running ? 'Exporting…' : `Export${format === 'csv' ? ' as CSV' : ''}`}
-              </button>
-
-              {error && (
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
-                  <XCircle size={13} className="mt-0.5 shrink-0" /> {error}
-                </div>
-              )}
-              {result && (
-                <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400">
-                  <CheckCircle2 size={13} /> Exported {result.tables.length} table{result.tables.length !== 1 ? 's' : ''}
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
-
-        {result && <SqlPreview sql={result.sql} filename={filename} />}
-      </div>
-
-      <HistoryPanel tab="export" />
-    </div>
-  );
-}
-
-// ── Import tab ─────────────────────────────────────────────────────────────────
-
-function ImportTab({ connections }: { connections: ConnectionRow[] }) {
-  const [connId, setConnId]         = useState<number | ''>('');
-  const [database, setDatabase]     = useState('');
-  const [sql, setSql]               = useState('');
-  const [inputMode, setInputMode]   = useState<'sql' | 'excel'>('sql');
-  const [running, setRunning]       = useState(false);
-  const [log, setLog]               = useState<LogLine[]>([]);
-  const [status, setStatus]         = useState<'success' | 'failed' | null>(null);
-  const [showDryRun, setShowDryRun] = useState(false);
-  const [excelTables, setExcelTables] = useState<ParsedTable[] | null>(null);
-  const [parsingExcel, setParsingExcel] = useState(false);
-  const [excelError, setExcelError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const conn = connections.find((c) => c.id === connId) ?? null;
-
-  const doImport = async () => {
-    if (!conn || !database || !sql.trim()) return;
-    setRunning(true); setLog([]); setStatus(null);
-    try {
-      const { data } = await axios.post('/api/export-import/import',
-        { cfg: connToCfg(conn, database), sql }, { headers: authHeader() });
-      const d = data as { success: boolean; log?: string[] };
-      setLog((d.log ?? []).map((t) => ({ step: 'import', ok: d.success, text: t })));
-      setStatus(d.success ? 'success' : 'failed');
-      await saveHistory({ operation: 'import', target_label: conn.label, target_db: database, status: d.success ? 'success' : 'failed' });
-    } catch (err: unknown) {
-      const d = axios.isAxiosError(err) ? err.response?.data as { log?: string[]; error?: string } | undefined : undefined;
-      setLog((d?.log ?? [`[ERROR] ${d?.error ?? String(err)}`]).map((t) => ({ step: 'import', ok: false, text: t })));
-      setStatus('failed');
-      await saveHistory({ operation: 'import', target_label: conn.label, target_db: database, status: 'failed' });
-    } finally { setRunning(false); }
-  };
-
-  const handleExcelFile = async (file: File) => {
-    if (!/\.xlsx?$/i.test(file.name)) { setExcelError('Upload a .xlsx or .xls file.'); return; }
-    setParsingExcel(true); setExcelError(null);
-    try {
-      const tables = await parseExcelFile(file);
-      if (tables.length === 0) { setExcelError('No valid sheets found.'); return; }
-      setExcelTables(tables);
-    } catch { setExcelError('Failed to parse file.'); }
-    finally { setParsingExcel(false); }
-  };
-
-  return (
-    <div className="grid xl:grid-cols-[1fr_280px] gap-6 items-start">
-      <div className="space-y-6">
-        <div className="grid xl:grid-cols-2 gap-6">
-          <section className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <UploadCloud size={15} className="text-emerald-500" />
-              <p className="font-semibold text-sm text-gray-800 dark:text-slate-200">Target</p>
-            </div>
-            <ConnPicker label="Connection" connections={connections} value={connId} onChange={setConnId} />
-            <DbSelector conn={conn} value={database} onChange={setDatabase} allowCreate />
-          </section>
-
-          <section className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileCode2 size={15} className="text-emerald-500" />
-                <p className="font-semibold text-sm text-gray-800 dark:text-slate-200">SQL Input</p>
+          <div className="flex-1 sidebar-scroll overflow-y-auto p-2 space-y-1.5">
+            {filtered.length === 0 && !loading ? (
+              <div className="text-center py-8 border border-dashed border-gray-200 dark:border-slate-700 rounded-xl text-[11px] text-gray-400 dark:text-slate-500">
+                No {tab} jobs yet.
               </div>
-              <div className="flex gap-1 p-0.5 bg-gray-100 dark:bg-slate-800 rounded-lg">
-                {(['sql', 'excel'] as const).map((m) => (
-                  <button key={m} type="button" onClick={() => setInputMode(m)}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
-                      inputMode === m ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 shadow-sm' : 'text-gray-500 dark:text-slate-400'
-                    }`}>
-                    {m === 'excel' ? <FileSpreadsheet size={11} /> : <FileCode2 size={11} />}
-                    {m === 'sql' ? 'SQL' : 'Excel'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {inputMode === 'sql' ? (
-              <SqlImportField value={sql} onChange={setSql} />
             ) : (
-              <div
-                className="flex flex-col items-center justify-center gap-3 py-8 rounded-xl border-2 border-dashed border-gray-200 dark:border-slate-700 hover:border-emerald-400 dark:hover:border-emerald-700 cursor-pointer transition-colors"
-                onClick={() => fileRef.current?.click()}>
-                {parsingExcel ? (
-                  <><Loader2 size={22} className="text-emerald-500 animate-spin" /><p className="text-sm text-gray-400">Parsing…</p></>
-                ) : (
-                  <>
-                    <FileSpreadsheet size={24} className="text-gray-300 dark:text-slate-600" />
-                    <p className="text-sm font-medium text-gray-600 dark:text-slate-300">Drop Excel or click to browse</p>
-                    <p className="text-xs text-gray-400 dark:text-slate-500">Each sheet becomes INSERT statements</p>
-                  </>
-                )}
-                <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleExcelFile(f); e.target.value = ''; }} />
-              </div>
+              filtered.map(h => (
+                <div key={h.id} className={`rounded-xl border text-xs overflow-hidden ${
+                  h.status === 'success' ? 'border-emerald-200 dark:border-emerald-800/60'
+                  : h.status === 'failed' ? 'border-rose-200 dark:border-rose-800/60'
+                  : 'border-gray-200 dark:border-slate-700'
+                }`}>
+                  <div className="flex items-start gap-2 px-3 py-2.5 bg-white dark:bg-slate-900/60">
+                    <div className="flex-1 min-w-0 space-y-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                          h.status === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+                          : h.status === 'failed' ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400'
+                          : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'
+                        }`}>{h.status}</span>
+                        <span className="flex items-center gap-0.5 text-gray-400 dark:text-slate-500 text-[10px]">
+                          <Clock size={9} />{timeAgo(h.created_at)}
+                        </span>
+                      </div>
+                      {h.source_db && (
+                        <p className="text-gray-600 dark:text-slate-400 truncate text-[10px]">
+                          <span className="opacity-60">from</span> <span className="font-mono">{h.source_db}</span>
+                          {h.target_db && <> → <span className="font-mono">{h.target_db}</span></>}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-slate-500 flex-wrap">
+                        {h.tables_count > 0 && <span>{h.tables_count} table{h.tables_count !== 1 ? 's' : ''}</span>}
+                        {h.include && <span>{h.include}</span>}
+                        {h.format && h.format !== 'sql' && <span>{h.format.toUpperCase()}</span>}
+                        {h.conflict && h.conflict !== 'insert_only' && <span>{h.conflict.replace('_', ' ')}</span>}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => void handleDelete(h.id)}
+                      className="shrink-0 p-1 text-gray-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                </div>
+              ))
             )}
-
-            {excelError && <p className="text-xs text-rose-500 flex items-center gap-1"><XCircle size={11} />{excelError}</p>}
-
-            <div className="flex items-center gap-3 flex-wrap">
-              {sql.trim() && (
-                <button type="button" onClick={() => setShowDryRun(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 text-xs text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">
-                  <Eye size={12} /> Preview
-                </button>
-              )}
-              <button type="button" onClick={() => void doImport()}
-                disabled={!conn || !database || !sql.trim() || running}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
-                {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                {running ? 'Importing…' : 'Import'}
-              </button>
-              {status && (
-                <span className={`flex items-center gap-1.5 text-xs font-medium ${status === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                  {status === 'success' ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-                  {status === 'success' ? 'Imported successfully' : 'Import failed'}
-                </span>
-              )}
-            </div>
-          </section>
+          </div>
         </div>
-
-        <LogPanel lines={log} running={running} />
-      </div>
-
-      <HistoryPanel tab="import" />
-
-      {showDryRun && (
-        <DryRunModal sql={sql} onConfirm={() => { setShowDryRun(false); void doImport(); }} onCancel={() => setShowDryRun(false)} />
-      )}
-      {excelTables && (
-        <ExcelImportModal
-          tables={excelTables}
-          onApply={(s) => { setSql(s); setInputMode('sql'); setExcelTables(null); }}
-          onClose={() => setExcelTables(null)}
-        />
       )}
     </div>
   );
 }
 
-// ── Sync tab ───────────────────────────────────────────────────────────────────
-
-function SyncTab({ connections }: { connections: ConnectionRow[] }) {
-  const [srcConnId, setSrcConnId] = useState<number | ''>('');
-  const [srcDb, setSrcDb]         = useState('');
-  const [tgtConnId, setTgtConnId] = useState<number | ''>('');
-  const [tgtDb, setTgtDb]         = useState('');
-  const [tables, setTables]       = useState<string[] | 'all'>('all');
-  const [include, setInclude]     = useState<ExportInclude>('both');
-  const [conflict, setConflict]   = useState<ConflictStrategy>('insert_only');
-  const [running, setRunning]     = useState(false);
-  const [log, setLog]             = useState<LogLine[]>([]);
-  const [status, setStatus]       = useState<'success' | 'failed' | null>(null);
-
-  const srcConn = connections.find((c) => c.id === srcConnId) ?? null;
-  const tgtConn = connections.find((c) => c.id === tgtConnId) ?? null;
-  const typeMismatch = srcConn && tgtConn && srcConn.db_type !== tgtConn.db_type;
-
-  const handleSync = async () => {
-    if (!srcConn || !srcDb || !tgtConn || !tgtDb || typeMismatch) return;
-    setRunning(true); setLog([]); setStatus(null);
-    try {
-      const { data } = await axios.post('/api/export-import/sync',
-        { source: connToCfg(srcConn, srcDb), target: connToCfg(tgtConn, tgtDb), tables, include, conflict },
-        { headers: authHeader() });
-      const d = data as { success: boolean; log: LogLine[]; tables?: string[] };
-      setLog(d.log); setStatus(d.success ? 'success' : 'failed');
-      await saveHistory({ operation: 'sync', source_label: srcConn.label, source_db: srcDb, target_label: tgtConn.label, target_db: tgtDb, tables_count: d.tables?.length ?? 0, include, conflict, status: d.success ? 'success' : 'failed' });
-    } catch (err: unknown) {
-      const d = axios.isAxiosError(err) ? err.response?.data as { log?: LogLine[] } | undefined : undefined;
-      if (d?.log) setLog(d.log);
-      else setLog([{ step: 'sync', ok: false, text: `[ERROR] ${String(err)}` }]);
-      setStatus('failed');
-      await saveHistory({ operation: 'sync', source_label: srcConn.label, source_db: srcDb, target_label: tgtConn.label, target_db: tgtDb, status: 'failed' });
-    } finally { setRunning(false); }
-  };
-
-  return (
-    <div className="grid xl:grid-cols-[1fr_280px] gap-6 items-start">
-      <div className="space-y-6">
-        <div className="grid xl:grid-cols-[1fr_auto_1fr] gap-4 items-start">
-          <section className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <Database size={15} className="text-blue-500" />
-              <p className="font-semibold text-sm text-gray-800 dark:text-slate-200">Source</p>
-            </div>
-            <ConnPicker label="Connection" connections={connections} value={srcConnId} onChange={setSrcConnId} />
-            <DbSelector conn={srcConn} value={srcDb} onChange={setSrcDb} />
-            <TableSelector conn={srcConn} database={srcDb} value={tables} onChange={setTables} />
-          </section>
-
-          <div className="flex xl:flex-col items-center justify-center xl:pt-16 gap-2 px-2">
-            <ArrowRight size={20} className="text-gray-300 dark:text-slate-600 xl:rotate-0 rotate-90" />
-          </div>
-
-          <section className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <Server size={15} className="text-emerald-500" />
-              <p className="font-semibold text-sm text-gray-800 dark:text-slate-200">Target</p>
-            </div>
-            <ConnPicker label="Connection" connections={connections} value={tgtConnId} onChange={setTgtConnId} />
-            <DbSelector conn={tgtConn} value={tgtDb} onChange={setTgtDb} />
-          </section>
-        </div>
-
-        <section className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-5 space-y-4">
-          <IncludePicker value={include} onChange={setInclude} />
-          <ConflictPicker value={conflict} onChange={setConflict} />
-
-          {typeMismatch && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
-              <AlertCircle size={13} className="mt-0.5 shrink-0" />
-              Cross-DB sync (MySQL ↔ PostgreSQL) is not supported. Use the <strong className="mx-1">Migration</strong> module.
-            </div>
-          )}
-
-          <div className="flex items-center gap-3">
-            <button type="button" onClick={() => void handleSync()}
-              disabled={!srcConn || !srcDb || !tgtConn || !tgtDb || running || !!typeMismatch}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50">
-              {running ? <Loader2 size={14} className="animate-spin" /> : <ArrowRightLeft size={14} />}
-              {running ? 'Syncing…' : 'Start Sync'}
-            </button>
-            {status && (
-              <span className={`flex items-center gap-1.5 text-xs font-medium ${status === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                {status === 'success' ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-                {status === 'success' ? 'Sync completed' : 'Sync failed'}
-              </span>
-            )}
-          </div>
-        </section>
-
-        <LogPanel lines={log} running={running} />
-      </div>
-
-      <HistoryPanel tab="sync" />
-    </div>
-  );
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function ExportImportPage() {
   const [tab, setTab] = useState<Tab>('export');
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
   const [loadingConns, setLoadingConns] = useState(true);
 
+  // Source (Export / Sync source / Import target)
+  const [connId, setConnId]     = useState<number | ''>('');
+  const [database, setDatabase] = useState('');
+  const [schema, setSchema]     = useState('');
+
+  // Tables
+  const [tableList, setTableList]       = useState<TableEntry[]>([]);
+  const [tablesLoading, setTablesLoading] = useState(false);
+  const [selectedTables, setSelectedTables] = useState<string[] | 'all'>('all');
+
+  // Sync target
+  const [tgtConnId, setTgtConnId] = useState<number | ''>('');
+
+  // Export options
+  const [include, setInclude]       = useState<ExportInclude>('both');
+  const [format, setFormat]         = useState<ExportFormat>('sql');
+  const [whereClause, setWhere]     = useState('');
+  const [showFilter, setShowFilter] = useState(false);
+
+  // Import
+  const [importSql, setImportSql]       = useState('');
+  const [importMode, setImportMode]     = useState<'sql' | 'excel'>('sql');
+  const [excelTables, setExcelTables]   = useState<ParsedTable[] | null>(null);
+  const [parsingExcel, setParsingExcel] = useState(false);
+  const [showDryRun, setShowDryRun]     = useState(false);
+  const excelFileRef = useRef<HTMLInputElement>(null);
+
+  // Sync
+  const [conflict, setConflict] = useState<ConflictStrategy>('insert_only');
+  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number; label: string } | null>(null);
+  const [showCrossDbAlert, setShowCrossDbAlert] = useState(false);
+
+  // Execution state
+  const [running, setRunning]       = useState(false);
+  const [log, setLog]               = useState<LogLine[]>([]);
+  const [runStatus, setRunStatus]   = useState<'success' | 'failed' | null>(null);
+  const [exportResult, setExportResult] = useState<{ sql: string; tables: string[] } | null>(null);
+  const [error, setError]           = useState<string | null>(null);
+
+  // Saved Jobs panel
+  const [jobsCollapsed, setJobsCollapsed] = useState(false);
+  const [jobsRefreshKey, setJobsRefreshKey] = useState(0);
+
+  const conn    = connections.find(c => c.id === connId) ?? null;
+  const tgtConn = connections.find(c => c.id === tgtConnId) ?? null;
+
+  // Show alert when sync source/target DB types differ
+  const typeMismatchRef = useRef(false);
+  useEffect(() => {
+    const mismatch = !!(tab === 'sync' && conn && tgtConn && conn.db_type !== tgtConn.db_type);
+    if (mismatch && !typeMismatchRef.current) setShowCrossDbAlert(true);
+    typeMismatchRef.current = mismatch;
+  }, [tab, conn?.db_type, tgtConn?.db_type]);
+
+  // Load connections
   useEffect(() => {
     void (async () => {
       setLoadingConns(true);
@@ -1171,59 +973,518 @@ export default function ExportImportPage() {
     })();
   }, []);
 
-  const tabs: { key: Tab; label: string; Icon: React.ElementType }[] = [
-    { key: 'export', label: 'Export', Icon: Download },
-    { key: 'import', label: 'Import', Icon: UploadCloud },
-    { key: 'sync',   label: 'Sync',   Icon: ArrowRightLeft },
-  ];
+  // Load table list when conn/db/schema changes
+  useEffect(() => {
+    if (!conn || !database) { setTableList([]); return; }
+    void (async () => {
+      setTablesLoading(true);
+      try {
+        const explorerConn = connToExplorerConn(conn, database);
+        const { data } = await axios.post('/api/schema-explorer/tables',
+          { conn: explorerConn, schemas: schema ? [schema] : undefined },
+          { headers: authHeader() });
+        setTableList((data as { tables: TableEntry[] }).tables);
+      } catch { setTableList([]); }
+      finally { setTablesLoading(false); }
+    })();
+  }, [conn?.id, database, schema]);
+
+  // Reset results when switching tabs
+  const handleTabChange = (t: Tab) => {
+    setTab(t); setLog([]); setRunStatus(null); setExportResult(null); setError(null);
+  };
+
+  // Export
+  const handleExport = async () => {
+    if (!conn || !database) return;
+    setRunning(true); setExportResult(null); setError(null); setLog([]);
+    const tablesToExport = selectedTables === 'all' ? 'all' : selectedTables.map(t => t.split('.').pop() ?? t);
+    try {
+      const { data } = await axios.post('/api/export-import/export',
+        { cfg: connToCfg(conn, database), tables: tablesToExport, include, format, whereClause: whereClause.trim() || undefined },
+        { headers: authHeader() });
+
+      if (format === 'csv') {
+        const csvData = data as { csvFiles: { table: string; csv: string }[]; tables: string[] };
+        const zip = new JSZip();
+        for (const { table, csv } of csvData.csvFiles) zip.file(`${table}.csv`, csv);
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `${database}_${new Date().toISOString().slice(0, 10)}.zip`; a.click();
+        URL.revokeObjectURL(url);
+        setRunStatus('success');
+        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: csvData.tables.length, include, format: 'csv', where_clause: whereClause.trim() || undefined, status: 'success' });
+      } else {
+        const sqlData = data as { sql: string; tables: string[] };
+        setExportResult(sqlData); setRunStatus('success');
+        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: sqlData.tables.length, include, format: 'sql', where_clause: whereClause.trim() || undefined, status: 'success' });
+      }
+    } catch (err: unknown) {
+      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err);
+      setError(msg); setRunStatus('failed');
+      await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: 0, include, format, status: 'failed' });
+    } finally { setRunning(false); setJobsRefreshKey(k => k + 1); }
+  };
+
+  // Import
+  const doImport = async () => {
+    if (!conn || !database || !importSql.trim()) return;
+    setRunning(true); setLog([]); setRunStatus(null); setError(null);
+    try {
+      const { data } = await axios.post('/api/export-import/import',
+        { cfg: connToCfg(conn, database), sql: importSql }, { headers: authHeader() });
+      const d = data as { success: boolean; log?: string[] };
+      setLog((d.log ?? []).map(t => ({ step: 'import', ok: d.success, text: t })));
+      setRunStatus(d.success ? 'success' : 'failed');
+      await saveHistory({ operation: 'import', target_label: conn.label, target_db: database, status: d.success ? 'success' : 'failed' });
+    } catch (err: unknown) {
+      const d = axios.isAxiosError(err) ? err.response?.data as { log?: string[]; error?: string } | undefined : undefined;
+      setLog((d?.log ?? [`[ERROR] ${d?.error ?? String(err)}`]).map(t => ({ step: 'import', ok: false, text: t })));
+      setRunStatus('failed');
+      await saveHistory({ operation: 'import', target_label: conn.label, target_db: database, status: 'failed' });
+    } finally { setRunning(false); setJobsRefreshKey(k => k + 1); }
+  };
+
+  // Sync — per-table with progress
+  const handleSync = async () => {
+    if (!conn || !database || !tgtConn) return;
+    setRunning(true); setLog([]); setRunStatus(null); setError(null); setSyncProgress(null);
+    const tables = selectedTables === 'all'
+      ? tableList.map(t => t.name)
+      : selectedTables.map(t => t.split('.').pop() ?? t);
+    const total = Math.max(tables.length, 1);
+    const allLog: LogLine[] = [];
+    let allOk = true;
+    for (let i = 0; i < tables.length; i++) {
+      const table = tables[i];
+      setSyncProgress({ current: i, total, label: table });
+      try {
+        const { data } = await axios.post('/api/export-import/sync',
+          { source: connToCfg(conn, database), target: connToCfg(tgtConn, database), tables: [table], include, conflict },
+          { headers: authHeader() });
+        const d = data as { success: boolean; log: LogLine[] };
+        allLog.push(...d.log);
+        if (!d.success) allOk = false;
+      } catch (err: unknown) {
+        const d = axios.isAxiosError(err) ? err.response?.data as { log?: LogLine[] } | undefined : undefined;
+        allLog.push(...(d?.log ?? [{ step: 'sync', ok: false, text: `[ERROR] ${table}: ${String(err)}` }]));
+        allOk = false;
+      }
+      setSyncProgress({ current: i + 1, total, label: table });
+    }
+    setLog(allLog);
+    setRunStatus(allOk ? 'success' : 'failed');
+    setSyncProgress(null);
+    await saveHistory({ operation: 'sync', source_label: conn.label, source_db: database, target_label: tgtConn.label, target_db: database, tables_count: tables.length, include, conflict, status: allOk ? 'success' : 'failed' });
+    setRunning(false);
+    setJobsRefreshKey(k => k + 1);
+  };
+
+  const handleExcelFile = async (file: File) => {
+    if (!/\.xlsx?$/i.test(file.name)) return;
+    setParsingExcel(true);
+    try {
+      const tables = await parseExcelFile(file);
+      if (tables.length > 0) setExcelTables(tables);
+    } catch { /* ignore */ }
+    finally { setParsingExcel(false); }
+  };
+
+  // Toolbar run
+  const handleRun = () => {
+    if (tab === 'export') void handleExport();
+    else if (tab === 'import') { if (importSql.trim()) setShowDryRun(true); }
+    else void handleSync();
+  };
+
+  const canRun = !running && conn && database && (
+    tab === 'import' ? importSql.trim() :
+    tab === 'sync'   ? tgtConn && conn.db_type === tgtConn.db_type :
+    true
+  );
+
+  // Table list rendering helpers
+  const allSelected = selectedTables === 'all';
+  const selectedArr = allSelected ? tableList.map(t => `${t.schema}.${t.name}`) : selectedTables;
+  const hasLarge = tableList.some(t => t.rowCount > 50_000);
+
+  const exportFilename = `${database}_${include}_${new Date().toISOString().slice(0, 10)}.sql`;
+
+  // Segmented control style
+  const seg = (active: boolean) =>
+    `px-2 py-1 text-[10px] rounded border transition-colors ${active ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`;
+
+  // Tooltip wrapper for toolbar seg buttons
+  const BtnTip = ({ tip, children }: { tip: string; children: React.ReactNode }) => {
+    const [show, setShow] = useState(false);
+    return (
+      <span className="relative inline-flex"
+        onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+        {children}
+        {show && (
+          <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1.5 z-[100] whitespace-nowrap bg-gray-900 dark:bg-slate-700 text-white text-[10px] leading-snug px-2 py-1 rounded shadow-lg pointer-events-none">
+            {tip}
+          </span>
+        )}
+      </span>
+    );
+  };
 
   return (
     <>
       <Head><title>Export & Import — DB Maintenance Tools</title></Head>
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-900 pb-16">
+      <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-950 overflow-hidden">
 
-        <header className="sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <UploadCloud size={18} className="text-emerald-600" />
-            <div>
-              <h1 className="font-bold text-gray-900 dark:text-slate-100">Export & Import</h1>
-              <p className="text-xs text-gray-500 dark:text-slate-400">Export, import and sync database tables across PostgreSQL and MySQL connections.</p>
+        {/* ── Header ── */}
+        <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-5 py-3 flex items-center gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <UploadCloud size={18} className="text-emerald-600 shrink-0" />
+            <div className="min-w-0">
+              <h1 className="font-bold text-gray-900 dark:text-slate-100 leading-none">Export & Import</h1>
+              <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">Export, import and sync database tables across connections</p>
             </div>
           </div>
-          <nav className="flex items-center gap-1 text-sm">
+          <nav className="ml-auto flex items-center gap-1 text-sm shrink-0">
             <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
             <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-            <span className="px-3 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold">Export & Import</span>
+            <span className="px-3 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold text-sm">Export & Import</span>
           </nav>
         </header>
 
-        <main className="max-w-7xl mx-auto px-6 py-8 space-y-6">
-          <div className="flex gap-1 p-1 bg-gray-100 dark:bg-slate-800 rounded-xl w-fit">
-            {tabs.map(({ key, label, Icon }) => (
-              <button key={key} type="button" onClick={() => setTab(key)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  tab === key
-                    ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
-                    : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
-                }`}>
-                <Icon size={14} /> {label}
-              </button>
-            ))}
-          </div>
+        {/* ── Toolbar ── */}
+        <div className="shrink-0 flex items-center gap-2 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-1.5 flex-wrap">
 
-          {loadingConns ? (
-            <div className="flex items-center gap-2 text-sm text-gray-400 dark:text-slate-500">
-              <Loader2 size={14} className="animate-spin" /> Loading connections…
-            </div>
-          ) : (
+          {/* Tab buttons */}
+          {([
+            { key: 'export' as Tab, label: 'Export', Icon: Download },
+            { key: 'import' as Tab, label: 'Import', Icon: UploadCloud },
+            { key: 'sync'   as Tab, label: 'Sync',   Icon: ArrowRightLeft },
+          ]).map(({ key, label, Icon }) => (
+            <button key={key} type="button" onClick={() => handleTabChange(key)}
+              className={`self-stretch inline-flex items-center gap-1.5 px-3 text-[11px] font-medium border-b-2 transition-colors ${
+                tab === key
+                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
+              }`}>
+              <Icon size={11} /> {label}
+            </button>
+          ))}
+
+          <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+
+          {/* Export options */}
+          {tab === 'export' && (
             <>
-              {tab === 'export' && <ExportTab connections={connections} />}
-              {tab === 'import' && <ImportTab connections={connections} />}
-              {tab === 'sync'   && <SyncTab   connections={connections} />}
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Include</span>
+                {([
+                  { v: 'both'   as ExportInclude, label: 'S+D',   tip: 'Schema + Data — DDL and all rows'               },
+                  { v: 'schema' as ExportInclude, label: 'Schema', tip: 'Schema only — DDL, no row data'                 },
+                  { v: 'data'   as ExportInclude, label: 'Data',   tip: 'Data only — INSERT statements, no DDL'          },
+                ]).map(({ v, label, tip }) => (
+                  <BtnTip key={v} tip={tip}>
+                    <button onClick={() => setInclude(v)} className={seg(include === v)}>{label}</button>
+                  </BtnTip>
+                ))}
+              </div>
+              <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Format</span>
+                {(['sql', 'csv'] as ExportFormat[]).map(v => (
+                  <button key={v} onClick={() => setFormat(v)} className={`${seg(format === v)} uppercase`}>{v}</button>
+                ))}
+              </div>
+              <BtnTip tip="WHERE filter — applies a WHERE clause to all data SELECT queries">
+                <button onClick={() => setShowFilter(v => !v)}
+                  className={`inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded border transition-colors ${showFilter ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
+                  <Filter size={10} /> Filter
+                </button>
+              </BtnTip>
             </>
           )}
-        </main>
+
+          {/* Import options */}
+          {tab === 'import' && (
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Input</span>
+              {(['sql', 'excel'] as const).map(m => (
+                <button key={m} onClick={() => setImportMode(m)}
+                  className={`${seg(importMode === m)} inline-flex items-center gap-1`}>
+                  {m === 'excel' ? <FileSpreadsheet size={9} /> : <FileCode2 size={9} />}
+                  {m === 'sql' ? 'SQL' : 'Excel'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Sync options */}
+          {tab === 'sync' && (
+            <>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Include</span>
+                {([
+                  { v: 'both'   as ExportInclude, label: 'S+D',   tip: 'Schema + Data — DDL and all rows'      },
+                  { v: 'schema' as ExportInclude, label: 'Schema', tip: 'Schema only — DDL, no row data'        },
+                  { v: 'data'   as ExportInclude, label: 'Data',   tip: 'Data only — INSERT statements, no DDL' },
+                ]).map(({ v, label, tip }) => (
+                  <BtnTip key={v} tip={tip}>
+                    <button onClick={() => setInclude(v)} className={seg(include === v)}>{label}</button>
+                  </BtnTip>
+                ))}
+              </div>
+              <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Conflict</span>
+                {([
+                  { v: 'insert_only'     as ConflictStrategy, label: 'Insert'   },
+                  { v: 'truncate_insert' as ConflictStrategy, label: 'Truncate' },
+                  { v: 'upsert'          as ConflictStrategy, label: 'Upsert'   },
+                ]).map(({ v, label }) => (
+                  <button key={v} onClick={() => setConflict(v)} className={seg(conflict === v)}>{label}</button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Run button */}
+          <div className="ml-auto flex items-center gap-2">
+            {tab === 'import' && importSql.trim() && (
+              <button type="button" onClick={() => setShowDryRun(true)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                <Eye size={11} /> Preview
+              </button>
+            )}
+            {runStatus && (
+              <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${runStatus === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                {runStatus === 'success' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                {runStatus === 'success' ? (tab === 'export' ? 'Exported' : tab === 'import' ? 'Imported' : 'Synced') : 'Failed'}
+              </span>
+            )}
+            <button type="button" onClick={handleRun} disabled={!canRun}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-40 ${
+                tab === 'export' ? 'border border-blue-500 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-50 dark:hover:bg-blue-900/20' :
+                tab === 'import' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' :
+                'border border-violet-500 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20'
+              }`}>
+              {running ? <Loader2 size={11} className="animate-spin" /> : tab === 'export' ? <Download size={11} /> : tab === 'import' ? <UploadCloud size={11} /> : <ArrowRightLeft size={11} />}
+              {running ? (tab === 'export' ? 'Exporting…' : tab === 'import' ? 'Importing…' : 'Syncing…')
+                       : (tab === 'export' ? `Export${format === 'csv' ? ' CSV' : ''}` : tab === 'import' ? 'Import' : 'Sync')}
+            </button>
+            <GuidePopover />
+          </div>
+        </div>
+
+        {/* ── WHERE filter row (Export only) ── */}
+        {tab === 'export' && showFilter && (
+          <div className="shrink-0 flex items-center gap-2 border-b border-gray-200 dark:border-slate-800 bg-amber-50 dark:bg-amber-950/10 px-4 py-2">
+            <Filter size={11} className="text-amber-500 shrink-0" />
+            <input type="text" value={whereClause} onChange={e => setWhere(e.target.value)}
+              placeholder="WHERE clause applied to all SELECT queries  (e.g.  created_at > '2025-01-01')"
+              className="flex-1 text-[11px] font-mono bg-transparent text-gray-800 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none" />
+            <button onClick={() => { setShowFilter(false); setWhere(''); }}
+              className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={12} /></button>
+          </div>
+        )}
+
+        {/* ── 5-Panel Content ── */}
+        {loadingConns ? (
+          <div className="flex-1 flex items-center justify-center gap-2 text-sm text-gray-400 dark:text-slate-500">
+            <Loader2 size={14} className="animate-spin" /> Loading connections…
+          </div>
+        ) : (
+          <div className="flex flex-1 overflow-hidden">
+
+            {/* Panel 1: Connections */}
+            <ConnectionsPanel
+              connections={connections}
+              value={connId}
+              onChange={id => { setConnId(id); setDatabase(''); setSchema(''); setSelectedTables('all'); }}
+              label={tab === 'import' ? 'Target Conn' : 'Connection'}
+              tgtValue={tab === 'sync' ? tgtConnId : undefined}
+              onTgtChange={tab === 'sync' ? (id) => { setTgtConnId(id); } : undefined}
+            />
+
+            {/* Panels 2, 3, 4: Resizable group */}
+            <div className="flex-1 h-full overflow-hidden">
+              <PanelGroup orientation="horizontal" className="h-full">
+                <Panel defaultSize={24} minSize={12}>
+                  <DatabasePanel
+                    conn={conn}
+                    value={database}
+                    onChange={db => { setDatabase(db); setSchema(''); setSelectedTables('all'); }}
+                    allowCreate={tab === 'import'}
+                    syncProgress={syncProgress}
+                  />
+                </Panel>
+                <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
+                <Panel defaultSize={18} minSize={8}>
+                  <SchemaPanel
+                    conn={tab === 'import' ? null : conn}
+                    database={database}
+                    value={schema}
+                    onChange={s => { setSchema(s); setSelectedTables('all'); }}
+                  />
+                </Panel>
+                <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
+                <Panel defaultSize={58} minSize={30}>
+
+            {/* Panel 4: Tables + Workspace */}
+            <div className="h-full flex flex-col overflow-hidden min-w-0 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800">
+
+              {/* Panel 4 header */}
+              <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
+                <Table2 size={12} className="text-blue-500 shrink-0" />
+                <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">
+                  {tab === 'import' ? 'SQL Input' : 'Tables'}
+                </span>
+                {tab !== 'import' && tableList.length > 0 && (
+                  <span className="text-[10px] text-gray-400 dark:text-slate-500">{tableList.length} tables</span>
+                )}
+                {tablesLoading && <Loader2 size={10} className="animate-spin text-gray-400 ml-1" />}
+                {tab !== 'import' && tableList.length > 0 && !tablesLoading && (
+                  <div className="ml-auto flex items-center gap-1">
+                    {(['all', 'custom'] as const).map(m => (
+                      <button key={m} type="button"
+                        onClick={() => setSelectedTables(m === 'all' ? 'all' : [])}
+                        className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+                          (m === 'all' ? allSelected : !allSelected)
+                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                            : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'
+                        }`}>{m === 'all' ? 'All' : 'Custom'}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+
+              {/* Table list (Export/Sync) */}
+              {tab !== 'import' && (
+                <>
+                  {hasLarge && (
+                    <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800 text-[10px] text-amber-700 dark:text-amber-400">
+                      <ShieldAlert size={10} /> Some tables have &gt;50k rows — export may be slow.
+                    </div>
+                  )}
+                  {!conn || !database ? (
+                    <div className="flex-1 flex items-center justify-center text-[11px] text-gray-400 dark:text-slate-500 italic">
+                      Select a connection and database to load tables
+                    </div>
+                  ) : tableList.length === 0 && !tablesLoading ? (
+                    <div className="flex-1 flex items-center justify-center text-[11px] text-gray-400 dark:text-slate-500 italic">
+                      No tables found{schema ? ` in schema "${schema}"` : ''}
+                    </div>
+                  ) : (
+                    <div className="flex-1 sidebar-scroll overflow-y-auto">
+                      <div className="divide-y divide-gray-100 dark:divide-slate-800">
+                        {tableList.map(t => {
+                          const key = `${t.schema}.${t.name}`;
+                          const isChecked = allSelected || selectedArr.includes(key);
+                          return (
+                            <label key={key} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer">
+                              <input type="checkbox" checked={isChecked} className="accent-blue-600 shrink-0"
+                                onChange={e => {
+                                  if (allSelected) {
+                                    const all = tableList.map(x => `${x.schema}.${x.name}`);
+                                    setSelectedTables(e.target.checked ? all : all.filter(x => x !== key));
+                                  } else {
+                                    const next = e.target.checked ? [...selectedArr, key] : selectedArr.filter(x => x !== key);
+                                    setSelectedTables(next);
+                                  }
+                                }} />
+                              <Table2 size={10} className="text-gray-400 shrink-0" />
+                              <span className="text-[11px] text-gray-700 dark:text-slate-300 font-mono flex-1 truncate">{t.name}</span>
+                              {t.schema !== 'public' && (
+                                <span className="text-[9px] text-gray-400 dark:text-slate-500 font-mono shrink-0">{t.schema}</span>
+                              )}
+                              <span className={`text-[10px] font-mono shrink-0 ${t.rowCount > 50_000 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
+                                {fmtRows(t.rowCount)}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Import: SQL/Excel input */}
+              {tab === 'import' && (
+                <div className="flex-1 flex flex-col overflow-hidden p-3 gap-2">
+                  {importMode === 'sql' ? (
+                    <SqlImportField value={importSql} onChange={setImportSql} />
+                  ) : (
+                    <div
+                      className="flex-1 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-200 dark:border-slate-700 hover:border-emerald-400 dark:hover:border-emerald-700 cursor-pointer transition-colors"
+                      onClick={() => excelFileRef.current?.click()}>
+                      {parsingExcel ? (
+                        <><Loader2 size={22} className="text-emerald-500 animate-spin" /><p className="text-sm text-gray-400">Parsing…</p></>
+                      ) : (
+                        <>
+                          <FileSpreadsheet size={24} className="text-gray-300 dark:text-slate-600" />
+                          <p className="text-sm font-medium text-gray-600 dark:text-slate-300">Drop Excel or click to browse</p>
+                          <p className="text-xs text-gray-400 dark:text-slate-500">Each sheet becomes INSERT statements</p>
+                        </>
+                      )}
+                      <input ref={excelFileRef} type="file" accept=".xlsx,.xls" className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) void handleExcelFile(f); e.target.value = ''; }} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Error */}
+              {error && (
+                <div className="shrink-0 flex items-start gap-2 mx-3 mb-2 p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[11px] text-rose-700 dark:text-rose-400">
+                  <XCircle size={12} className="mt-0.5 shrink-0" /> {error}
+                </div>
+              )}
+
+              {/* SQL result (Export) */}
+              {tab === 'export' && exportResult && (
+                <SqlPreview sql={exportResult.sql} filename={exportFilename} />
+              )}
+
+              {/* Log (Import/Sync) */}
+              {tab !== 'export' && <LogPanel lines={log} running={running} />}
+            </div>
+                </Panel>
+              </PanelGroup>
+            </div>
+
+            {/* Panel 5: Saved Jobs */}
+            <SavedJobsPanel
+              tab={tab}
+              collapsed={jobsCollapsed}
+              onToggle={() => setJobsCollapsed(v => !v)}
+              refreshKey={jobsRefreshKey}
+            />
+          </div>
+        )}
+
+        {/* Modals */}
+        {showCrossDbAlert && conn && tgtConn && (
+          <CrossDbAlertModal
+            srcType={conn.db_type}
+            tgtType={tgtConn.db_type}
+            onClose={() => setShowCrossDbAlert(false)}
+          />
+        )}
+        {showDryRun && (
+          <DryRunModal sql={importSql}
+            onConfirm={() => { setShowDryRun(false); void doImport(); }}
+            onCancel={() => setShowDryRun(false)} />
+        )}
+        {excelTables && (
+          <ExcelImportModal
+            tables={excelTables}
+            onApply={s => { setImportSql(s); setImportMode('sql'); setExcelTables(null); }}
+            onClose={() => setExcelTables(null)}
+          />
+        )}
       </div>
     </>
   );
 }
+

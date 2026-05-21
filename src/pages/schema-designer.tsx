@@ -10,7 +10,16 @@ import {
   XCircle, Loader2, X, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Download,
   Columns, Sprout, Save, Clock,
   FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info, HelpCircle, BookOpen,
+  Network,
 } from 'lucide-react';
+import {
+  ReactFlow, Background, Controls,
+  useNodesState, useEdgesState,
+  BaseEdge, getSmoothStepPath,
+  Handle, Position, type Node, type Edge, type EdgeProps,
+  useReactFlow, ReactFlowProvider,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 import { useAuth } from '../lib/auth-context';
 import type { ConnectionRow } from './api/connections/index';
 import type { ExplorerConn } from '../lib/explorer-db';
@@ -607,6 +616,208 @@ function FkPickerModal({ tables, currentTableId, value, onSelect, onClose }: {
 
 // ─── Column Editor ────────────────────────────────────────────────────────────
 
+// ─── Column Header Tooltip ────────────────────────────────────────────────────
+
+function ColHeaderTip({ label, desc, example, align = 'center' }: {
+  label: string; desc: string; example?: string; align?: 'left' | 'center' | 'right';
+}) {
+  const [show, setShow] = useState(false);
+  const left = align === 'left' ? 'left-0' : align === 'right' ? 'right-0' : 'left-1/2 -translate-x-1/2';
+  return (
+    <span
+      className="relative inline-flex items-center gap-1 cursor-default select-none"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      {label}
+      <Info size={8} className="text-gray-300 dark:text-slate-600 shrink-0" />
+      {show && (
+        <div className={`absolute top-full ${left} mt-1.5 z-[200] w-56 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-2xl p-2.5 text-left pointer-events-none`}>
+          <p className="text-[10px] leading-relaxed text-gray-600 dark:text-slate-300">{desc}</p>
+          {example && (
+            <code className="mt-1.5 block text-[10px] font-mono bg-gray-50 dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 px-2 py-1 rounded border border-gray-100 dark:border-slate-700 whitespace-pre">
+              {example}
+            </code>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
+// ─── ERD Preview ──────────────────────────────────────────────────────────────
+
+const ERD_ROW_H = 26, ERD_BASE_H = 52;
+const ERD_COL_W = 260, ERD_H_GAP = 120, ERD_V_GAP = 48;
+
+function erdNodeHeight(cols: number) { return ERD_BASE_H + cols * ERD_ROW_H; }
+
+function buildDesignerErd(tables: DesignerTable[]): { nodes: Node[]; edges: Edge[] } {
+  const byName = new Map(tables.map(t => [t.name, t]));
+  const nodes: Node[] = tables.map(t => ({
+    id: t.name,
+    type: 'designerTable',
+    position: { x: 0, y: 0 },
+    data: { label: t.schema !== 'public' ? `${t.schema}.${t.name}` : t.name, columns: t.columns },
+  }));
+  const edgeSet = new Set<string>();
+  const edges: Edge[] = [];
+  tables.forEach(t => {
+    t.columns.forEach(col => {
+      if (!col.fkRef) return;
+      const [targetName] = col.fkRef.split('.');
+      if (!byName.has(targetName) || targetName === t.name) return;
+      const eid = `${t.name}→${targetName}`;
+      if (edgeSet.has(eid)) return;
+      edgeSet.add(eid);
+      edges.push({
+        id: eid, source: t.name, target: targetName,
+        type: 'designerCrowsFoot',
+        data: { isOneToOne: col.isUnique },
+      });
+    });
+  });
+  return { nodes, edges };
+}
+
+function computeDesignerErdLayout(nodes: Node[], edges: Edge[]): Map<string, { x: number; y: number }> {
+  const outCount = new Map(nodes.map(n => [n.id, 0]));
+  edges.forEach(e => outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1));
+  const roots = nodes.filter(n => outCount.get(n.id) === 0).map(n => n.id);
+  if (roots.length === 0) nodes.forEach(n => roots.push(n.id));
+  const revAdj = new Map(nodes.map(n => [n.id, [] as string[]]));
+  edges.forEach(e => revAdj.get(e.target)?.push(e.source));
+  const level = new Map<string, number>(roots.map(r => [r, 0]));
+  const queue = [...roots];
+  while (queue.length) {
+    const curr = queue.shift()!;
+    for (const next of revAdj.get(curr) ?? []) {
+      if (!level.has(next)) { level.set(next, (level.get(curr) ?? 0) + 1); queue.push(next); }
+    }
+  }
+  nodes.forEach(n => { if (!level.has(n.id)) level.set(n.id, 0); });
+  const byLevel = new Map<number, string[]>();
+  nodes.forEach(n => { const l = level.get(n.id)!; byLevel.set(l, [...(byLevel.get(l) ?? []), n.id]); });
+  const positioned = new Map<string, { x: number; y: number }>();
+  let px = 0;
+  [...byLevel.keys()].sort((a, b) => a - b).forEach(l => {
+    const ids = byLevel.get(l)!;
+    const heights = ids.map(id => erdNodeHeight((nodes.find(n => n.id === id)?.data as { columns: DesignerColumn[] })?.columns?.length ?? 5));
+    const total = heights.reduce((s, h) => s + h + ERD_V_GAP, -ERD_V_GAP);
+    let py = -total / 2;
+    ids.forEach((id, i) => { positioned.set(id, { x: px, y: py }); py += heights[i] + ERD_V_GAP; });
+    px += ERD_COL_W + ERD_H_GAP;
+  });
+  return positioned;
+}
+
+function DesignerErdCrowsFoot({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
+  const [edgePath] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 12 });
+  const isOneToOne = Boolean((data as Record<string, unknown>)?.isOneToOne);
+  const color = '#3b82f6';
+  const manyId = `dcfm-${id}`, oneId = `dcfo-${id}`;
+  return (
+    <g>
+      <defs>
+        <marker id={manyId} markerWidth="20" markerHeight="12" refX="1" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+          <line x1="1" y1="0" x2="1" y2="12" stroke={color} strokeWidth="1.5" />
+          <path d="M3,6 L18,0 M3,6 L18,12 M3,6 L18,6" stroke={color} strokeWidth="1.5" fill="none" />
+        </marker>
+        <marker id={oneId} markerWidth="8" markerHeight="12" refX="0" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+          <line x1="2" y1="0" x2="2" y2="12" stroke={color} strokeWidth="1.5" />
+        </marker>
+      </defs>
+      <BaseEdge id={id} path={edgePath} style={{ stroke: color, strokeWidth: 1.5 }}
+        markerStart={`url(#${isOneToOne ? oneId : manyId})`} markerEnd={`url(#${oneId})`} />
+    </g>
+  );
+}
+
+function DesignerErdTableNode({ data }: { data: { label: string; columns: DesignerColumn[] } }) {
+  return (
+    <div className="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-lg shadow-md min-w-[220px] text-xs overflow-hidden">
+      <Handle type="target" position={Position.Left} className="!bg-blue-500" />
+      <Handle type="source" position={Position.Right} className="!bg-blue-500" />
+      <div className="bg-blue-600 dark:bg-blue-700 text-white px-3 py-1.5 font-semibold text-[11px] tracking-wide truncate">
+        {data.label}
+      </div>
+      <div className="divide-y divide-gray-100 dark:divide-slate-700">
+        {data.columns.map(col => (
+          <div key={col.id} className="flex items-center gap-1.5 px-3 py-1 hover:bg-gray-50 dark:hover:bg-slate-700/50">
+            <span className="shrink-0 w-8 text-[10px] font-bold">
+              {col.isPk ? <span className="text-amber-500">PK</span> : col.fkRef ? <span className="text-blue-500">FK</span> : <span className="text-gray-300 dark:text-slate-600">—</span>}
+            </span>
+            <span className="font-medium text-gray-800 dark:text-slate-200 truncate flex-1">{col.name}</span>
+            <span className="text-gray-400 dark:text-slate-500 shrink-0 text-[10px]">{col.type}{col.length ? `(${col.length})` : ''}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const designerErdNodeTypes = { designerTable: DesignerErdTableNode };
+const designerErdEdgeTypes = { designerCrowsFoot: DesignerErdCrowsFoot };
+
+function ErdPreviewInner({ tables, onClose }: { tables: DesignerTable[]; onClose: () => void }) {
+  const { fitView } = useReactFlow();
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  useEffect(() => {
+    const { nodes: n, edges: e } = buildDesignerErd(tables);
+    const pos = computeDesignerErdLayout(n, e);
+    setNodes(n.map(node => ({ ...node, position: pos.get(node.id) ?? { x: 0, y: 0 } })));
+    setEdges(e);
+    setTimeout(() => fitView({ padding: 0.12, duration: 300 }), 80);
+  }, [tables, fitView, setNodes, setEdges]);
+
+  return (
+    <div className="fixed inset-0 z-[300] flex flex-col bg-black/60 backdrop-blur-sm">
+      <div className="flex items-center gap-3 px-5 py-3 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 shrink-0">
+        <Network size={15} className="text-blue-500" />
+        <span className="font-semibold text-sm text-gray-800 dark:text-slate-100">ERD Preview</span>
+        <span className="text-[11px] text-gray-400 dark:text-slate-500">{tables.length} table{tables.length !== 1 ? 's' : ''}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={onClose}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+          >
+            <X size={12} /> Back to Designer
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        <ReactFlow
+          nodes={nodes} edges={edges}
+          onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+          nodeTypes={designerErdNodeTypes} edgeTypes={designerErdEdgeTypes}
+          fitView minZoom={0.05} maxZoom={2}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background />
+          <Controls />
+        </ReactFlow>
+      </div>
+      {tables.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <p className="text-gray-400 dark:text-slate-500 text-sm">No tables to preview — add tables in the designer first.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ErdPreviewModal({ tables, onClose }: { tables: DesignerTable[]; onClose: () => void }) {
+  return (
+    <ReactFlowProvider>
+      <ErdPreviewInner tables={tables} onClose={onClose} />
+    </ReactFlowProvider>
+  );
+}
+
+// ─── Column Editor Panel ───────────────────────────────────────────────────────
+
 function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
   table: DesignerTable;
   tables: DesignerTable[];
@@ -666,14 +877,38 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
           <thead className="sticky top-0 z-10">
             <tr className="text-left text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider bg-gray-50 dark:bg-slate-800/60">
               <th className="px-3 py-2 w-36">Name</th>
-              <th className="px-3 py-2 w-32">Type</th>
+              <th className="px-3 py-2 w-32 overflow-visible">
+                <ColHeaderTip label="Type" align="left"
+                  desc="PostgreSQL column data type. SERIAL / BIGSERIAL / SMALLSERIAL types auto-enable Auto Increment."
+                  example={"TEXT  INTEGER  UUID\nBIGSERIAL  TIMESTAMPTZ"} />
+              </th>
               <th className="px-3 py-2 w-20">Length</th>
-              <th className="px-3 py-2 text-center w-9" title="Primary Key">PK</th>
-              <th className="px-3 py-2 text-center w-9" title="Not Null">NN</th>
-              <th className="px-3 py-2 text-center w-9" title="Unique">UQ</th>
-              <th className="px-3 py-2 text-center w-9" title="Auto Increment">AI</th>
+              <th className="px-3 py-2 text-center w-9 overflow-visible">
+                <ColHeaderTip label="PK" align="center"
+                  desc="Primary Key — uniquely identifies each row. Automatically sets Not Null + Unique. Row is highlighted amber."
+                  example={"id BIGSERIAL PRIMARY KEY"} />
+              </th>
+              <th className="px-3 py-2 text-center w-9 overflow-visible">
+                <ColHeaderTip label="NN" align="center"
+                  desc="Not Null — the column must always have a value; NULL is rejected."
+                  example={"name TEXT NOT NULL"} />
+              </th>
+              <th className="px-3 py-2 text-center w-9 overflow-visible">
+                <ColHeaderTip label="UQ" align="center"
+                  desc="Unique — no two rows may share the same value in this column."
+                  example={"email TEXT UNIQUE"} />
+              </th>
+              <th className="px-3 py-2 text-center w-9 overflow-visible">
+                <ColHeaderTip label="AI" align="center"
+                  desc="Auto Increment — value is generated automatically on insert (SERIAL / BIGSERIAL). Usually paired with PK."
+                  example={"id SERIAL  →  1, 2, 3…"} />
+              </th>
               <th className="px-3 py-2 w-28">Default</th>
-              <th className="px-3 py-2 w-40">FK Reference</th>
+              <th className="px-3 py-2 w-40 overflow-visible">
+                <ColHeaderTip label="FK Reference" align="right"
+                  desc="Foreign Key — references a primary key column in another table. Click 'Set FK' to use the visual picker."
+                  example={"user_id → users.id"} />
+              </th>
               <th className="px-3 py-2 w-32">Comment</th>
               <th className="px-3 py-2 w-8"></th>
             </tr>
@@ -1460,7 +1695,7 @@ function GuidePopover() {
 
   useEffect(() => {
     if (!open) return;
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as HTMLElement)) setOpen(false); };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
@@ -1500,62 +1735,71 @@ function GuidePopover() {
             <div>
               <p className={h3}><Info size={12} className="text-blue-500" /> Workflow</p>
               <div className={sec}>
-                <p>Pick a <strong>connection</strong> → pick a <strong>database</strong> → design tables → click <strong>Execute</strong>.</p>
-                <p>All changes are <strong>local</strong> until Execute — nothing is written to the database beforehand.</p>
+                <p>Design tables <strong>locally</strong> first — no connection or database required upfront.</p>
+                <p>When ready, click <strong>Execute</strong> in the header → pick a connection + database in the modal → SQL runs against the database. Nothing is written until Execute.</p>
               </div>
             </div>
 
             <div className={div} />
 
-            {/* Navbar */}
+            {/* Layout */}
             <div>
-              <p className={h3}><Database size={12} className="text-purple-500" /> Navbar</p>
+              <p className={h3}><Layers size={12} className="text-purple-500" /> Layout</p>
               <div className={sec}>
-                <p><strong>Connection dropdown</strong> — select a saved connection. {pill('+ New Connection →')} navigates to the Connections page.</p>
-                <p><strong>Database dropdown</strong> — select a database. {pill('+ New Database…')} creates one inline without leaving this page.</p>
-                <p><span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">PostgreSQL</span> badge only appears for PostgreSQL connections.</p>
-              </div>
-            </div>
-
-            <div className={div} />
-
-            {/* Designer tab */}
-            <div>
-              <p className={h3}><Table2 size={12} className="text-blue-500" /> Designer Tab</p>
-              <div className={sec}>
-                <p><strong>Object tree (left panel)</strong></p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
-                  <li>{pill('New Schema')} (PostgreSQL only) — adds a schema node; generates <code className="text-[10px]">CREATE SCHEMA IF NOT EXISTS</code> at execute time.</li>
-                  <li>{pill('New Table')} — creates a table. For PG, schema is pre-filled from the selected schema node.</li>
-                  <li>Hover a schema header → {pill('+')} appears to add a table directly under that schema.</li>
+                  <li><strong>Left panel</strong> — mode toggle (Create / Import SQL) + schema & table tree.</li>
+                  <li><strong>Middle panel</strong> — DDL strip (selected table's SQL) + column editor.</li>
+                  <li><strong>Right panel</strong> — Saved Jobs history. Click the notch on its left edge to collapse or expand.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className={div} />
+
+            {/* Left Panel */}
+            <div>
+              <p className={h3}><Table2 size={12} className="text-blue-500" /> Left Panel</p>
+              <div className={sec}>
+                <p><strong>Create mode</strong></p>
+                <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
+                  <li>{pill('+ Schema')} — adds a schema node; generates <code className="text-[10px]">CREATE SCHEMA IF NOT EXISTS</code> at execute time.</li>
+                  <li>{pill('+ Table')} — disabled until at least one schema exists. Schema is pre-filled when adding via the schema's {pill('+')} hover button.</li>
                   <li>Hover a table row → {pill('×')} appears to delete it.</li>
                   <li>Blue link icon on a table = has outgoing FKs. Purple arrow = referenced by other tables.</li>
                 </ul>
-                <p className="mt-2"><strong>Column editor (right panel)</strong></p>
-                <p>Click any table in the tree to edit its columns. Table name and schema are editable inline in the editor header.</p>
+                <p className="mt-2"><strong>Import SQL mode</strong></p>
+                <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
+                  <li>An import strip appears in the middle panel with source tabs: {pill('Paste SQL')} · {pill('.sql')} · {pill('CSV')} · {pill('XLSX')}.</li>
+                  <li>After parsing, found tables appear below a dashed <em>Parsed · N</em> separator — click a row to edit its columns before merging.</li>
+                  <li>{pill('Merge')} moves all parsed tables into the designer tree (duplicate schema.name skipped).</li>
+                </ul>
               </div>
             </div>
 
             <div className={div} />
 
-            {/* Column flags */}
+            {/* Column Editor */}
             <div>
-              <p className={h3}><Columns size={12} className="text-teal-500" /> Column Properties</p>
-              <div className="mt-2 space-y-1.5">
-                {[
-                  ['PK', 'Primary Key', 'Auto-sets NOT NULL + UNIQUE. Row highlighted amber.'],
-                  ['NN', 'Not Null', 'Column cannot be NULL.'],
-                  ['UQ', 'Unique', 'Adds a UNIQUE constraint.'],
-                  ['AI', 'Auto Increment', 'PG: SERIAL/BIGSERIAL. MySQL: AUTO_INCREMENT. Auto-enabled for SERIAL types.'],
-                  ['Default', 'Default value', 'Expressions (NOW(), NULL, TRUE) used as-is. Plain strings are quoted.'],
-                  ['FK Ref', 'Foreign Key', 'Click "Set FK" to open the relationship picker.'],
-                  ['Comment', 'Column comment', 'PG: COMMENT ON COLUMN. MySQL: inline COMMENT in DDL.'],
-                ].map(([flag, name, note]) => (
-                  <div key={flag} className="flex items-start gap-2">
-                    <span className="shrink-0 w-11 text-center inline-block px-1 py-0.5 rounded font-mono text-[10px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{flag}</span>
-                    <span className="text-[11px] text-gray-600 dark:text-slate-300"><span className="font-medium text-gray-700 dark:text-slate-200">{name}</span> — {note}</span>
-                  </div>
-                ))}
+              <p className={h3}><Columns size={12} className="text-teal-500" /> Column Editor</p>
+              <div className={sec}>
+                <p>Click any table in the tree to open its column editor in the middle panel. The DDL strip above auto-updates to show that table's generated SQL.</p>
+                <div className="mt-2 space-y-1.5">
+                  {[
+                    ['PK', 'Primary Key', 'Auto-sets NOT NULL + UNIQUE. Row highlighted amber.'],
+                    ['NN', 'Not Null', 'Column cannot be NULL.'],
+                    ['UQ', 'Unique', 'Adds a UNIQUE constraint.'],
+                    ['AI', 'Auto Increment', 'Uses SERIAL / BIGSERIAL. Auto-enabled when type is SERIAL.'],
+                    ['Default', 'Default value', 'Expressions (NOW(), NULL, TRUE) used as-is. Plain strings are quoted.'],
+                    ['FK Ref', 'Foreign Key', 'Click "Set FK" to open the relationship picker.'],
+                    ['Comment', 'Column comment', 'Emitted as COMMENT ON COLUMN in the DDL.'],
+                  ].map(([flag, name, note]) => (
+                    <div key={flag} className="flex items-start gap-2">
+                      <span className="shrink-0 w-11 text-center inline-block px-1 py-0.5 rounded font-mono text-[10px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{flag}</span>
+                      <span className="text-[11px] text-gray-600 dark:text-slate-300"><span className="font-medium text-gray-700 dark:text-slate-200">{name}</span> — {note}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2">{pill('+ Add Column')} is at the bottom-right of the column table. FK Relationships section appears directly below it.</p>
               </div>
             </div>
 
@@ -1565,45 +1809,27 @@ function GuidePopover() {
             <div>
               <p className={h3}><Link2 size={12} className="text-blue-500" /> FK Relationship Picker</p>
               <div className={sec}>
-                <p>Click {pill('Set FK')} in the FK column to open the two-panel picker:</p>
+                <p>Click {pill('Set FK')} in the FK Ref column to open the two-panel picker:</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
-                  <li><strong>Left panel</strong> — all other tables in the designer. Click to select one.</li>
-                  <li><strong>Right panel</strong> — columns of the selected table. Amber key = PK, purple = Unique.</li>
+                  <li><strong>Left</strong> — all other tables in the designer. Click to select one.</li>
+                  <li><strong>Right</strong> — columns of the selected table. Amber key = PK, purple = Unique.</li>
                   <li>Click a column → FK set as {pill('table.column')}; picker closes automatically.</li>
-                  <li>Click the blue FK badge to reopen and change. Click {pill('×')} to remove the FK.</li>
+                  <li>Click the blue FK badge to reopen and change. Click {pill('×')} to clear the FK.</li>
                 </ul>
-                <p className="mt-1.5">A <strong>Relationship Summary</strong> below the column table shows all outgoing FKs and tables that reference this one.</p>
+                <p className="mt-1.5">The <strong>Relationship Summary</strong> below the column table lists all outgoing FKs and tables that reference this one.</p>
               </div>
             </div>
 
             <div className={div} />
 
-            {/* Import */}
+            {/* Save & Execute */}
             <div>
-              <p className={h3}><Upload size={12} className="text-emerald-500" /> Import Tab</p>
+              <p className={h3}><Save size={12} className="text-rose-500" /> Save & Execute</p>
               <div className={sec}>
-                <ul className="space-y-1.5">
-                  <li>{pill('From Database')} — load live schema; expand schemas, check tables, click Import Selected.</li>
-                  <li>{pill('From SQL')} — paste or upload a .sql file; parser previews found tables before merging.</li>
-                  <li>{pill('From XLSX')} — each sheet becomes one table; column types inferred from data.</li>
-                  <li>{pill('From CSV')} — header row = column names; types inferred from sample rows.</li>
-                </ul>
-                <p className="text-gray-400 dark:text-slate-500 text-[10px] mt-1">Tables with the same schema.name are skipped (merge strategy).</p>
-              </div>
-            </div>
-
-            <div className={div} />
-
-            {/* Execute */}
-            <div>
-              <p className={h3}><Play size={12} className="text-rose-500" /> Execute Tab</p>
-              <div className={sec}>
-                <ul className="space-y-1.5">
-                  <li><strong>DDL Preview</strong> — auto-generated CREATE TABLE SQL. Copy or download as .sql.</li>
-                  <li><strong>Seed SQL</strong> — optional INSERT statements run after DDL.</li>
-                  <li><strong>Execute</strong> — applies DDL + Seed to the selected database. Per-statement log shows results.</li>
-                  <li><strong>Save Job</strong> — saves the run as a named job. Load from Job History to restore the full design.</li>
-                </ul>
+                <p><strong>Save</strong> button (header) — appears when tables exist. Turns <span className="text-amber-500 font-semibold">amber</span> when the loaded job has unsaved changes. Label changes to <em>Save Revision</em> when saving under the same job name.</p>
+                <p className="mt-1">In Import mode, a <strong>Schema Assign</strong> dialog appears before saving if any tables still have <code className="text-[10px]">schema = public</code> — pick an existing schema or type a new one.</p>
+                <p className="mt-1"><strong>Execute</strong> button (header) — opens a modal to pick a saved connection + database, then runs the generated DDL. Execution log is shown inline and a new run record is saved to Job History on completion.</p>
+                <p className="mt-1"><strong>Saved Jobs</strong> (right panel) — grouped by job name. The {pill('Load')} button on the group card restores the design into the designer. Run rows expand with a chevron to show the execution log.</p>
               </div>
             </div>
 
@@ -1911,6 +2137,9 @@ function SchemaDesignerInner() {
   const [showExecModal, setShowExecModal] = useState(false);
   const [execModalJob, setExecModalJob] = useState<SchemaJob | null>(null);
 
+  // ERD preview
+  const [showErdPreview, setShowErdPreview] = useState(false);
+
   // Job history
   const [jobs, setJobs] = useState<SchemaJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
@@ -2194,6 +2423,12 @@ function SchemaDesignerInner() {
               >
                 <Save size={12} /> {isDirty && loadedJob ? 'Save Changes' : 'Save'}
               </button>
+              <button
+                onClick={() => setShowErdPreview(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+              >
+                <Network size={12} /> ERD Preview
+              </button>
               {loadedJob && (
                 <button
                   onClick={() => { setExecModalJob(loadedJob); setShowExecModal(true); }}
@@ -2324,7 +2559,7 @@ function SchemaDesignerInner() {
                       </button>
                     </div>
                   </div>
-                  <div className="flex-1 overflow-auto bg-gray-50 dark:bg-slate-950 px-4 py-3">
+                  <div className="flex-1 sidebar-scroll overflow-auto bg-gray-50 dark:bg-slate-950 px-4 py-3">
                     <pre className="text-[10px] font-mono text-gray-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{activeEditTableDdl}</pre>
                   </div>
                 </div>
@@ -2594,6 +2829,9 @@ function SchemaDesignerInner() {
           onClose={() => { setShowExecModal(false); setExecModalJob(null); }}
           onJobDone={() => void loadJobs()}
         />
+      )}
+      {showErdPreview && (
+        <ErdPreviewModal tables={tables} onClose={() => setShowErdPreview(false)} />
       )}
     </div>
   );

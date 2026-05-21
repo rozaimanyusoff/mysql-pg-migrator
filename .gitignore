@@ -11,5 +11,6 @@ logs/*.log
 /public/**
 !/public/
 !/public/.gitkeep
-/data/migration/runs/run_*.json
+/data/
 tsconfig.tsbuildinfo
+next-env.d.ts
