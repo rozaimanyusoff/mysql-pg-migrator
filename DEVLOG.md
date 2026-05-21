@@ -3,6 +3,14 @@
 ---
 
 ## 2026-05-21
+- **plan** — Replace `xlsx` with `exceljs` (security fix)
+  - `xlsx` (SheetJS community edition) has 2 unpatched CVEs: Prototype Pollution (GHSA-4r6h-8v6p-xvw6) and ReDoS (GHSA-5pgg-2g8v-p4x9); package is abandoned, no fix available
+  - Replace with `exceljs` — actively maintained, no known CVEs, supports read/write XLSX/CSV
+  - Affected files to update: any file that imports from `xlsx` — search `from 'xlsx'` and `require('xlsx')`
+  - API differences to handle: `exceljs` uses `workbook.xlsx.readFile()` / `workbook.getWorksheet()` / `row.values[]` instead of `XLSX.read()` / `XLSX.utils.sheet_to_json()`
+  - Steps: `npm uninstall xlsx && npm install exceljs`, update all import sites, verify XLSX export (schema-explorer styled export uses xlsx), run build
+  - Status: planned
+
 - **plan** — Data Normalization module (new module)
   - **Concept**: File-first normalization — source data from flat files (XLSX, CSV, JSON) rather than live DB connections. User uploads a file, system parses it, user configures normalization rules, then exports clean data or pushes directly into a target DB table.
   - **Core use case**: e.g. upload `employees.xlsx` → system detects `department` and `position` columns have repetitive values → suggests extracting them as lookup tables with FK references → produces normalized schema + cleaned data ready for import
