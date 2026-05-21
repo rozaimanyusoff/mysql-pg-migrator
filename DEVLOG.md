@@ -3,6 +3,199 @@
 ---
 
 ## 2026-05-21
+- **plan** — Data Normalization module (new module)
+  - **Concept**: File-first normalization — source data from flat files (XLSX, CSV, JSON) rather than live DB connections. User uploads a file, system parses it, user configures normalization rules, then exports clean data or pushes directly into a target DB table.
+  - **Core use case**: e.g. upload `employees.xlsx` → system detects `department` and `position` columns have repetitive values → suggests extracting them as lookup tables with FK references → produces normalized schema + cleaned data ready for import
+  - **Planned features**:
+    - **File ingestion** — upload XLSX, CSV, JSON; parse and display as preview table (first N rows); detect column types (string, number, date, boolean) automatically
+    - **Data profiling** — per-column stats: null count, distinct count, top N values, pattern samples; flag columns with low cardinality (candidate FK/lookup columns)
+    - **Normalization suggestions** — auto-detect repetitive string columns (distinct count < threshold relative to row count) and suggest extracting to a lookup table; user confirms, renames, or dismisses each suggestion
+    - **Schema builder** — from confirmed suggestions, generate: (a) lookup tables with `id` + `value`, (b) main table with FK columns replacing the original string columns; display as editable schema before committing
+    - **Value transformation rules** — per-column rules: trim, lowercase/uppercase, phone/email format, date unification, NULL vs empty string, boolean normalization, strip currency symbols; preview result inline before apply
+    - **Deduplication** — detect duplicate rows by user-selected key columns (exact or fuzzy); preview duplicates; strategy: keep first, keep last, merge, flag only
+    - **Export / push** — export normalized data as SQL INSERT statements, CSV, or JSON; OR push directly to a target DB connection (integrates with saved connections from connections module)
+    - **Rule profiles** — save normalization rule sets as named profiles; reuse across uploads of the same file format
+  - **Suggested pages/routes**:
+    - `src/pages/normalizer.tsx` — main page
+    - `src/pages/api/normalizer/parse.ts` — parse uploaded file, return column info + preview rows
+    - `src/pages/api/normalizer/profile.ts` — run profiling on parsed data
+    - `src/pages/api/normalizer/export.ts` — generate SQL/CSV/JSON output
+    - `src/lib/normalizer/` — parser adapters (xlsx, csv, json), rule engine, schema suggester
+  - **Priority order**: File ingestion → Data profiling + FK suggestions → Schema builder → Value transformation rules → Deduplication → Export/push → Rule profiles
+  - Status: planned
+
+
+- **fix** — Migration: job load now fully restores tableMaps, selectedMapId, srcSchema, tgtDefaultSchema, and target table highlight
+  - Root cause (source): `loadSrcDbs` + `[srcDb]` effect both called `setTableMaps([])`, overriding `setTableMaps(job.tables)` in `handleLoadJob`
+  - Root cause (target): `loadTgtDbs` overwrote the job's target database with the connection default; `[tgtDb]` effect reset `tgtDefaultSchema` to `public` instead of the job's target schema, causing the target table filter to hide the restored table and preventing the highlight
+  - Fix (source): `pendingRestoreRef = useRef<MigJob | null>(null)` — `loadSrcDbs` skips tableMaps/colsCache/selectedMapId reset; uses job db; `[srcDb]` effect skips reset, restores tableMaps + selectedMapId + srcSchema in `.then()`, nulls ref
+  - Fix (target): `pendingTgtRef = useRef<{ database: string; schema: string } | null>(null)` — `loadTgtDbs` uses job db; `[tgtDb]` effect sets `tgtDefaultSchema` from ref (so filtered table list shows the right schema), nulls ref
+  - `handleLoadJob`: handles "same connection already active" fast-path for both src and tgt; otherwise sets refs before triggering effects
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Migration: export mapping configuration as Markdown
+  - Added `handleExportJobMd()`: generates a `.md` file with job name, source/target connection metadata (no password), and a markdown table per `TableMap` showing source column → target column, types, conversion, and include flag
+  - Column source types are resolved from `colsCache` (already fetched when table was selected)
+  - Download triggered client-side via `Blob` + `URL.createObjectURL` + `<a>` click; filename is `<job-name-slugified>.md`
+  - Added "Export MD" button to header bar (disabled when no table maps configured)
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+
+- **fix** — Migration: column mapping hidden until target table explicitly selected
+  - `toggleTable` now initializes `target: { schema: tgtDefaultSchema || '', table: '' }` — no target table is auto-assumed on source click
+  - Column mapping header badge (`schema.table` + Truncate) and target preview effect both guard on `selectedMap.target.table !== ''`
+  - Column mapping editor body: three states — no source selected → "Select a source table first"; source selected but no target → "Select a target table above to map columns"; both selected → show mapping editor
+  - Target preview `useEffect` also checks `selectedMap.target.table` before fetching to avoid spurious API calls with empty key
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration: target table selection + real column mapping
+  - Added `tgtColsCache: Record<string, MigColumnInfo[]>` state to cache target table column metadata
+  - Added `tgtColsForSelected` derived value (lookups from `tgtColsCache` for current map's target)
+  - Added `selectTargetTable(schema, table)` — updates `selectedMap.target`, fetches target columns (if not cached), refreshes target preview; allows any target table to be assigned as migration destination for the current source map
+  - Target table list: all rows clickable when a source map is active; click calls `selectTargetTable` if `selectedMapId` is set, else `setSelectedMapId` for existing mappings; added "target" badge for current target, "assign" hint on hover for unmapped rows, preserved "mapped" badge for cross-mapped tables
+  - Target preview `useEffect` extended to also fetch target column metadata (`/api/migv2/columns`) on map selection change
+  - Column mapping editor: target col cell replaced with `<select>` dropdown populated from `tgtColsForSelected` when available; selecting a target col auto-fills `targetType` from that column's `rawType`; falls back to text input when target columns not yet fetched
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration: remove schema/table dropdowns from Column Mapping header
+  - Replaced schema select + dot + table select/input in the Column Mapping separator with a readonly `schema.table` label — target DB and schema are already chosen in the target connection panel, so the extra pickers were redundant
+  - Kept only the Truncate checkbox alongside the label
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Migration records panel: scrollbar position and column width
+  - Removed nested `<div className="overflow-x-auto">` wrapper from both source and target records sections — the horizontal scrollbar was appearing at the bottom of the *content* (below the last row) instead of the bottom of the *visible container*; now the single `overflow-auto panel-scroll` container handles both axes so the scrollbar sits at the container edge and shows on hover
+  - Removed `w-full` from both records `<table>` elements so table columns size to their content (`whitespace-nowrap` on cells already prevents wrapping); table expands naturally to fit data, container scrolls horizontally
+  - Removed ineffective `max-w-[120px]` from `<td>` cells (auto table layout ignores `max-width`)
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Preview API: MySQL qualified table name, PG identifier quoting, BigInt safety
+  - MySQL query changed from `` `table` `` to `` `schema`.`table` `` — tables API returns `TABLE_SCHEMA` as the schema (database name), which may differ from `conn.database`, so the simple form queried the wrong database
+  - PostgreSQL identifier quoting replaced `JSON.stringify(s)` (JSON string hack) with a proper `pgIdent(s)` helper that double-quotes identifiers and escapes embedded `"` by doubling them
+  - Added `sanitize()` helper on both PG and MySQL branches: converts `BigInt` column values to `String` so `JSON.stringify` doesn't throw (mysql2 returns BIGINT columns as JS `BigInt` by default)
+  - Files: `src/pages/api/migv2/preview.ts`
+  - Status: done
+
+- **fix** — Migration module: inline records immediate population + scrollbar visibility
+  - **Records delay fix**: `toggleTable` now creates a placeholder map with empty columns and calls `setTableMaps` + `setSelectedMapId` synchronously (before the async column fetch). The preview `useEffect` fires immediately on table click, not after column fetch completes. After columns arrive, `setTableMaps` patches only the `columns` field on the existing map entry
+  - **Column mapping loading state**: added `loadingCols && selectedMap.columns.length === 0` guard in the column mapping editor to show "Loading column mapping…" instead of empty table while columns are in flight
+  - **Scrollbar visibility**: added `.panel-scroll` CSS class to `globals.css` (same hover-reveal pattern as `.sidebar-scroll`; adds `height: 5px` for horizontal scrollbars too); applied to all scrollable panel divs in `migration.tsx` — source/target table lists, columns, records, column-mapping editor, jobs panel, run-console progress and logs
+  - Files: `src/pages/migration.tsx`, `src/styles/globals.css`
+  - Status: done
+
+- **revision** — Migration module: inline record preview (replaces modal)
+  - Removed `PreviewModal` component, `Eye` lucide import, `openPreview()` function, and all modal-related state (`previewOpen`, `previewLabel`, `previewLoading`, `previewCols`, `previewRows`)
+  - Removed hover Eye-icon buttons from both source and target table rows
+  - Added `srcPreviewCols/Rows/Loading` + `tgtPreviewCols/Rows/Loading` state
+  - Two `useEffect` hooks on `selectedMapId`: auto-fetch source records via `POST /api/migv2/preview` using `srcConn` + `selectedMap.source.schema/table`, and target records using `tgtConn` + `selectedMap.target.schema/table`; both clear on deselect
+  - Source panel lower Panel: columns list uses `flex-[2]`, records section below uses `flex-[3]` with "Records" separator header (row count / loading spinner) + sticky-header inline table
+  - Target panel lower Panel: column mapping editor uses `flex-[2]`, "Target Records" section uses `flex-[3]` with same inline table pattern
+  - Module-level `fmtVal()` helper (replaces per-component `fmt`): truncates strings >60 chars, renders NULL in muted italic, JSON-stringifies objects
+  - Files: `src/pages/migration.tsx`, `src/pages/api/migv2/preview.ts` (kept, no changes)
+  - Status: done
+
+- **revision** — Migration module: revert sync resize, add record preview
+  - **Reverted sync resize**: removed `usePanelRef`, `PanelSize`, sync refs/handlers (`onSrcTablesResize`, `onTgtTablesResize`, `isSyncing`); both source and target panels now resize independently (individual `PanelGroup orientation="vertical"`)
+  - **Record preview**: new API `POST /api/migv2/preview` accepts `{ conn: ExplorerConn, tableKey, limit? }`, queries `SELECT * FROM ... LIMIT N` (PG uses quoted schema.table, MySQL uses backtick table in connected db), returns `{ columns, rows }` capped at 200 rows; `PreviewModal` component renders sticky column-header table with row numbers, truncates values >60 chars, shows NULL in muted italic; `Eye` icon button appears on hover for every row in both source and target table lists; clicks `openPreview()` which fetches data and opens modal; clicking backdrop closes
+  - Files: `src/pages/migration.tsx`, `src/pages/api/migv2/preview.ts` (new)
+  - Status: done
+
+- **revision** — Migration module: synced resize, Migrate button outline, target table search
+  - **Synced vertical resize**: source and target panels' tables/columns split is synchronized — dragging one handle moves both; implemented with `usePanelRef()` (`panelRef` prop) + `onResize: (PanelSize) => void` callbacks; `isSyncing` ref prevents infinite feedback loop; both panels now start at `defaultSize={50}`
+  - **Migrate button**: changed from solid `bg-blue-600` to outline variant (`border border-blue-500 text-blue-600 bg-transparent hover:bg-blue-50`)
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration module: target table list, search fields, vertical resize handles
+  - Added `tgtSearch` state + search input in target panel (same style as source, focus ring violet)
+  - Target panel "Tables" section now shows actual target DB tables (`filteredTgtTables` derived from `tgtTables`, filtered by `tgtDefaultSchema` when PG, and by `tgtSearch`); tables with an existing source→target mapping show a violet "mapped" badge and a checkbox (include/exclude); clicking a mapped table selects the mapping (shows column editor); unmapped tables are read-only/dimmed
+  - Replaced `flex-[3]/flex-[2]` static split with nested `PanelGroup orientation="vertical"` inside both source and target panels; horizontal `PanelResizeHandle` (`cursor-row-resize`, blue for source, violet for target) between tables panel and columns/mapping panel; each sub-panel has `minSize={15}` to prevent full collapse
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration module: full UI overhaul — 3-panel layout, remove tabs
+  - Removed "Jobs" and "Execute" tabs; page is now a single flat layout with no tab bar
+  - **Source panel** (left, blue accent): connection picker → DB picker → schema picker (PG only, auto-detected) → flat table list with search + checkboxes; separator + source columns read-only view (name, type, PK/FK/NN badges) for selected table
+  - **Target panel** (right, violet accent): connection picker → DB picker → schema picker (PG only, `tgtDefaultSchema`) → mapped tables list (source→target pairs, include checkbox); separator + column mapping editor (same as old "Column Mapping" tab but now inline) with per-row target schema/table pickers + truncate checkbox
+  - **Saved Jobs panel** (collapsible right sidebar, `w-60`/`w-9`): toggles with chevron button; collapsed state shows vertical "Saved Jobs" label; lists all saved jobs with load/delete; active job highlighted
+  - **Run console** (bottom drawer, `h-260px`): appears when `currentRun` is set; shows status badge, row counts, rollback + export-md buttons, per-table progress bars + live log terminal; dismissed with X button
+  - Source panel uses `srcSchema` state (auto-set to first schema on table load) to filter tables; schema picker only shown for PG sources
+  - Replaced `expandedSchemas` tree with flat filtered table list; removed `activeTab` state and `ActiveTab` type
+  - Used `react-resizable-panels` PanelGroup (orientation="horizontal") for source + target; jobs panel uses CSS `transition-[width]` for collapse animation
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Sync: remove dual DB/Schema panel state, clean up TypeScript errors
+  - Cancelled dual DB/Schema panel mode: source and target use identical DB/schema, so separate selection is unnecessary; reverted `DatabasePanel` and `SchemaPanel` to single-mode signatures
+  - Removed `tgtSchema` and `tgtDb` state variables; `tgtConnId` remains for target connection selection
+  - Removed leftover dual-mode props (`tgtConn`, `tgtValue`, `onTgtChange`, `tgtDatabase`) from `DatabasePanel` and `SchemaPanel` render calls
+  - `handleSync` now passes `database` (not `tgtDb`) for both source and target in `connToCfg`; `saveHistory` likewise uses `database` for `target_db`
+  - `canRun` for sync: removed `tgtDb` guard, now `tgtConn && conn.db_type === tgtConn.db_type`
+  - `ConnectionsPanel` `onTgtChange` simplified to just `setTgtConnId(id)`
+  - Files: `src/pages/export-import.tsx`
+  - Status: done
+
+- **revision** — Sync: cross-DB alert, dual DB/Schema panels, per-table progress bar
+  - **Cross-DB alert dialog** (`CrossDbAlertModal`): fires via `useEffect` + ref when source and target connection DB types differ (MySQL↔PostgreSQL); modal shows both types with arrow, explains to use Migration module; dismissed with "OK, understood"; `canRun` is also blocked at the Sync button level (`conn.db_type === tgtConn.db_type`)
+  - **Dual DB & Schema panels for sync**: `DatabasePanel` extended with optional `tgtConn/tgtValue/onTgtChange` props; renders "Source DB" (purple) + "Target DB" (violet) sections when in sync mode; each section loads its own database list independently via `fetchDbs()`; similarly `SchemaPanel` extended with `tgtConn/tgtDatabase/tgtValue/onTgtChange`; renders "Src Schema" (teal) + "Tgt Schema" (violet) split; PG-only restriction applies per-section; "All schemas" option present in both; new state added: `tgtSchema`
+  - **Sync progress bar**: `syncProgress` state `{ current, total, label }`; `handleSync` rewritten to iterate per-table (one API call per table), updating progress before/after each; progress bar (0–100%) appears on the selected target database row in the DB panel (violet bar below the db button); percentage shown as text; bar animates with `transition-all duration-300`; `setSyncProgress(null)` on completion
+  - **Removed**: `DatabaseSyncSelect` component (replaced by DatabasePanel dual mode); "Target Database" section from Panel 4 (was redundant); `typeMismatch` derived variable (replaced by ref-based useEffect)
+  - Files: `src/pages/export-import.tsx`
+  - Status: done
+
+- **revision** — Export & Import: extend resizable to panel 4 + dual-connection panel for sync
+  - **Panels 2–3–4 resizable**: merged the fixed `w-80` PanelGroup wrapper into a single `flex-1` `PanelGroup` covering Panel 2 (DB), Panel 3 (Schema), and Panel 4 (Tables+Workspace); added a second `PanelResizeHandle` between panels 3 and 4; default sizes: DB=24%, Schema=18%, Tables=58%; removed `border-r` from SchemaPanel (replaced by handle); Panel 4 div gets `border-l` for visual separation
+  - **Sync dual-connection panel**: `ConnectionsPanel` now accepts optional `tgtValue` + `onTgtChange` props; when provided (Sync tab only), renders two sections — Source (blue highlight) and Target (violet highlight) — each with the full connection list; target connection select removed from Panel 4's sync section; Panel 4 now only shows "Target Database" selector (`DatabaseSyncSelect`) + type-mismatch warning
+  - Files: `src/pages/export-import.tsx`
+  - Status: done
+
+- **revision** — Export & Import: 5 UX improvements — toolbar tooltips, tab underline style, resizable panels 2–3, scrollbar on hover, Export outline button
+  - **Toolbar button tooltips** (`BtnTip` component): hover tooltip with full name + purpose on S+D ("Schema + Data — DDL and all rows"), Schema ("Schema only — DDL, no row data"), Data ("Data only — INSERT statements, no DDL"), Filter ("WHERE filter — applies a WHERE clause to all data SELECT queries"); tooltips appear below the button; Sync tab's Include buttons share same tooltips
+  - **Active tab style**: Export/Import/Sync tab buttons changed from `border-emerald-400 bg-emerald-50` (green border box) to `border-b-2 border-blue-500 text-blue-600` underline style, matching schema-explorer's tab bar convention; `self-stretch` ensures underline aligns with the toolbar bottom border
+  - **Resizable panels 2–3**: installed `react-resizable-panels` v4; Panels 2 (Database) and 3 (Schema) are now inside a `<PanelGroup orientation="horizontal">` with a 1px `<Separator>` resize handle that turns blue on hover; wrapped in a `w-80 shrink-0 h-full` container; DatabasePanel and SchemaPanel changed from fixed `w-44`/`w-36` to `w-full h-full`; border-r responsibility moved from DatabasePanel to the PanelGroup wrapper
+  - **Scrollbar on hover**: `sidebar-scroll` class was already applied to all panel scroll areas (ConnectionsPanel, DatabasePanel, SchemaPanel, SavedJobsPanel, table list in Panel 4) — confirmed present, no changes needed
+  - **Export button outline**: Export run button changed from `bg-blue-600 hover:bg-blue-700 text-white` (solid fill) to `border border-blue-500 text-blue-600 bg-transparent hover:bg-blue-50` (outline); Import and Sync buttons remain solid (emerald/violet)
+  - Files: `src/pages/export-import.tsx`, `package.json`
+  - Status: done
+
+- **revision** — Export & Import: full layout redesign — 5-panel flow, tab header options, Saved Jobs
+  - **Layout**: replaced 2-column card layout with a full-screen 5-panel horizontal flow matching schema designer/explorer style; sticky header + toolbar row + panels fill remaining height
+  - **Panel 1 (Connection, w-52)**: clickable list of all saved connections with DB type badge (PG/MySQL), host, port; click to select/deselect
+  - **Panel 2 (Database, w-44)**: clickable list of databases for selected connection; auto-loads on connection pick; refresh button; `+ New Database…` inline create shown for Import tab only
+  - **Panel 3 (Schema, w-36)**: PostgreSQL-only schema list fetched from `/api/schema-explorer/schemas`; "All schemas" default; filters table list in Panel 4; greyed out with "PostgreSQL only" for MySQL; hidden for Import tab
+  - **Panel 4 (Tables + workspace, flex-1)**: Export/Sync — scrollable table list with All/Custom checkbox toggle, row counts, >50k amber warning; Import — SQL/Excel input area; SQL result (Export) and execution log (Import/Sync) shown below as collapsible sections; Sync shows inline target connection/database pickers at top of panel
+  - **Panel 5 (Saved Jobs, collapsible)**: renamed from History; notch on left edge collapses to w-6 strip; shows tab-filtered history entries with status badge, time, source/target db, table count, format, conflict; delete button per entry; auto-refreshes after each operation via `refreshKey`
+  - **Toolbar**: tab buttons (Export/Import/Sync) + tab-specific options inline + run button + Guide popover; Export: Include (S+D/Schema/Data) + Format (SQL/CSV) + Filter toggle; Import: Input mode (SQL/Excel) + Preview button; Sync: Include + Conflict strategy (Insert/Truncate/Upsert); WHERE filter appears as an amber row below toolbar when toggled
+  - **GuidePopover**: 5-section guide (Navigation, Export, Import, Sync, Saved Jobs); same style as schema designer guide
+  - **State lifted to main page**: all connection, db, schema, table, option state lives in `ExportImportPage`; tab switch resets log/result/error only; connection/db/schema/table selection persists
+  - **Table data source**: switched from `/api/export-import/tables` to `/api/schema-explorer/tables` which returns `{ schema, name, rowCount }`; schema filter passed as `schemas[]` param
+  - Files: `src/pages/export-import.tsx` (full rewrite)
+  - Status: done
+
+- **implement** — Schema Designer: 3 UX enhancements — DDL scrollbar, column header tooltips, ERD Preview
+  - **DDL Generator scrollbar**: applied `sidebar-scroll` class to the DDL strip scroll area — scrollbar now only appears on mouseover, matching left panel behaviour
+  - **Column header tooltips** (`ColHeaderTip` component): hover tooltip with description + code example on Type, PK, NN, UQ, AI, FK Reference headers; tooltip appears above the sticky thead (z-[200]); FK Reference aligns right, Type aligns left, others centre
+  - **ERD Preview modal** (`ErdPreviewModal` / `ErdPreviewInner`): full-screen ReactFlow canvas rendered from current `tables[]` state; uses crow's foot edges (`DesignerErdCrowsFoot`) and hierarchical auto-layout (`computeDesignerErdLayout`); `DesignerErdTableNode` shows column name, type, PK/FK badge; "Back to Designer" button closes modal and returns to full designer state; button added to toolbar between Save and Execute (blue outline); no state is lost when closing
+  - Resolved `Node` type conflict between `@xyflow/react` and DOM `Node` — changed `as Node` to `as HTMLElement` in GuidePopover click-outside handler
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
+- **revision** — Schema Designer: GuidePopover rewritten to reflect current feature set
+  - Replaced outdated 7-section guide (Workflow / Navbar / Designer Tab / Column Properties / FK Picker / Import Tab / Execute Tab) with accurate 6-section guide (Workflow / Layout / Left Panel / Column Editor / FK Picker / Save & Execute)
+  - Removed Navbar section (connection-free designer has no connection/DB dropdowns in header)
+  - Workflow updated: connection-free design-first flow; Execute opens modal to pick connection + DB
+  - New Layout section: describes 3-panel layout (left tree, middle DDL strip + column editor, right Saved Jobs with collapsible notch)
+  - Left Panel section: Create mode (+ Schema / + Table) and Import SQL mode (source tabs in middle strip → parsed list → Merge)
+  - Column Editor section: merged old Designer Tab + Column Properties; includes `+ Add Column` at bottom-right, FK section below; removed MySQL references (AI now PG SERIAL-only)
+  - Save & Execute section: Save button dirty tracking, Save Revision label, Schema Assign modal, Execute modal with connection picker, Saved Jobs Load button and chevron log expand
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
 - **revision** — Schema Explorer: Styled XLSX export + UI polish
   - Refactored XLSX export (`src/pages/api/schema-explorer/export.ts`) with styled workbook: title row, generated timestamp, blue column headers, per-table group rows, alternating data row fill, and outer/inner borders via helper functions (`makeCell`, `setRange`, `THIN`, `MEDIUM`)
   - Column queries batched per connection (single query for all selected tables) instead of one query per table — improves perf on large selections; both PG and MySQL paths updated
