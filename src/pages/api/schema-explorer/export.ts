@@ -1,32 +1,54 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyAccessToken } from '../../../lib/auth-store';
 import { withPg, withMysql, type ExplorerConn } from '../../../lib/explorer-db';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
-// ── XLSX style helpers ────────────────────────────────────────────────────────
-const THIN = (rgb = 'D1D5DB') => ({ style: 'thin' as const, color: { rgb } });
-const MEDIUM = (rgb = '2563EB') => ({ style: 'medium' as const, color: { rgb } });
+const argb = (rgb: string) => `FF${rgb}`;
 
-const border = (rgb = 'D1D5DB') => ({ top: THIN(rgb), bottom: THIN(rgb), left: THIN(rgb), right: THIN(rgb) });
-const outerBorder = (innerRgb = 'D1D5DB', outerRgb = '2563EB') => ({
-  top: MEDIUM(outerRgb), bottom: MEDIUM(outerRgb),
-  left: MEDIUM(outerRgb), right: MEDIUM(outerRgb),
-  ...{ inner: THIN(innerRgb) }
-});
+type BorderStyle = ExcelJS.Border;
+const thinBorder = (rgb = 'D1D5DB'): BorderStyle => ({ style: 'thin', color: { argb: argb(rgb) } });
 
-function makeCell(value: string | number | boolean, s: object): XLSX.CellObject {
-  const t = typeof value === 'number' ? 'n' : typeof value === 'boolean' ? 'b' : 's';
-  return { v: value, t, s } as XLSX.CellObject;
-}
+const allThin = (rgb = 'D1D5DB') => ({ top: thinBorder(rgb), bottom: thinBorder(rgb), left: thinBorder(rgb), right: thinBorder(rgb) });
 
-function setRange(ws: XLSX.WorkSheet, rows: (string | number | boolean | null)[][], startRow = 0) {
-  rows.forEach((row, ri) => {
-    row.forEach((val, ci) => {
-      if (val === null) return;
-      const addr = XLSX.utils.encode_cell({ r: startRow + ri, c: ci });
-      if (!ws[addr]) ws[addr] = { v: val, t: typeof val === 'number' ? 'n' : 's' } as XLSX.CellObject;
-    });
-  });
+type CellStyle = {
+  font?: Partial<ExcelJS.Font>;
+  fill?: ExcelJS.Fill;
+  border?: Partial<ExcelJS.Borders>;
+  alignment?: Partial<ExcelJS.Alignment>;
+};
+
+const TITLE_STYLE: CellStyle = {
+  font: { bold: true, size: 14, color: { argb: argb('FFFFFF') } },
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: argb('1D4ED8') } },
+  alignment: { horizontal: 'center' },
+};
+const GEN_STYLE: CellStyle = {
+  font: { italic: true, size: 9, color: { argb: argb('6B7280') } },
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: argb('F8FAFC') } },
+};
+const COL_STYLE: CellStyle = {
+  font: { bold: true, color: { argb: argb('FFFFFF') } },
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: argb('2563EB') } },
+  border: allThin('93C5FD'),
+  alignment: { horizontal: 'center' },
+};
+const TBL_STYLE: CellStyle = {
+  font: { bold: true, color: { argb: argb('1E3A5F') } },
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: argb('DBEAFE') } },
+  border: allThin('93C5FD'),
+};
+const DATA_STYLE: CellStyle = { border: allThin(), alignment: { wrapText: false } };
+const DATA_ALT_STYLE: CellStyle = {
+  border: allThin(),
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: argb('F8FAFC') } },
+};
+
+function styleCell(cell: ExcelJS.Cell, style: CellStyle, value?: string | number | boolean) {
+  if (value !== undefined) cell.value = value;
+  if (style.font) cell.font = style.font as ExcelJS.Font;
+  if (style.fill) cell.fill = style.fill;
+  if (style.border) cell.border = style.border as ExcelJS.Borders;
+  if (style.alignment) cell.alignment = style.alignment as ExcelJS.Alignment;
 }
 
 type ExportFormat = 'sql' | 'xlsx';
@@ -49,14 +71,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     if (format === 'xlsx') {
-      // Collect all column info grouped by table key
       const tableData = new Map<string, (string | number | boolean)[][]>();
       for (const key of tableKeys) tableData.set(key, []);
 
       if (conn.type === 'postgresql') {
-        const schemas = [...new Set(tableKeys.map(k => (k.includes('.') ? k.split('.')[0] : 'public')))];
-        const tableNames = tableKeys.map(k => (k.includes('.') ? k.split('.')[1] : k));
-
         await withPg(conn, async (client) => {
           const keySet = new Set(tableKeys);
           const schemas = [...new Set(tableKeys.map(k => k.split('.')[0]))];
@@ -121,65 +139,53 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       // ── Build styled workbook ──────────────────────────────────────────────
-      const COLS = ['Schema','Table','Column','Type','Nullable','Default','PK','FK','Comment'];
-      const N = COLS.length; // 9
+      const COLS = ['Schema', 'Table', 'Column', 'Type', 'Nullable', 'Default', 'PK', 'FK', 'Comment'];
+      const N = COLS.length;
 
-      const TITLE_S = { font: { bold: true, sz: 14, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1D4ED8' }, patternType: 'solid' }, alignment: { horizontal: 'center' } };
-      const GEN_S   = { font: { italic: true, sz: 9, color: { rgb: '6B7280' } }, fill: { fgColor: { rgb: 'F8FAFC' }, patternType: 'solid' } };
-      const COL_S   = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '2563EB' }, patternType: 'solid' }, border: border('93C5FD'), alignment: { horizontal: 'center' } };
-      const TBL_S   = { font: { bold: true, color: { rgb: '1E3A5F' } }, fill: { fgColor: { rgb: 'DBEAFE' }, patternType: 'solid' }, border: border('93C5FD') };
-      const DATA_S  = { border: border(), alignment: { wrapText: false } };
-      const DATA_ALT= { border: border(), fill: { fgColor: { rgb: 'F8FAFC' }, patternType: 'solid' } };
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Schema Overview');
 
-      const ws: XLSX.WorkSheet = {};
-      let row = 0;
+      let row = 1; // exceljs is 1-indexed
 
       // Title row
-      ws[XLSX.utils.encode_cell({ r: row, c: 0 })] = makeCell('Schema Overview', TITLE_S);
-      for (let c = 1; c < N; c++) ws[XLSX.utils.encode_cell({ r: row, c })] = makeCell('', TITLE_S);
+      for (let c = 1; c <= N; c++) styleCell(ws.getCell(row, c), TITLE_STYLE, c === 1 ? 'Schema Overview' : '');
+      ws.mergeCells(row, 1, row, N);
       row++;
 
       // Generated row
-      ws[XLSX.utils.encode_cell({ r: row, c: 0 })] = makeCell(`Generated: ${new Date().toISOString().slice(0,19).replace('T',' ')}  |  Tables: ${tableKeys.length}`, GEN_S);
-      for (let c = 1; c < N; c++) ws[XLSX.utils.encode_cell({ r: row, c })] = makeCell('', GEN_S);
+      const genText = `Generated: ${new Date().toISOString().slice(0, 19).replace('T', ' ')}  |  Tables: ${tableKeys.length}`;
+      for (let c = 1; c <= N; c++) styleCell(ws.getCell(row, c), GEN_STYLE, c === 1 ? genText : '');
+      ws.mergeCells(row, 1, row, N);
       row++;
+
       row++; // blank row
 
       const colHeaderRow = row;
 
       // Column headers
-      COLS.forEach((label, c) => { ws[XLSX.utils.encode_cell({ r: row, c })] = makeCell(label, COL_S); });
+      COLS.forEach((label, i) => styleCell(ws.getCell(row, i + 1), COL_STYLE, label));
       row++;
 
       // Per-table groups
       for (const key of tableKeys) {
         const rows = tableData.get(key) ?? [];
-        // Table separator header
         const tblLabel = `  ${key}  (${rows.length} columns)`;
-        for (let c = 0; c < N; c++) ws[XLSX.utils.encode_cell({ r: row, c })] = makeCell(c === 0 ? tblLabel : '', TBL_S);
+        for (let c = 1; c <= N; c++) styleCell(ws.getCell(row, c), TBL_STYLE, c === 1 ? tblLabel : '');
         row++;
-        // Data rows
         rows.forEach((dataRow, ri) => {
-          const s = ri % 2 === 0 ? DATA_S : DATA_ALT;
-          dataRow.forEach((val, c) => { ws[XLSX.utils.encode_cell({ r: row, c })] = makeCell(String(val ?? ''), s); });
+          const s = ri % 2 === 0 ? DATA_STYLE : DATA_ALT_STYLE;
+          dataRow.forEach((val, ci) => styleCell(ws.getCell(row, ci + 1), s, String(val ?? '')));
           row++;
         });
       }
 
-      ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: row - 1, c: N - 1 } });
-      ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: N - 1 } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: N - 1 } },
-      ];
-      ws['!cols'] = [16, 22, 24, 22, 10, 18, 5, 5, 32].map(wch => ({ wch }));
-      ws['!freeze'] = { xSplit: 0, ySplit: colHeaderRow + 1 };
+      [16, 22, 24, 22, 10, 18, 5, 5, 32].forEach((width, i) => { ws.getColumn(i + 1).width = width; });
+      ws.views = [{ state: 'frozen', xSplit: 0, ySplit: colHeaderRow }];
 
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Schema Overview');
-      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', cellStyles: true });
+      const buf = await wb.xlsx.writeBuffer();
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', 'attachment; filename="schema-overview.xlsx"');
-      return res.status(200).send(buf);
+      return res.status(200).send(Buffer.from(buf));
     }
 
     // SQL migration export
@@ -235,9 +241,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return `  ${c.column_name} ${typeDef}${notNull}${def}`;
           });
 
-          if (pks.size)
-            colDefs.push(`  PRIMARY KEY (${[...pks].join(', ')})`);
-
+          if (pks.size) colDefs.push(`  PRIMARY KEY (${[...pks].join(', ')})`);
           fkRows.forEach(fk => {
             colDefs.push(
               `  CONSTRAINT ${fk.constraint_name} FOREIGN KEY (${fk.from_col}) REFERENCES ${fk.ref_schema}.${fk.ref_table}(${fk.ref_col})`

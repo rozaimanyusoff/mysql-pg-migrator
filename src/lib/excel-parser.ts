@@ -45,19 +45,45 @@ export function inferPgType(values: string[]): PgColumnType {
   return 'TEXT';
 }
 
+function cellToStr(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === 'object') {
+    if ('richText' in (value as any)) return (value as any).richText.map((r: any) => r.text).join('');
+    if ('result' in (value as any)) return String((value as any).result ?? '');
+    if ('text' in (value as any)) return String((value as any).text);
+  }
+  return String(value);
+}
+
 export async function parseExcelFile(file: File): Promise<ParsedTable[]> {
-  const XLSX = (await import('xlsx')).default;
+  const ExcelJS = (await import('exceljs')).default;
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array', raw: false });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
   const tables: ParsedTable[] = [];
 
-  for (const sheetName of workbook.SheetNames) {
-    const ws = workbook.Sheets[sheetName];
-    const raw = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '', raw: false });
+  for (const worksheet of workbook.worksheets) {
+    const sheetName = worksheet.name;
+    const raw: string[][] = [];
+    let maxCols = 0;
+
+    worksheet.eachRow((row) => {
+      // row.values is 1-indexed; index 0 is undefined
+      const vals = (row.values as unknown[]).slice(1).map(cellToStr);
+      maxCols = Math.max(maxCols, vals.length);
+      raw.push(vals);
+    });
+
+    // Pad all rows to same width
+    for (const row of raw) {
+      while (row.length < maxCols) row.push('');
+    }
+
     if (raw.length < 2) continue;
 
     const headers = raw[0].map(String);
-    const dataRows = raw.slice(1).filter((row) => row.some((c) => String(c).trim() !== ''));
+    const dataRows = raw.slice(1).filter((row) => row.some((c) => c.trim() !== ''));
     if (headers.length === 0 || dataRows.length === 0) continue;
 
     const validColIdx = headers.map((h, i) => ({ h, i })).filter(({ h }) => h.trim() !== '');

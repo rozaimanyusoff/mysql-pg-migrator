@@ -12,7 +12,10 @@ import {
   Network,
 } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
+import { Tooltip } from '../components/Tooltip';
 import { useAuth } from '../lib/auth-context';
+import { useAlert } from '../lib/alert-context';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { suggestTargetType, isPkLikeSerial } from '../lib/migv2/type-map';
 import type { MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigRun, IdConversion } from '../lib/migv2/types';
 import type { MigTableInfo } from './api/migv2/tables';
@@ -116,6 +119,7 @@ function ConnSelect({ connections, value, onChange, onNew, accent = 'blue' }: {
 export default function Migration() {
   useAuth();
   const router = useRouter();
+  const { showError, showWarning } = useAlert();
 
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
 
@@ -154,6 +158,7 @@ export default function Migration() {
   const [colsCache, setColsCache] = useState<Record<string, MigColumnInfo[]>>({});
   const [loadingCols, setLoadingCols] = useState(false);
   const [dirty, setDirty] = useState(false);
+  useUnsavedGuard(dirty, 'This job has unsaved changes that will be lost if you leave.\nSave the job first or discard changes.');
 
   // ── Jobs ──────────────────────────────────────────────────────────────────────
   const [jobs, setJobs] = useState<MigJobSummary[]>([]);
@@ -345,6 +350,7 @@ export default function Migration() {
         return {
           sourceCol: c.name,
           targetCol: c.name,
+          targetName: null,
           targetType: suggestTargetType(c.rawType, srcConn.type, tgtConn.type),
           nullable: c.nullable,
           defaultValue: c.defaultValue,
@@ -381,7 +387,7 @@ export default function Migration() {
     setTableMaps(prev => prev.map(m => {
       if (m.id !== mapId) return m;
       const col: ColumnMap = {
-        sourceCol: null, targetCol: 'new_column',
+        sourceCol: null, targetCol: 'new_column', targetName: null,
         targetType: tgtConn.type === 'postgresql' ? 'TEXT' : 'VARCHAR(255)',
         nullable: true, defaultValue: null, include: true, conversion: 'keep', fkRef: null,
       };
@@ -711,75 +717,77 @@ export default function Migration() {
         {/* Body */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
 
-          {/* Source + Target resizable */}
-          <PanelGroup orientation="horizontal" className="flex-1 min-w-0 h-full">
+          {/* Main workspace: vertical split (tables top / columns+mapping bottom) */}
+          <PanelGroup orientation="vertical" className="flex-1 min-w-0 min-h-0">
 
-            {/* ── SOURCE PANEL ─────────────────────────────────────────── */}
-            <Panel defaultSize={50} minSize={22}>
-              <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-slate-900">
+            {/* ── TOP ROW: source + target connection + tables ────────── */}
+            <Panel defaultSize={50} minSize={25}>
+              <PanelGroup orientation="horizontal" className="h-full">
 
-                {/* Source header */}
-                <div className="shrink-0 p-3 border-b border-gray-200 dark:border-slate-800 bg-blue-50/50 dark:bg-blue-950/10">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 flex-1">Source</span>
-                    {srcConnecting && <Loader2 size={10} className="animate-spin text-gray-400" />}
-                    {srcConnected && !srcConnecting && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-                        <Check size={9} /> Connected
-                      </span>
-                    )}
-                    {srcError && !srcConnecting && (
-                      <span className="text-[10px] text-rose-500 truncate max-w-[100px]" title={srcError}>{srcError}</span>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <ConnSelect connections={connections} value={srcConnId}
-                      onChange={id => setSrcConnId(id)} onNew={() => void router.push('/connections')} accent="blue" />
-                    <div className="flex items-center gap-1.5">
-                      {srcConnId && (srcLoadingDbs
-                        ? <Loader2 size={11} className="animate-spin text-gray-400" />
-                        : (
-                          <select value={srcDb} onChange={e => setSrcDb(e.target.value)}
-                            className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer font-mono">
-                            {!srcDb && <option value="">— select db —</option>}
-                            {srcDbs.map(d => <option key={d} value={d}>{d}</option>)}
-                          </select>
-                        )
-                      )}
-                      {srcConnected && srcIsPg && srcSchemaList.length > 0 && (
-                        <select value={srcSchema} onChange={e => setSrcSchema(e.target.value)}
-                          className="w-24 shrink-0 px-2 py-1 text-[11px] rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 focus:outline-none cursor-pointer font-mono">
-                          {srcSchemaList.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      )}
+                {/* ── SOURCE PANEL ─────────────────────────────────────── */}
+                <Panel defaultSize={50} minSize={22}>
+                  <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-slate-900">
+
+                    {/* Source header */}
+                    <div className="shrink-0 p-3 border-b border-gray-200 dark:border-slate-800 bg-blue-50/50 dark:bg-blue-950/10">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 flex-1">Source</span>
+                        {srcConnecting && <Loader2 size={10} className="animate-spin text-gray-400" />}
+                        {srcConnected && !srcConnecting && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            <Check size={9} /> Connected
+                          </span>
+                        )}
+                        {srcError && !srcConnecting && (
+                          <span className="text-[10px] text-rose-500 truncate max-w-[100px]" title={srcError}>{srcError}</span>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <ConnSelect connections={connections} value={srcConnId}
+                          onChange={id => setSrcConnId(id)} onNew={() => void router.push('/connections')} accent="blue" />
+                        <div className="flex items-center gap-1.5">
+                          {srcConnId && (srcLoadingDbs
+                            ? <Loader2 size={11} className="animate-spin text-gray-400" />
+                            : (
+                              <select value={srcDb} onChange={e => setSrcDb(e.target.value)}
+                                className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer font-mono">
+                                {!srcDb && <option value="">— select db —</option>}
+                                {srcDbs.map(d => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                            )
+                          )}
+                          {srcConnected && srcIsPg && srcSchemaList.length > 0 && (
+                            <select value={srcSchema} onChange={e => setSrcSchema(e.target.value)}
+                              className="w-24 shrink-0 px-2 py-1 text-[11px] rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 focus:outline-none cursor-pointer font-mono">
+                              {srcSchemaList.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          )}
+                        </div>
+                        {srcDbError && <span className="text-[10px] text-rose-500">{srcDbError}</span>}
+                      </div>
                     </div>
-                    {srcDbError && <span className="text-[10px] text-rose-500">{srcDbError}</span>}
-                  </div>
-                </div>
 
-                {/* Tables label + search */}
-                <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-gray-100 dark:border-slate-800">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <Table2 size={10} className="text-blue-400 shrink-0" />
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 flex-1">Tables</span>
-                    {filteredSrcTables.length > 0 && (
-                      <span className="text-[10px] text-gray-400">{filteredSrcTables.length}</span>
-                    )}
-                    {loadingCols && <Loader2 size={10} className="animate-spin text-gray-400" />}
-                  </div>
-                  <div className="relative">
-                    <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input value={srcSearch} onChange={e => setSrcSearch(e.target.value)}
-                      placeholder="Filter tables…"
-                      className="w-full pl-6 pr-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                  </div>
-                </div>
+                    {/* Tables label + search */}
+                    <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-gray-100 dark:border-slate-800">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Table2 size={10} className="text-blue-400 shrink-0" />
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 flex-1">Tables</span>
+                        {filteredSrcTables.length > 0 && (
+                          <span className="text-[10px] text-gray-400">{filteredSrcTables.length}</span>
+                        )}
+                        {loadingCols && <Loader2 size={10} className="animate-spin text-gray-400" />}
+                      </div>
+                      <div className="relative">
+                        <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input value={srcSearch} onChange={e => setSrcSearch(e.target.value)}
+                          placeholder="Filter tables…"
+                          className="w-full pl-6 pr-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </div>
+                    </div>
 
-                {/* Resizable: tables / columns */}
-                <PanelGroup orientation="vertical" className="flex-1 min-h-0">
-                  <Panel defaultSize={50} minSize={15}>
-                    <div className="h-full overflow-y-auto panel-scroll">
+                    {/* Tables list */}
+                    <div className="flex-1 min-h-0 overflow-y-auto panel-scroll">
                       {!srcConnected ? (
                         <div className="flex flex-col items-center justify-center h-full gap-2 px-4 text-center">
                           <Database size={28} className="text-gray-200 dark:text-slate-700" />
@@ -811,169 +819,75 @@ export default function Migration() {
                         );
                       })}
                     </div>
-                  </Panel>
+                  </div>
+                </Panel>
 
-                  <PanelResizeHandle className="h-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-row-resize transition-colors" />
+                <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
 
-                  <Panel defaultSize={50} minSize={15}>
-                    <div className="flex flex-col h-full overflow-hidden">
-                      {/* Columns header */}
-                      <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60">
-                        <Layers size={10} className="text-gray-400 shrink-0" />
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex-1">Columns</span>
-                        {selectedMap && (
-                          <span className="text-[10px] text-gray-400 font-mono truncate max-w-[120px]">
-                            {selectedMap.source.schema}.{selectedMap.source.table}
+                {/* ── TARGET PANEL ─────────────────────────────────────── */}
+                <Panel defaultSize={50} minSize={22}>
+                  <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-slate-900">
+
+                    {/* Target header */}
+                    <div className="shrink-0 p-3 border-b border-gray-200 dark:border-slate-800 bg-violet-50/50 dark:bg-violet-950/10">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-2 h-2 rounded-full bg-violet-500 shrink-0" />
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-400 flex-1">Target</span>
+                        {tgtConnecting && <Loader2 size={10} className="animate-spin text-gray-400" />}
+                        {tgtConnected && !tgtConnecting && (
+                          <span className="inline-flex items-center gap=0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            <Check size={9} /> Connected
                           </span>
                         )}
-                      </div>
-                      <div className="flex-[2] min-h-0 overflow-y-auto panel-scroll">
-                        {!selectedMap ? (
-                          <div className="flex items-center justify-center h-full text-[11px] text-gray-400 dark:text-slate-500 italic">
-                            Select a table to view columns
-                          </div>
-                        ) : srcColsForSelected.length === 0 ? (
-                          <div className="flex items-center justify-center h-full text-[11px] text-gray-400 dark:text-slate-500 animate-pulse">
-                            Loading columns…
-                          </div>
-                        ) : srcColsForSelected.map(col => (
-                          <div key={col.name} className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-50 dark:border-slate-800/40 hover:bg-gray-50 dark:hover:bg-slate-800/20">
-                            <span className="text-[11px] font-mono text-gray-700 dark:text-slate-300 flex-1 truncate">{col.name}</span>
-                            <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 shrink-0">{col.rawType}</span>
-                            <div className="flex items-center gap-0.5 shrink-0">
-                              {col.isPk && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 font-semibold">PK</span>}
-                              {col.isFk && <span className="text-[9px] px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold">FK</span>}
-                              {!col.nullable && <span className="text-[9px] px-1 py-0.5 rounded bg-rose-100 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400 font-semibold">NN</span>}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Records header */}
-                      <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-t border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60">
-                        <Database size={10} className="text-gray-400 shrink-0" />
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex-1">Records</span>
-                        {srcPreviewLoading && <Loader2 size={10} className="animate-spin text-gray-400" />}
-                        {!srcPreviewLoading && srcPreviewRows.length > 0 && (
-                          <span className="text-[10px] text-gray-400">{srcPreviewRows.length}</span>
+                        {tgtError && !tgtConnecting && (
+                          <span className="text-[10px] text-rose-500 truncate max-w-[100px]" title={tgtError}>{tgtError}</span>
                         )}
                       </div>
-                      <div className="flex-[3] min-h-0 overflow-auto panel-scroll">
-                        {srcPreviewLoading ? (
-                          <div className="flex items-center justify-center h-12 gap-1.5 text-[11px] text-gray-400">
-                            <Loader2 size={11} className="animate-spin" /> Loading…
-                          </div>
-                        ) : srcPreviewCols.length === 0 ? (
-                          <div className="flex items-center justify-center h-12 text-[11px] text-gray-400 dark:text-slate-500 italic">
-                            {selectedMap ? 'No records' : 'Select a table'}
-                          </div>
-                        ) : (
-                          <table className="text-xs border-collapse">
-                            <thead className="sticky top-0 z-10">
-                              <tr className="bg-gray-50 dark:bg-slate-800">
-                                <th className="px-2 py-1 text-left text-[9px] font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-200 dark:border-slate-700 w-7">#</th>
-                                {srcPreviewCols.map(col => (
-                                  <th key={col} className="px-2 py-1 text-left text-[9px] font-semibold text-gray-600 dark:text-slate-300 border-b border-gray-200 dark:border-slate-700 whitespace-nowrap font-mono">
-                                    {col}
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                              {srcPreviewRows.map((row, i) => (
-                                <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-800/40">
-                                  <td className="px-2 py-1 text-[9px] text-gray-300 dark:text-slate-600 font-mono">{i + 1}</td>
-                                  {srcPreviewCols.map(col => {
-                                    const val = row[col];
-                                    const isNull = val === null || val === undefined;
-                                    return (
-                                      <td key={col} className="px-2 py-1 font-mono whitespace-nowrap">
-                                        <span className={isNull ? 'text-gray-300 dark:text-slate-600 italic text-[9px]' : 'text-gray-700 dark:text-slate-300 text-[10px]'}>
-                                          {fmtVal(val)}
-                                        </span>
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
+                      <div className="flex flex-col gap-1.5">
+                        <ConnSelect connections={connections} value={tgtConnId}
+                          onChange={id => setTgtConnId(id)} onNew={() => void router.push('/connections')} accent="violet" />
+                        <div className="flex items-center gap-1.5">
+                          {tgtConnId && (tgtLoadingDbs
+                            ? <Loader2 size={11} className="animate-spin text-gray-400" />
+                            : (
+                              <select value={tgtDb} onChange={e => setTgtDb(e.target.value)}
+                                className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-violet-400 cursor-pointer font-mono">
+                                {!tgtDb && <option value="">— select db —</option>}
+                                {tgtDbs.map(d => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                            )
+                          )}
+                          {tgtConnected && tgtSchemas.length > 0 && (
+                            <select value={tgtDefaultSchema} onChange={e => setTgtDefaultSchema(e.target.value)}
+                              title="Default target schema"
+                              className="w-24 shrink-0 px-2 py-1 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 focus:outline-none cursor-pointer font-mono">
+                              {tgtSchemas.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          )}
+                        </div>
+                        {tgtDbError && <span className="text-[10px] text-rose-500">{tgtDbError}</span>}
                       </div>
                     </div>
-                  </Panel>
-                </PanelGroup>
-              </div>
-            </Panel>
 
-            <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
-
-            {/* ── TARGET PANEL ─────────────────────────────────────────── */}
-            <Panel defaultSize={50} minSize={22}>
-              <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-slate-900">
-
-                {/* Target header */}
-                <div className="shrink-0 p-3 border-b border-gray-200 dark:border-slate-800 bg-violet-50/50 dark:bg-violet-950/10">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2 h-2 rounded-full bg-violet-500 shrink-0" />
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-400 flex-1">Target</span>
-                    {tgtConnecting && <Loader2 size={10} className="animate-spin text-gray-400" />}
-                    {tgtConnected && !tgtConnecting && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-                        <Check size={9} /> Connected
-                      </span>
-                    )}
-                    {tgtError && !tgtConnecting && (
-                      <span className="text-[10px] text-rose-500 truncate max-w-[100px]" title={tgtError}>{tgtError}</span>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <ConnSelect connections={connections} value={tgtConnId}
-                      onChange={id => setTgtConnId(id)} onNew={() => void router.push('/connections')} accent="violet" />
-                    <div className="flex items-center gap-1.5">
-                      {tgtConnId && (tgtLoadingDbs
-                        ? <Loader2 size={11} className="animate-spin text-gray-400" />
-                        : (
-                          <select value={tgtDb} onChange={e => setTgtDb(e.target.value)}
-                            className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-violet-400 cursor-pointer font-mono">
-                            {!tgtDb && <option value="">— select db —</option>}
-                            {tgtDbs.map(d => <option key={d} value={d}>{d}</option>)}
-                          </select>
-                        )
-                      )}
-                      {tgtConnected && tgtSchemas.length > 0 && (
-                        <select value={tgtDefaultSchema} onChange={e => setTgtDefaultSchema(e.target.value)}
-                          title="Default target schema"
-                          className="w-24 shrink-0 px-2 py-1 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 focus:outline-none cursor-pointer font-mono">
-                          {tgtSchemas.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      )}
+                    {/* Tables label + search */}
+                    <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-gray-100 dark:border-slate-800">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Table2 size={10} className="text-violet-400 shrink-0" />
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 flex-1">Tables</span>
+                        {filteredTgtTables.length > 0 && (
+                          <span className="text-[10px] text-gray-400">{filteredTgtTables.length}</span>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input value={tgtSearch} onChange={e => setTgtSearch(e.target.value)}
+                          placeholder="Filter tables…"
+                          className="w-full pl-6 pr-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-500" />
+                      </div>
                     </div>
-                    {tgtDbError && <span className="text-[10px] text-rose-500">{tgtDbError}</span>}
-                  </div>
-                </div>
 
-                {/* Tables label + search */}
-                <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-gray-100 dark:border-slate-800">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <Table2 size={10} className="text-violet-400 shrink-0" />
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 flex-1">Tables</span>
-                    {filteredTgtTables.length > 0 && (
-                      <span className="text-[10px] text-gray-400">{filteredTgtTables.length}</span>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input value={tgtSearch} onChange={e => setTgtSearch(e.target.value)}
-                      placeholder="Filter tables…"
-                      className="w-full pl-6 pr-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-500" />
-                  </div>
-                </div>
-
-                {/* Resizable: tables / column mapping */}
-                <PanelGroup orientation="vertical" className="flex-1 min-h-0">
-                  <Panel defaultSize={50} minSize={15}>
-                    <div className="h-full overflow-y-auto panel-scroll">
+                    {/* Tables list */}
+                    <div className="flex-1 min-h-0 overflow-y-auto panel-scroll">
                       {!tgtConnected ? (
                         <div className="flex flex-col items-center justify-center h-full gap-2 px-4 text-center">
                           <Database size={28} className="text-gray-200 dark:text-slate-700" />
@@ -1012,40 +926,47 @@ export default function Migration() {
                         );
                       })}
                     </div>
-                  </Panel>
+                  </div>
+                </Panel>
 
-                  <PanelResizeHandle className="h-px bg-gray-200 dark:bg-slate-700 hover:bg-violet-400 dark:hover:bg-violet-500 cursor-row-resize transition-colors" />
+              </PanelGroup>
+            </Panel>
 
-                  <Panel defaultSize={50} minSize={15}>
-                    <div className="flex flex-col h-full overflow-hidden">
-                      {/* Separator: Column Mapping */}
-                      <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60">
-                        <Layers size={10} className="text-gray-400 shrink-0" />
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex-1">Column Mapping</span>
-                        {selectedMap?.target.table && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate max-w-[160px]">
-                              {selectedMap.target.schema}.{selectedMap.target.table}
-                            </span>
-                            <label className="inline-flex items-center gap-1 text-[10px] text-gray-500 dark:text-slate-400">
-                              <input type="checkbox" checked={selectedMap.truncateBeforeMigrate}
-                                onChange={e => updateTableMap(selectedMap.id, { truncateBeforeMigrate: e.target.checked })}
-                                className="accent-rose-500" />
-                              Truncate
-                            </label>
-                          </div>
-                        )}
-                      </div>
+            <PanelResizeHandle className="h-px bg-gray-200 dark:bg-slate-700 hover:bg-violet-400 dark:hover:bg-violet-500 cursor-row-resize transition-colors" />
 
-                      {/* Column mapping editor */}
-                      <div className="flex-[2] min-h-0 overflow-auto panel-scroll">
+            {/* ── COLUMN MAPPING — full width ──── */}
+            <Panel defaultSize={38} minSize={15}>
+              <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-slate-900">
+                {/* Column mapping header */}
+                <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60">
+                  <Layers size={10} className="text-violet-400 shrink-0" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex-1">Column Mapping</span>
+                  {selectedMap?.target.table && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate max-w-[260px]">
+                        {selectedMap.source.schema}.{selectedMap.source.table}
+                        <span className="text-gray-300 dark:text-slate-600 mx-1">→</span>
+                        {selectedMap.target.schema}.{selectedMap.target.table}
+                      </span>
+                      <label className="inline-flex items-center gap-1 text-[10px] text-gray-500 dark:text-slate-400">
+                        <input type="checkbox" checked={selectedMap.truncateBeforeMigrate}
+                          onChange={e => updateTableMap(selectedMap.id, { truncateBeforeMigrate: e.target.checked })}
+                          className="accent-rose-500" />
+                        Truncate
+                      </label>
+                    </div>
+                  )}
+                </div>
+
+                {/* Column mapping editor */}
+                <div className="flex-1 min-h-0 overflow-auto panel-scroll">
                   {!selectedMap ? (
                     <div className="flex items-center justify-center h-full text-[11px] text-gray-400 dark:text-slate-500 italic">
                       Select a source table first
                     </div>
                   ) : !selectedMap.target.table ? (
                     <div className="flex items-center justify-center h-full text-[11px] text-gray-400 dark:text-slate-500 italic">
-                      Select a target table above to map columns
+                      Select a target table to map columns
                     </div>
                   ) : loadingCols && selectedMap.columns.length === 0 ? (
                     <div className="flex items-center justify-center h-full gap-1.5 text-[11px] text-gray-400 dark:text-slate-500 animate-pulse">
@@ -1056,157 +977,262 @@ export default function Migration() {
                       <table className="w-full text-xs border-collapse" style={{ minWidth: 580 }}>
                         <thead>
                           <tr className="bg-gray-50 dark:bg-slate-800/60 sticky top-0 z-10">
-                            {['Src Col', 'Src Type', '', 'Tgt Col', 'Tgt Type', 'Conv', 'FK Ref', '✓', ''].map((h, i) => (
+                            {([
+                              { label: 'Src Col', tip: 'Source Column', desc: 'Column name from the source database table.\nExample: user_id, created_at' },
+                              { label: 'Src Type', tip: 'Source Type', desc: 'Original data type in the source database.\nExample: INT, VARCHAR(255), DATETIME' },
+                              { label: '', tip: null, desc: null },
+                              { label: 'Tgt Col', tip: 'Target Column', desc: 'Column in the target table this source column maps to. Select "— none —" to skip it.\nAlready-assigned columns show ✓ srcCol → tgtCol.' },
+                              { label: 'Tgt Name', tip: 'Target Name', desc: 'Override the column name written in the migration output.\n• keep — use the same name as Tgt Col\n• rename — type a custom column name\nExample: rename user_id → member_id' },
+                              { label: 'Tgt Type', tip: 'Target Type', desc: 'Data type inferred for the target column. Auto-set when you pick a Tgt Col or change Conv.\nExample: BIGINT, TEXT, TIMESTAMPTZ' },
+                              { label: 'Conv', tip: 'Conversion', desc: 'Datatype cast or transformation applied during migration.\n• keep — copy value as-is\n• →UUID — serial int → UUID v4\n• →TEXT, →INT, →BIGINT, →NUMERIC, →BOOL, →TIMESTAMPTZ, →DATE, →JSONB — cast to that PG type' },
+                              { label: 'FK Ref', tip: 'Foreign Key Reference', desc: 'If this column is a UUID FK, enter the target table it references so the migrator can resolve IDs correctly.\nExample: public.users' },
+                              { label: '✓', tip: 'Include', desc: 'Toggle whether this column is included in the migration. Uncheck to exclude a column from the INSERT.' },
+                              { label: '', tip: null, desc: null },
+                            ] as { label: string; tip: string | null; desc: string | null }[]).map((h, i) => (
                               <th key={i} className="text-left px-2 py-1.5 text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider border-b border-gray-200 dark:border-slate-700 whitespace-nowrap">
-                                {h}
+                                {h.tip ? (
+                                  <Tooltip
+                                    side="bottom"
+                                    align={i === 0 ? 'start' : 'center'}
+                                    content={
+                                      <div>
+                                        <p className="font-semibold text-white mb-1">{h.tip}</p>
+                                        {h.desc?.split('\n').map((line, li) => (
+                                          <p key={li} className={line.startsWith('•') ? 'pl-2 text-gray-300' : 'text-gray-300'}>{line}</p>
+                                        ))}
+                                      </div>
+                                    }
+                                  >
+                                    <span className="cursor-help border-b border-dashed border-gray-400 dark:border-slate-500">{h.label}</span>
+                                  </Tooltip>
+                                ) : h.label}
                               </th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                          {selectedMap.columns.map((col, idx) => (
+                          {selectedMap.columns.map((col, idx) => {
+                            const srcMeta = col.sourceCol
+                              ? srcColsForSelected.find(c => c.name === col.sourceCol)
+                              : undefined;
+                            return (
                             <tr key={idx} className={`${col.include ? '' : 'opacity-40'} hover:bg-gray-50 dark:hover:bg-slate-800/30`}>
-                              <td className="px-2 py-1.5 font-mono text-[11px] text-gray-700 dark:text-slate-300 max-w-[80px] truncate">
-                                {col.sourceCol ?? <span className="italic text-gray-400">*(new)*</span>}
-                              </td>
-                              <td className="px-2 py-1.5 font-mono text-[10px] text-gray-400 dark:text-slate-500">
-                                {colsCache[`${selectedMap.source.schema}.${selectedMap.source.table}`]?.find(c => c.name === col.sourceCol)?.rawType ?? '—'}
-                              </td>
-                              <td className="px-1 text-[10px] text-gray-300">→</td>
-                              <td className="px-2 py-1">
-                                {tgtColsForSelected.length > 0 ? (
-                                  <select value={col.targetCol}
-                                    onChange={e => {
-                                      const tgtCol = tgtColsForSelected.find(c => c.name === e.target.value);
-                                      updateColumn(selectedMap.id, idx, {
-                                        targetCol: e.target.value,
-                                        ...(tgtCol ? { targetType: tgtCol.rawType.toUpperCase() } : {}),
-                                      });
-                                    }}
-                                    className="max-w-[110px] px-1.5 py-0.5 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono focus:outline-none focus:border-violet-400">
-                                    {!tgtColsForSelected.find(c => c.name === col.targetCol) && col.targetCol && (
-                                      <option value={col.targetCol}>{col.targetCol}</option>
+                                  <td className="px-2 py-1.5 max-w-[100px]">
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="font-mono text-[11px] text-gray-700 dark:text-slate-300 truncate">
+                                        {col.sourceCol ?? <span className="italic text-gray-400">*(new)*</span>}
+                                      </span>
+                                      {srcMeta && (
+                                        <div className="flex items-center gap-0.5">
+                                          {srcMeta.isPk && <span className="text-[8px] px-1 py-px rounded bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 font-semibold">PK</span>}
+                                          {srcMeta.isFk && <span className="text-[8px] px-1 py-px rounded bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold">FK</span>}
+                                          {!srcMeta.nullable && <span className="text-[8px] px-1 py-px rounded bg-rose-100 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400 font-semibold">NN</span>}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-2 py-1.5 font-mono text-[10px] text-gray-400 dark:text-slate-500">
+                                    {colsCache[`${selectedMap.source.schema}.${selectedMap.source.table}`]?.find(c => c.name === col.sourceCol)?.rawType ?? '—'}
+                                  </td>
+                                  <td className="px-1 text-[10px] text-gray-300">→</td>
+                                  <td className="px-2 py-1">
+                                    {tgtColsForSelected.length > 0 ? (
+                                      <select value={col.targetCol}
+                                        onChange={e => {
+                                          const tgtCol = tgtColsForSelected.find(c => c.name === e.target.value);
+                                          updateColumn(selectedMap.id, idx, {
+                                            targetCol: e.target.value,
+                                            ...(tgtCol ? { targetType: tgtCol.rawType.toUpperCase() } : {}),
+                                          });
+                                        }}
+                                        className="max-w-[110px] px-1.5 py-0.5 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono focus:outline-none focus:border-violet-400">
+                                        {!tgtColsForSelected.find(c => c.name === col.targetCol) && col.targetCol && (
+                                          <option value={col.targetCol}>{col.targetCol}</option>
+                                        )}
+                                        <option value="">— none —</option>
+                                        {tgtColsForSelected.map(c => {
+                                          const assignedTo = selectedMap.columns.find(
+                                            (r, rIdx) => rIdx !== idx && r.targetCol === c.name
+                                          );
+                                          return (
+                                            <option key={c.name} value={c.name}>
+                                              {assignedTo
+                                                ? `✓ ${assignedTo.sourceCol ?? '(new)'} → ${c.name}`
+                                                : c.name}
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
+                                    ) : (
+                                      <input value={col.targetCol}
+                                        onChange={e => updateColumn(selectedMap.id, idx, { targetCol: e.target.value })}
+                                        className="w-24 px-1.5 py-0.5 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono" />
                                     )}
-                                    <option value="">— none —</option>
-                                    {tgtColsForSelected.map(c => (
-                                      <option key={c.name} value={c.name}>{c.name}</option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <input value={col.targetCol}
-                                    onChange={e => updateColumn(selectedMap.id, idx, { targetCol: e.target.value })}
-                                    className="w-24 px-1.5 py-0.5 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono" />
-                                )}
-                              </td>
-                              <td className="px-2 py-1">
-                                <input value={col.targetType}
-                                  onChange={e => updateColumn(selectedMap.id, idx, { targetType: e.target.value })}
-                                  className="w-24 px-1.5 py-0.5 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono uppercase" />
-                              </td>
-                              <td className="px-2 py-1">
-                                <select value={col.conversion}
-                                  onChange={e => {
-                                    const conv = e.target.value as IdConversion;
-                                    const targetType = conv === 'serial_to_uuid'
-                                      ? (tgtConn.type === 'postgresql' ? 'UUID' : 'VARCHAR(36)')
-                                      : col.targetType;
-                                    updateColumn(selectedMap.id, idx, { conversion: conv, targetType });
-                                  }}
-                                  className="text-[10px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 py-0.5 px-1">
-                                  <option value="keep">keep</option>
-                                  <option value="serial_to_uuid">→UUID</option>
-                                </select>
-                              </td>
-                              <td className="px-2 py-1">
-                                <input value={col.fkRef ?? ''}
-                                  onChange={e => updateColumn(selectedMap.id, idx, { fkRef: e.target.value || null })}
-                                  placeholder="schema.table"
-                                  disabled={col.conversion !== 'serial_to_uuid' && !col.fkRef}
-                                  className="w-24 px-1.5 py-0.5 text-[10px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-mono disabled:opacity-30" />
-                              </td>
-                              <td className="px-2 py-1.5 text-center">
-                                <input type="checkbox" checked={col.include}
-                                  onChange={e => updateColumn(selectedMap.id, idx, { include: e.target.checked })}
-                                  className="accent-violet-500" />
-                              </td>
-                              <td className="px-1 py-1.5">
-                                {col.sourceCol === null && (
-                                  <button onClick={() => removeColumn(selectedMap.id, idx)}
-                                    className="p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors">
-                                    <X size={11} />
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <div className="px-3 py-2 border-t border-gray-100 dark:border-slate-800">
-                        <button onClick={() => addTargetOnlyColumn(selectedMap.id)}
-                          className="inline-flex items-center gap-1 text-[11px] text-violet-600 dark:text-violet-400 hover:text-violet-700 transition-colors">
-                          <Plus size={11} /> Add target-only column
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                      </div>
-
-                      {/* Records header */}
-                      <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-t border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60">
-                        <Database size={10} className="text-violet-400 shrink-0" />
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex-1">Target Records</span>
-                        {tgtPreviewLoading && <Loader2 size={10} className="animate-spin text-gray-400" />}
-                        {!tgtPreviewLoading && tgtPreviewRows.length > 0 && (
-                          <span className="text-[10px] text-gray-400">{tgtPreviewRows.length}</span>
-                        )}
-                      </div>
-                      <div className="flex-[3] min-h-0 overflow-auto panel-scroll">
-                        {tgtPreviewLoading ? (
-                          <div className="flex items-center justify-center h-12 gap-1.5 text-[11px] text-gray-400">
-                            <Loader2 size={11} className="animate-spin" /> Loading…
-                          </div>
-                        ) : tgtPreviewCols.length === 0 ? (
-                          <div className="flex items-center justify-center h-12 text-[11px] text-gray-400 dark:text-slate-500 italic">
-                            {selectedMap ? 'No records' : 'Select a table'}
-                          </div>
-                        ) : (
-                          <table className="text-xs border-collapse">
-                            <thead className="sticky top-0 z-10">
-                              <tr className="bg-gray-50 dark:bg-slate-800">
-                                <th className="px-2 py-1 text-left text-[9px] font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-200 dark:border-slate-700 w-7">#</th>
-                                {tgtPreviewCols.map(col => (
-                                  <th key={col} className="px-2 py-1 text-left text-[9px] font-semibold text-gray-600 dark:text-slate-300 border-b border-gray-200 dark:border-slate-700 whitespace-nowrap font-mono">
-                                    {col}
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                              {tgtPreviewRows.map((row, i) => (
-                                <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-800/40">
-                                  <td className="px-2 py-1 text-[9px] text-gray-300 dark:text-slate-600 font-mono">{i + 1}</td>
-                                  {tgtPreviewCols.map(col => {
-                                    const val = row[col];
-                                    const isNull = val === null || val === undefined;
-                                    return (
-                                      <td key={col} className="px-2 py-1 font-mono whitespace-nowrap">
-                                        <span className={isNull ? 'text-gray-300 dark:text-slate-600 italic text-[9px]' : 'text-gray-700 dark:text-slate-300 text-[10px]'}>
-                                          {fmtVal(val)}
-                                        </span>
-                                      </td>
-                                    );
-                                  })}
+                                  </td>
+                                  {/* TGT NAME */}
+                                  <td className="px-2 py-1">
+                                    {col.targetName !== null ? (
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          value={col.targetName}
+                                          onChange={e => updateColumn(selectedMap.id, idx, { targetName: e.target.value || null })}
+                                          placeholder="new name"
+                                          className="w-24 px-1.5 py-0.5 text-[11px] rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 font-mono focus:outline-none focus:border-amber-500"
+                                        />
+                                        <button
+                                          onClick={() => updateColumn(selectedMap.id, idx, { targetName: null })}
+                                          className="text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors"
+                                          title="Revert to keep">
+                                          <X size={10} />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => updateColumn(selectedMap.id, idx, { targetName: col.targetCol || '' })}
+                                        className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 font-mono transition-colors">
+                                        keep
+                                      </button>
+                                    )}
+                                  </td>
+                                  {/* TGT TYPE — label only */}
+                                  <td className="px-2 py-1.5 font-mono text-[10px] text-gray-500 dark:text-slate-400 whitespace-nowrap">
+                                    {col.targetType || '—'}
+                                  </td>
+                                  {/* CONV */}
+                                  <td className="px-2 py-1">
+                                    <select value={col.conversion}
+                                      onChange={e => {
+                                        const conv = e.target.value as IdConversion;
+                                        const typeMap: Record<string, string> = {
+                                          serial_to_uuid: tgtConn.type === 'postgresql' ? 'UUID' : 'VARCHAR(36)',
+                                          to_text: 'TEXT',
+                                          to_integer: 'INTEGER',
+                                          to_bigint: 'BIGINT',
+                                          to_numeric: 'NUMERIC',
+                                          to_boolean: 'BOOLEAN',
+                                          to_timestamptz: 'TIMESTAMPTZ',
+                                          to_date: 'DATE',
+                                          to_jsonb: 'JSONB',
+                                        };
+                                        const targetType = typeMap[conv] ?? col.targetType;
+                                        updateColumn(selectedMap.id, idx, { conversion: conv, targetType });
+                                      }}
+                                      className="text-[10px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 py-0.5 px-1">
+                                      <option value="keep">keep</option>
+                                      <option value="serial_to_uuid">→UUID</option>
+                                      <optgroup label="Cast to PG type">
+                                        <option value="to_text">→TEXT</option>
+                                        <option value="to_integer">→INT</option>
+                                        <option value="to_bigint">→BIGINT</option>
+                                        <option value="to_numeric">→NUMERIC</option>
+                                        <option value="to_boolean">→BOOL</option>
+                                        <option value="to_timestamptz">→TIMESTAMPTZ</option>
+                                        <option value="to_date">→DATE</option>
+                                        <option value="to_jsonb">→JSONB</option>
+                                      </optgroup>
+                                    </select>
+                                  </td>
+                                  <td className="px-2 py-1">
+                                    <input value={col.fkRef ?? ''}
+                                      onChange={e => updateColumn(selectedMap.id, idx, { fkRef: e.target.value || null })}
+                                      placeholder="schema.table"
+                                      disabled={col.conversion !== 'serial_to_uuid' && !col.fkRef}
+                                      className="w-24 px-1.5 py-0.5 text-[10px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-mono disabled:opacity-30" />
+                                  </td>
+                                  <td className="px-2 py-1.5 text-center">
+                                    <input type="checkbox" checked={col.include}
+                                      onChange={e => updateColumn(selectedMap.id, idx, { include: e.target.checked })}
+                                      className="accent-violet-500" />
+                                  </td>
+                                  <td className="px-1 py-1.5">
+                                    {col.sourceCol === null && (
+                                      <button onClick={() => removeColumn(selectedMap.id, idx)}
+                                        className="p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors">
+                                        <X size={11} />
+                                      </button>
+                                    )}
+                                  </td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
-                        )}
-                      </div>
+                          <div className="px-3 py-2 border-t border-gray-100 dark:border-slate-800 flex justify-end">
+                            <button onClick={() => addTargetOnlyColumn(selectedMap.id)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
+                              <Plus size={11} /> Add target-only column
+                            </button>
+                          </div>
                     </div>
-                  </Panel>
-                </PanelGroup>
+                  )}
+                </div>
               </div>
             </Panel>
+
+            <PanelResizeHandle className="h-px bg-gray-200 dark:bg-slate-700 hover:bg-violet-400 dark:hover:bg-violet-500 cursor-row-resize transition-colors" />
+
+            {/* ── RECORDS — full width ──── */}
+            <Panel defaultSize={22} minSize={10}>
+              <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-slate-900">
+                {/* Records header */}
+                <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60">
+                  <Database size={10} className="text-gray-400 shrink-0" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex-1">Records</span>
+                  {srcPreviewLoading && <Loader2 size={10} className="animate-spin text-gray-400" />}
+                  {!srcPreviewLoading && srcPreviewRows.length > 0 && (
+                    <span className="text-[10px] text-gray-400">{srcPreviewRows.length}</span>
+                  )}
+                  {selectedMap && (
+                    <span className="text-[10px] text-blue-500 dark:text-blue-400 font-mono truncate max-w-[160px]">
+                      {selectedMap.source.schema}.{selectedMap.source.table}
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-h-0 overflow-auto panel-scroll">
+                  {srcPreviewLoading ? (
+                    <div className="flex items-center justify-center h-full gap-1.5 text-[11px] text-gray-400">
+                      <Loader2 size={11} className="animate-spin" /> Loading…
+                    </div>
+                  ) : srcPreviewCols.length === 0 ? (
+                    <div className="flex items-center justify-center h-full text-[11px] text-gray-400 dark:text-slate-500 italic">
+                      {selectedMap ? 'No records' : 'Select a table'}
+                    </div>
+                  ) : (
+                    <table className="text-xs border-collapse">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="bg-gray-50 dark:bg-slate-800">
+                          <th className="px-2 py-1 text-left text-[9px] font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-200 dark:border-slate-700 w-7">#</th>
+                          {srcPreviewCols.map(col => (
+                            <th key={col} className="px-2 py-1 text-left text-[9px] font-semibold text-gray-600 dark:text-slate-300 border-b border-gray-200 dark:border-slate-700 whitespace-nowrap font-mono">
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                        {srcPreviewRows.map((row, i) => (
+                          <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-800/40">
+                            <td className="px-2 py-1 text-[9px] text-gray-300 dark:text-slate-600 font-mono">{i + 1}</td>
+                            {srcPreviewCols.map(col => {
+                              const val = row[col];
+                              const isNull = val === null || val === undefined;
+                              return (
+                                <td key={col} className="px-2 py-1 font-mono whitespace-nowrap">
+                                  <span className={isNull ? 'text-gray-300 dark:text-slate-600 italic text-[9px]' : 'text-gray-700 dark:text-slate-300 text-[10px]'}>
+                                    {fmtVal(val)}
+                                  </span>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </Panel>
+
           </PanelGroup>
 
           {/* ── JOBS PANEL (collapsible) ────────────────────────────────── */}

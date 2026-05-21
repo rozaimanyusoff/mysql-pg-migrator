@@ -43,17 +43,25 @@ UPLOAD_PUBLIC_URL=/uploads
 Pick any one of these — all produce a cryptographically random 64-character hex string:
 
 ```bash
-# Node.js
+# Node.js (works on macOS, Linux, Windows CMD/PowerShell)
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
-# OpenSSL
+# OpenSSL (macOS / Linux / Git Bash on Windows)
 openssl rand -hex 32
 
-# Python
+# Python — macOS / Linux
 python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# Python — Windows (uses 'python' instead of 'python3')
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 Paste the output as the value of `JWT_SECRET_KEY` in your `.env`.
+
+> **Windows users:** All `npm run *` commands work in CMD and PowerShell as-is.
+> If you prefer a Unix shell, use [Git Bash](https://git-scm.com/downloads) or
+> [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) — both support
+> the `openssl` and `python3` alternatives above.
 
 ### 3. Bootstrap the database
 
@@ -87,15 +95,18 @@ mysql-pg-migrator/
 │   │   ├── _app.tsx                 # App wrapper — AuthProvider, global styles
 │   │   ├── _document.tsx            # Custom HTML document
 │   │   ├── index.tsx                # Home — module grid + login dialog
-│   │   ├── settings.tsx             # Global settings (connections, email, account, audit logs)
-│   │   ├── db-setup.tsx             # Schema Generator module
-│   │   ├── schema-config.tsx        # Schema Config module
-│   │   ├── schema-generate.tsx      # Schema generation sub-page
-│   │   ├── migration.tsx            # Migration module (phases 1–2)
+│   │   ├── settings.tsx             # Global settings (connections, email, account)
+│   │   ├── audit.tsx                # Audit log viewer
+│   │   ├── schema-designer.tsx      # Schema Designer — visual table editor, XLSX/CSV/SQL import
+│   │   ├── schema-explorer.tsx      # Schema Explorer — browse DB, ERD, export SQL/XLSX
+│   │   ├── schema-config.tsx        # Schema Config — table role & FK mapping
+│   │   ├── schema-generate.tsx      # Schema generation — pre-flight + execute DDL
+│   │   ├── migration.tsx            # Migration — job setup, table mapping (phases 1–2)
 │   │   ├── mapping.tsx              # Column mapping sub-page
 │   │   ├── migrate.tsx              # Migration execution (phases 3–4)
-│   │   ├── docs.tsx                 # Generated docs viewer
-│   │   ├── audit.tsx                # Audit log viewer page
+│   │   ├── export-import.tsx        # Export & Import — SQL dump, XLSX seed, table sync
+│   │   ├── normalizer.tsx           # Data Normalizer — upload CSV/XLSX/JSON, profile, export
+│   │   ├── db-setup.tsx             # DB Setup (legacy schema generator entry)
 │   │   └── api/                     # API routes (Next.js serverless handlers)
 │   │       ├── auth/
 │   │       │   ├── login.ts         # POST — validate credentials, issue JWT + refresh token
@@ -111,51 +122,53 @@ mysql-pg-migrator/
 │   │       ├── email-config/
 │   │       │   ├── index.ts         # GET config, POST save
 │   │       │   └── test.ts          # POST test SMTP connection
-│   │       ├── audit-files.ts       # GET — list daily audit log files
-│   │       ├── audit-read.ts        # GET — read entries from a log file or date range
-│   │       ├── audit-event.ts       # POST — write a client-side audit event
-│   │       ├── pg-test.ts           # POST — test PostgreSQL connection
-│   │       ├── inspect.ts           # POST — inspect MySQL databases/tables
-│   │       ├── list-databases.ts    # POST — list MySQL databases
-│   │       ├── dry-run.ts           # POST — dry-run migration plan
-│   │       ├── migrate.ts           # POST — execute migration
-│   │       └── sql-execute.ts       # POST — execute raw SQL (DB Setup)
+│   │       ├── schema-explorer/     # Schema Explorer API
+│   │       │   ├── schemas.ts       # GET schemas for a connection
+│   │       │   ├── tables.ts        # GET tables in a schema
+│   │       │   ├── columns.ts       # GET columns for a table
+│   │       │   ├── records.ts       # GET sample rows
+│   │       │   └── export.ts        # POST export SQL or styled XLSX
+│   │       ├── schema-designer/     # Schema Designer API
+│   │       ├── schema-generator/    # Schema Generator jobs API
+│   │       ├── export-import/       # Export / Import / Sync API
+│   │       ├── normalizer/          # Data Normalizer API
+│   │       │   ├── parse.ts         # POST — parse XLSX/CSV/JSON, return column profile
+│   │       │   └── export.ts        # POST — generate SQL/CSV/JSON output
+│   │       └── ...                  # Other single-file API routes
 │   │
-│   ├── components/
+│   ├── components/                  # Shared React components
 │   │   ├── FooterBar.tsx            # Fixed bottom bar — theme toggle + clock
-│   │   ├── ColumnMappingEditor.tsx
-│   │   ├── ColumnMappingTable.tsx
-│   │   ├── ConnectionBadges.tsx
-│   │   ├── DocumentationViewer.tsx
-│   │   ├── TableDetail.tsx
-│   │   ├── TableList.tsx
-│   │   └── TableMappingEditor.tsx
+│   │   ├── ConnectionBadges.tsx     # Active connection indicator
+│   │   └── ...
 │   │
-│   ├── lib/                         # Shared server + client utilities
-│   │   ├── auth-store.ts            # JWT creation/verification, refresh token DB store
-│   │   ├── auth-context.tsx         # React Context — global auth state + auto-refresh
-│   │   ├── db.ts                    # Singleton PostgreSQL pool (hot-reload safe)
-│   │   ├── mailer.ts                # Nodemailer wrapper — SMTP config, OTP generation
-│   │   ├── audit-logger.ts          # Daily rotating JSON log files
-│   │   ├── audit-api.ts             # Helper to log API activity
-│   │   ├── paths.ts                 # Resolved UPLOAD_DIR, LOGS_DIR, CONFIG_DIR paths
-│   │   ├── mapping-utils.ts         # Column mapping helpers for migration
-│   │   └── types.ts                 # Shared TypeScript types
-│   │
-│   └── styles/
-│       └── globals.css              # Global Tailwind CSS
+│   └── lib/                         # Shared server + client utilities
+│       ├── auth-store.ts            # JWT creation/verification, refresh token DB store
+│       ├── auth-context.tsx         # React Context — global auth state + auto-refresh
+│       ├── db.ts                    # Singleton PostgreSQL pool (hot-reload safe)
+│       ├── explorer-db.ts           # withPg / withMysql helpers for Schema Explorer
+│       ├── sql-exporter.ts          # Pure-SQL export engine (PG + MySQL)
+│       ├── excel-parser.ts          # Browser-side XLSX/CSV parser (exceljs dynamic import)
+│       ├── mailer.ts                # Nodemailer wrapper — SMTP config, OTP generation
+│       ├── audit-logger.ts          # Daily rotating JSON log files
+│       ├── audit-api.ts             # Helper to log API activity
+│       ├── paths.ts                 # Resolved UPLOAD_DIR, LOGS_DIR, CONFIG_DIR paths
+│       └── normalizer/              # Data Normalizer utilities
+│           ├── csv-parser.ts        # RFC-4180 CSV parser
+│           └── profiler.ts          # Column profiling + FK suggestion engine
 │
 ├── db/
 │   ├── migrations/                  # Sequential SQL migrations (run via npm run db:push)
 │   │   ├── 001_init.sql             # dbt_users, dbt_connections, dbt_migrations
 │   │   ├── 002_sessions.sql         # dbt_sessions (refresh token store)
-│   │   └── 003_email_otp.sql        # dbt_email_config, dbt_otp_codes, email col on users
+│   │   ├── 003_email_otp.sql        # dbt_email_config, dbt_otp_codes, email col on users
+│   │   ├── 004_schema_jobs.sql      # dbt_schema_jobs (Schema Generator job history)
+│   │   └── 005_export_history.sql   # dbt_export_history (Export/Import/Sync log)
 │   └── seeds/
-│       └── 001_seed.sql             # Default admin user
+│       └── 001_seed.sql             # Default admin user (admin / admin)
 │
 ├── scripts/
-│   ├── db-push.js                   # Reads DATABASE_URL, executes all migrations in order
-│   └── db-seed.js                   # Reads DATABASE_URL, executes seed files
+│   ├── db-push.js                   # Apply pending migrations — skips already-applied via dbt_migrations
+│   └── db-seed.js                   # Apply seed files (idempotent)
 │
 ├── public/uploads/                  # Runtime file storage (set via UPLOAD_DIR)
 │   ├── logs/                        # Daily audit logs (audit-YYYY-MM-DD.jsonl)
@@ -184,14 +197,16 @@ The default account is **admin / admin** (created by `db:seed`). Set an email ad
 
 ## Core Database Tables
 
-| Table | Purpose |
-|-------|---------|
-| `dbt_users` | App users — username, password hash, email |
-| `dbt_sessions` | Refresh token store — opaque hex + TTL |
-| `dbt_connections` | Saved DB connections (MySQL/PostgreSQL) — one active per type |
-| `dbt_email_config` | SMTP settings + 2FA toggle |
-| `dbt_otp_codes` | One-time codes for 2FA (6-digit, 5 min TTL) |
-| `dbt_migrations` | Migration tracking (records which SQL files have been applied) |
+| Table | Migration | Purpose |
+|-------|-----------|---------|
+| `dbt_users` | 001_init | App users — username, bcrypt password hash, email |
+| `dbt_connections` | 001_init | Saved DB connections (MySQL/PostgreSQL) |
+| `dbt_migrations` | 001_init | Tracks which migration files have been applied |
+| `dbt_sessions` | 002_sessions | Refresh token store — opaque hex + TTL |
+| `dbt_email_config` | 003_email_otp | SMTP settings + 2FA toggle |
+| `dbt_otp_codes` | 003_email_otp | One-time codes for 2FA (6-digit, 5 min TTL) |
+| `dbt_schema_jobs` | 004_schema_jobs | Schema Generator job history and SQL output |
+| `dbt_export_history` | 005_export_history | Export / Import / Sync operation log |
 
 ---
 

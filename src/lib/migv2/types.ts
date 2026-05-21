@@ -13,11 +13,22 @@ export interface MigConn {
 
 // ── Column / Table mapping ────────────────────────────────────────────────────
 
-export type IdConversion = 'keep' | 'serial_to_uuid';
+export type IdConversion =
+  | 'keep'
+  | 'serial_to_uuid'
+  | 'to_text'
+  | 'to_integer'
+  | 'to_bigint'
+  | 'to_numeric'
+  | 'to_boolean'
+  | 'to_timestamptz'
+  | 'to_date'
+  | 'to_jsonb';
 
 export interface ColumnMap {
   sourceCol: string | null;  // null = target-only (new column not in source)
   targetCol: string;
+  targetName: string | null; // null = keep targetCol name; string = rename in output
   targetType: string;        // target DB type string
   nullable: boolean;
   defaultValue: string | null;

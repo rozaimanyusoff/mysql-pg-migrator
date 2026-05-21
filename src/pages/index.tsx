@@ -11,7 +11,7 @@ import { useAuth } from '../lib/auth-context';
 const modules = [
   { key: 'schema-designer', title: 'Schema Designer',   desc: 'Design schemas and tables visually, import from SQL/XLSX/CSV or a live DB, and execute DDL against PostgreSQL or MySQL.', href: '/schema-designer', available: true, Icon: Columns },
   { key: 'export-import',title: 'Export & Import',     desc: 'Export local data and import to production environment safely.',                 href: '/export-import',available: true,  Icon: UploadCloud },
-  { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '#',             available: false, Icon: Wand2 },
+  { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '/normalizer',   available: true,  Icon: Wand2 },
   { key: 'schema-explorer', title: 'Schema Explorer', desc: 'Browse any database, inspect columns, visualise ERD, and export migration SQL or XLSX.', href: '/schema-explorer', available: true, Icon: Network },
   { key: 'migration',    title: 'Migration',           desc: 'Map and migrate data across any two databases (MySQL ↔ PostgreSQL), with serial→UUID conversion, rollback, and job management.', href: '/migration', available: true, Icon: Database },
 ];

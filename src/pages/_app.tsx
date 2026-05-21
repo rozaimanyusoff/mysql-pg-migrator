@@ -1,11 +1,15 @@
 import type { AppProps } from 'next/app';
 import { useEffect } from 'react';
 import { useRouter } from 'next/router';
+import { Inter } from 'next/font/google';
 import axios from 'axios';
 import { Toaster } from 'sonner';
 import FooterBar from '../components/FooterBar';
 import { AuthProvider } from '../lib/auth-context';
+import { AlertProvider } from '../lib/alert-context';
 import '../styles/globals.css';
+
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
@@ -32,11 +36,13 @@ export default function App({ Component, pageProps }: AppProps) {
 
   return (
     <AuthProvider>
-      <div className="min-h-screen pb-12">
+      <AlertProvider>
+      <div className={`${inter.variable} font-sans min-h-screen pb-12`}>
         <Component {...pageProps} />
         <Toaster position="top-right" richColors closeButton />
         <FooterBar />
       </div>
+      </AlertProvider>
     </AuthProvider>
   );
 }

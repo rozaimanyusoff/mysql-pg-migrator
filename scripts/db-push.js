@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Applies all SQL files in db/migrations/ against the target PostgreSQL database.
+// Applies pending SQL migrations in db/migrations/ against the target PostgreSQL database.
+// Tracks applied migrations in dbt_migrations — already-applied files are skipped.
 // Connection order: DATABASE_URL env var → data/settings.json postgres config.
 
 const { Pool } = require('pg');
@@ -48,14 +49,53 @@ async function run() {
   const client = await pool.connect();
 
   try {
+    // Ensure dbt_migrations table exists before checking it
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS dbt_migrations (
+        id         SERIAL PRIMARY KEY,
+        name       VARCHAR(255) UNIQUE NOT NULL,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // Fetch already-applied migration names
+    const { rows } = await client.query('SELECT name FROM dbt_migrations');
+    const applied = new Set(rows.map((r) => r.name));
+
+    let skipped = 0;
+    let ran = 0;
+
     for (const file of files) {
+      const migrationName = path.basename(file, '.sql');
+
+      if (applied.has(migrationName)) {
+        console.log(`  Skipping ${file} (already applied)`);
+        skipped++;
+        continue;
+      }
+
       const filePath = path.join(migrationsDir, file);
       const sql = fs.readFileSync(filePath, 'utf8');
       process.stdout.write(`  Applying ${file} ... `);
-      await client.query(sql);
-      console.log('OK');
+
+      await client.query('BEGIN');
+      try {
+        await client.query(sql);
+        // Record as applied if the migration didn't already do it
+        await client.query(
+          `INSERT INTO dbt_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
+          [migrationName]
+        );
+        await client.query('COMMIT');
+        console.log('OK');
+        ran++;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      }
     }
-    console.log(`\n✓ ${files.length} migration(s) applied successfully.`);
+
+    console.log(`\n✓ ${ran} migration(s) applied, ${skipped} skipped.`);
   } catch (err) {
     console.error('\nFAILED:', err.message);
     process.exit(1);

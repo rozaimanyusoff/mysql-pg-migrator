@@ -3,34 +3,122 @@
 ---
 
 ## 2026-05-21
-- **plan** — Replace `xlsx` with `exceljs` (security fix)
-  - `xlsx` (SheetJS community edition) has 2 unpatched CVEs: Prototype Pollution (GHSA-4r6h-8v6p-xvw6) and ReDoS (GHSA-5pgg-2g8v-p4x9); package is abandoned, no fix available
-  - Replace with `exceljs` — actively maintained, no known CVEs, supports read/write XLSX/CSV
-  - Affected files to update: any file that imports from `xlsx` — search `from 'xlsx'` and `require('xlsx')`
-  - API differences to handle: `exceljs` uses `workbook.xlsx.readFile()` / `workbook.getWorksheet()` / `row.values[]` instead of `XLSX.read()` / `XLSX.utils.sheet_to_json()`
-  - Steps: `npm uninstall xlsx && npm install exceljs`, update all import sites, verify XLSX export (schema-explorer styled export uses xlsx), run build
-  - Status: planned
+- **fix** — Replace `xlsx` with `exceljs` (security fix)
+  - `xlsx` (SheetJS community edition) had 2 unpatched CVEs: Prototype Pollution (GHSA-4r6h-8v6p-xvw6) and ReDoS (GHSA-5pgg-2g8v-p4x9); package abandoned, no fix available
+  - Replaced with `exceljs` — actively maintained, no known CVEs
+  - Files updated: `src/pages/api/schema-explorer/export.ts` (server-side styled XLSX export), `src/lib/excel-parser.ts` (browser-side file parse via dynamic import)
+  - `export.ts`: rewrote workbook builder using `ExcelJS.Workbook`, `ws.getCell(row, col)`, `wb.xlsx.writeBuffer()`; colors converted from RGB to ARGB; freeze pane via `ws.views`
+  - `excel-parser.ts`: replaced `XLSX.read()` + `sheet_to_json()` with `workbook.xlsx.load(buffer)` + `worksheet.eachRow()`; added `cellToStr()` to handle formula/richText/Date cell values
+  - `npm uninstall xlsx && npm install exceljs`; `tsc --noEmit` clean
+  - Status: done
 
-- **plan** — Data Normalization module (new module)
-  - **Concept**: File-first normalization — source data from flat files (XLSX, CSV, JSON) rather than live DB connections. User uploads a file, system parses it, user configures normalization rules, then exports clean data or pushes directly into a target DB table.
-  - **Core use case**: e.g. upload `employees.xlsx` → system detects `department` and `position` columns have repetitive values → suggests extracting them as lookup tables with FK references → produces normalized schema + cleaned data ready for import
-  - **Planned features**:
-    - **File ingestion** — upload XLSX, CSV, JSON; parse and display as preview table (first N rows); detect column types (string, number, date, boolean) automatically
-    - **Data profiling** — per-column stats: null count, distinct count, top N values, pattern samples; flag columns with low cardinality (candidate FK/lookup columns)
-    - **Normalization suggestions** — auto-detect repetitive string columns (distinct count < threshold relative to row count) and suggest extracting to a lookup table; user confirms, renames, or dismisses each suggestion
-    - **Schema builder** — from confirmed suggestions, generate: (a) lookup tables with `id` + `value`, (b) main table with FK columns replacing the original string columns; display as editable schema before committing
-    - **Value transformation rules** — per-column rules: trim, lowercase/uppercase, phone/email format, date unification, NULL vs empty string, boolean normalization, strip currency symbols; preview result inline before apply
-    - **Deduplication** — detect duplicate rows by user-selected key columns (exact or fuzzy); preview duplicates; strategy: keep first, keep last, merge, flag only
-    - **Export / push** — export normalized data as SQL INSERT statements, CSV, or JSON; OR push directly to a target DB connection (integrates with saved connections from connections module)
-    - **Rule profiles** — save normalization rule sets as named profiles; reuse across uploads of the same file format
-  - **Suggested pages/routes**:
-    - `src/pages/normalizer.tsx` — main page
-    - `src/pages/api/normalizer/parse.ts` — parse uploaded file, return column info + preview rows
-    - `src/pages/api/normalizer/profile.ts` — run profiling on parsed data
-    - `src/pages/api/normalizer/export.ts` — generate SQL/CSV/JSON output
-    - `src/lib/normalizer/` — parser adapters (xlsx, csv, json), rule engine, schema suggester
-  - **Priority order**: File ingestion → Data profiling + FK suggestions → Schema builder → Value transformation rules → Deduplication → Export/push → Rule profiles
-  - Status: planned
+- **implement** — Data Normalization module (new module)
+  - 4-step wizard: Upload → Profile → Schema → Export; layout consistent with existing modules (sticky header, `max-w-6xl`, dark mode)
+  - **File ingestion**: drag-drop or click-to-browse; supports XLSX, CSV, JSON; file read as base64 (XLSX) or text (CSV/JSON) then POST to parse API
+  - **Data profiling**: per-column stats (null count, distinct count, top 8 values, inferred type); FK candidate detection via low-cardinality heuristic (distinctCount ≤ min(50, 20% of rows))
+  - **Normalization suggestions**: toggle-button UI per FK candidate; user includes/dismisses each before building schema
+  - **Schema builder**: displays lookup tables (SERIAL PK + TEXT UNIQUE value) and main table with FK columns; data preview table
+  - **Export**: SQL (CREATE TABLE + INSERT with lookup subqueries), CSV (FK replaced with id), JSON (all tables as arrays in one file)
+  - **New files**:
+    - `src/lib/normalizer/csv-parser.ts` — RFC-4180-compliant CSV parser (handles quotes, escaped quotes, multi-line)
+    - `src/lib/normalizer/profiler.ts` — column profiling, FK suggestion, `buildSheetResult()`
+    - `src/pages/api/normalizer/parse.ts` — parse XLSX/CSV/JSON → profile → return `SheetResult[]`
+    - `src/pages/api/normalizer/export.ts` — generate SQL/CSV/JSON from confirmed schema
+    - `src/pages/normalizer.tsx` — main 4-step wizard page
+  - **Updated**: `src/pages/index.tsx` — normalizer card `href` set to `/normalizer`, `available: true`
+  - `tsc --noEmit` clean; `npm install exceljs` already done in Plan 1
+  - Status: done
+
+- **fix** — Migration tracking, seed completeness, README accuracy
+  - `scripts/db-push.js`: rewrote to check `dbt_migrations` before applying each file — skips already-applied migrations, wraps each in `BEGIN/COMMIT/ROLLBACK`; old script applied all files blindly every run
+  - `db/migrations/005_export_history.sql`: added missing `INSERT INTO dbt_migrations (name) VALUES ('005_export_history') ON CONFLICT DO NOTHING` + header comment block
+  - `README.md` — three sections corrected:
+    - **Windows instructions**: added `python` (not `python3`) variant, note about Git Bash/WSL for `openssl`, clarified `npm run *` works on CMD/PowerShell
+    - **Core Database Tables**: added missing `dbt_schema_jobs` and `dbt_export_history`, added Migration column
+    - **App Structure tree**: added `normalizer.tsx`, `schema-explorer.tsx`, `export-import.tsx`, `normalizer/` API + lib; updated migrations list to all 5 files; updated `db-push.js` description
+  - Status: done
+
+- **revision** — Migration module layout restructure
+  - Removed the source/target partition ownership of COLUMNS and COLUMN MAPPING sections
+  - **Before**: outer horizontal `PanelGroup` (source panel | target panel); each panel had its own vertical sub-group with tables on top and columns/mapping below — tightly coupled to their respective sides
+  - **After**: outer vertical `PanelGroup`; top Panel = horizontal source‑tables | target‑tables; bottom Panel = horizontal COLUMNS (35%) | COLUMN MAPPING (65%) — shared, not owned by either side
+  - Source and target panels now contain only: connection header + search box + tables list
+  - COLUMNS panel (bottom-left): shows columns for the selected source table + Records preview — unchanged content, new position
+  - COLUMN MAPPING panel (bottom-right): mapping editor only; header updated to show `source.schema.table → target.schema.table` breadcrumb
+  - TARGET RECORDS section removed entirely (was a duplicated records view inside the target panel)
+  - Resize handles: horizontal row-resize between top/bottom panels; vertical col-resize between columns/mapping
+  - File: `src/pages/migration.tsx`; `tsc --noEmit` clean
+  - Status: done
+
+- **fix** — Normalizer DB picker: support MySQL + PostgreSQL
+  - Removed PG-only filter (`c.db_type === 'postgres'`); connection dropdown now shows all saved connections
+  - `<optgroup>` groups connections by type (PostgreSQL / MySQL)
+  - `connPayload()` helper maps `db_type === 'postgres'` → `type: 'postgresql'`, else `type: 'mysql'`
+  - State renamed from `pgSchemas/pgSchema/pgTables/pgTable` → `dbSchemas/dbSchema/dbTables/dbTable`
+  - `tsc --noEmit` clean; file: `src/pages/normalizer.tsx`
+  - Status: done
+
+- **revision** — Normalizer page: navbar + sub-header tab bar
+  - **Navbar**: clean title + Reset button + Home › Normalizer breadcrumb — matches other modules exactly
+  - **Sub-header strip** (sticky below navbar): DB picker on left | step tabs on right
+    - DB picker: PG connection → schema → table dropdowns + Load button; shows progressively as selections are made
+    - Step tabs: Upload | Profile | Schema | Export with `border-b-2 border-blue-500` active style (same as schema-explorer); done steps show ✓ icon; inaccessible steps are dimmed + disabled
+    - Active source badge (right of sub-header): shows sheet name + row count once data is loaded
+  - StepIndicator circle component no longer used in page render (tabs replace it visually)
+  - `tsc --noEmit` clean; file: `src/pages/normalizer.tsx`
+  - Status: done
+
+- **revision** — Normalizer page: header redesign + DB connection picker
+  - Header rebuilt to match other modules: `px-4 py-2.5`, icon + title, separators, steps inside header, breadcrumb nav (Home → Normalizer)
+  - DB connection picker added (leftmost, PG-only): connection → schema → table dropdowns; schema list auto-loads on connection pick, table list on schema pick; Load button fetches up to 5000 rows via schema-explorer APIs, packages as JSON and passes to `/api/normalizer/parse`
+  - `StepIndicator` moved from main content into header (centred)
+  - `Reset` button replaces "New File" (outline style, right side of header)
+  - Active-source badge + step breadcrumb remain in main content area
+  - `tsc --noEmit` clean; file: `src/pages/normalizer.tsx`
+  - Status: done
+
+- **implement** — AlertDialog system + unsaved-changes guard
+  - Installed `@radix-ui/react-alert-dialog`
+  - `src/components/AlertDialog.tsx` — reusable dialog with 4 variants: `confirm` (blue), `warning` (amber), `destructive` (red), `error` (red, OK-only, no cancel)
+  - `src/lib/alert-context.tsx` — `AlertProvider` + `useAlert()` hook exposing `showConfirm()`, `showWarning()`, `showError()`; single dialog instance mounted at app root
+  - `src/hooks/useUnsavedGuard.ts` — intercepts `routeChangeStart`, aborts navigation, shows confirm dialog; also handles browser tab close via `beforeunload`; if confirmed, resumes navigation to the originally intended URL
+  - `src/pages/_app.tsx` — wrapped with `<AlertProvider>` inside `<AuthProvider>`
+  - `src/pages/migration.tsx` — `useUnsavedGuard(dirty, message)` active; `showError` + `showWarning` imported for API error feedback
+  - Toast (sonner) unchanged — still used for success responses
+  - `tsc --noEmit` clean
+  - Status: done
+
+- **revision** — Light mode: Mist / Sage theme
+  - Replaced pure white/gray light mode with a subtle sage-tinted palette (barely perceptible green tint, feels softer not green)
+  - `tailwind.config.js`: extended `gray` palette with sage values (gray-50 #f4f6f4 → gray-950 #0b150b); dark mode unaffected (uses slate-*)
+  - `globals.css`: body canvas → `#edf0ed`; `bg-white` panels → `#f4f6f4` in light mode; dark mode `bg-white` override unchanged
+  - No component changes needed — all existing `bg-gray-*`, `text-gray-*`, `border-gray-*` classes pick up the tint automatically
+  - Status: done
+
+- **revision** — Column mapping table — TGT NAME, TGT TYPE label, CONV PG casts, button layout
+  - **TGT NAME column** (new, after Tgt Col): shows "keep" text-button by default; click to enter rename mode — amber input + ×-revert button; `targetName: string | null` added to `ColumnMap` type
+  - **TGT TYPE**: changed from editable input to read-only label — auto-updated by Tgt Col selection or Conv change
+  - **CONV**: extended `IdConversion` union + select now has `<optgroup label="Cast to PG type">` with →TEXT, →INT, →BIGINT, →NUMERIC, →BOOL, →TIMESTAMPTZ, →DATE, →JSONB; each cast updates `targetType` automatically
+  - **"+ Add target-only column"**: moved to right-aligned outline button (violet border, hover fill)
+  - Files: `src/lib/migv2/types.ts`, `src/pages/migration.tsx`; `tsc --noEmit` clean
+  - Status: done
+
+- **implement** — Column mapping table header tooltips
+  - Installed `@radix-ui/react-tooltip`; created `src/components/Tooltip.tsx` (Radix-based, Tailwind-styled, arrow + fade-in animation)
+  - Each column mapping header (`Src Col`, `Src Type`, `Tgt Col`, `Tgt Type`, `Conv`, `FK Ref`, `✓`) now has a dashed underline and tooltip on hover
+  - Tooltip content: full column name + description + usage example, formatted as multi-line text
+  - Empty/arrow columns (`→`, delete) have no tooltip
+  - `tsc --noEmit` clean; files: `src/components/Tooltip.tsx`, `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration module layout — 3-row vertical split
+  - Final layout: outer vertical `PanelGroup` with **3 Panels** — Tables (top), Column Mapping (middle, full width), Records (bottom, full width)
+  - Top Panel: horizontal source | target table panels — connection header + search + table list only
+  - Middle Panel (Column Mapping, 38%): full-width mapping editor; PK/FK/NN badges merged inline into Src Col cell; breadcrumb `source → target` in header
+  - Bottom Panel (Records, 22%): full-width source table data preview; source table name in header
+  - Removed the previous horizontal inner PanelGroup that paired Records (left) with Column Mapping (right)
+  - `tsc --noEmit` clean; file: `src/pages/migration.tsx`
+  - Status: done
 
 
 - **fix** — Migration: job load now fully restores tableMaps, selectedMapId, srcSchema, tgtDefaultSchema, and target table highlight
@@ -171,6 +259,45 @@
   - Files: `src/pages/export-import.tsx`, `package.json`
   - Status: done
 
+- **implement** — Normalizer: Guide popover
+  - Added `GuidePopover` component in `src/pages/normalizer.tsx` — custom popover (no Radix Popover dependency), click-outside + Escape key to close
+  - `? Guide` button placed in the navbar right side (before breadcrumb separator); highlights blue when open
+  - 5 sections: How it works, When to apply, Profile step, Schema step, Saved Jobs
+  - Content explains the 4-step flow, FK candidate heuristic, lookup table structure, schema panel layout, and localStorage job persistence
+  - Popover: `w-[420px]`, `max-h-[70vh]` scrollable, `shadow-xl`, positioned `right-0 top-full` relative to the button
+  - Status: done
+
+- **revision** — Normalizer: 3-panel layout with saved jobs + schema split + header actions
+  - **Right collapsible panel**: saved jobs panel (`w-60` / `w-8` toggle with CSS `transition-[width]`); shows vertical "SAVED JOBS" label when collapsed; "Save current session" button at top; job list (name, date, step) with Load/Delete per entry; persistence via `localStorage` key `normalizer_jobs` (max 10 jobs, full session data incl. `allRows`)
+  - **Left panel min width**: `minSize={18}` on both Profile and Schema left panels to prevent over-collapse
+  - **"Build Schema" moved to sub-header**: outline button (`border-blue-300 text-blue-600`) visible only when step=2 and data is loaded; calls existing `handleConfirmSchema()`
+  - **"Save & Export" in sub-header**: outline button (`border-green-400 text-green-600`) visible only when step=3; saves session to localStorage then advances to step 4
+  - **Schema step layout**: left panel shows lookup tables list; center panel shows main table; `SchemaPreview` component renders below both panels (outside `PanelGroup`) spanning full width of left+center area — `max-h-52` scrollable
+  - **New session types**: `NormalizerJob` interface; `handleSaveJob`, `handleLoadJob`, `handleDeleteJob` functions; `savedJobs` + `savedJobsOpen` + `saveError` state
+  - Step components split into focused sub-components: `ProfileLeftPanel`, `ProfileRightPanel`, `SchemaLeftPanel`, `SchemaMainPanel`, `SchemaPreview`, `SavedJobsPanel`
+  - `tsc --noEmit` clean; file: `src/pages/normalizer.tsx`
+  - Status: done
+
+- **revision** — Normalizer: full-width panel layout, no cards
+  - Removed `max-w-6xl mx-auto` container constraint — page now fills full viewport width like other modules
+  - Page root changed to `flex flex-col h-screen overflow-hidden`; main area is `flex-1 min-h-0 overflow-hidden`
+  - ProfileStep replaced with `PanelGroup orientation="horizontal"` (left panel 24% | resize handle | right panel); uses `panel-scroll` for scrollable areas
+  - All `bg-white border border-gray-200 rounded-xl` card wrappers removed; sections use flat separator-style headers (`border-b border-gray-200 bg-gray-50`)
+  - SchemaStep: flat full-width scrollable layout; lookup table blocks retain border (no rounded/shadow)
+  - UploadStep / ExportStep: centered scroll with `flex items-start justify-center py-10`; info block is flat list without card wrapper
+  - `tsc --noEmit` clean; file: `src/pages/normalizer.tsx`
+  - Status: done
+
+- **revision** — Normalizer: ProfileStep two-panel layout + duplicate row detection
+  - Restructured `ProfileStep` from single-column layout to a two-column flex layout
+  - **Left panel** (`w-72 shrink-0`): sheet selector (stacked buttons when multiple sheets), Summary card (Rows, Columns, FK Candidates, Duplicate Rows), FK/Lookup suggestions as vertical toggle list, Build Schema button (full width, blue)
+  - **Right panel** (`flex-1`): Column Profile table (Column, Type, Nulls, Distinct, Top Values, FK? columns); FK? cell changed to a clickable toggle button
+  - **Duplicate row detection**: inline IIFE using `JSON.stringify` on `sheet.allRows`, counts duplicates via `Set`; stat shows rose coloring if >0, green if 0
+  - Summary card uses a consistent key/value row pattern with muted label + bold value
+  - FK suggestions moved from main content area into left panel vertical list; each suggestion has a toggle button to include/exclude
+  - Files: `src/pages/normalizer.tsx`; `tsc --noEmit` clean
+  - Status: done
+
 - **revision** — Export & Import: full layout redesign — 5-panel flow, tab header options, Saved Jobs
   - **Layout**: replaced 2-column card layout with a full-screen 5-panel horizontal flow matching schema designer/explorer style; sticky header + toolbar row + panels fill remaining height
   - **Panel 1 (Connection, w-52)**: clickable list of all saved connections with DB type badge (PG/MySQL), host, port; click to select/deselect
@@ -208,6 +335,17 @@
   - Refactored XLSX export (`src/pages/api/schema-explorer/export.ts`) with styled workbook: title row, generated timestamp, blue column headers, per-table group rows, alternating data row fill, and outer/inner borders via helper functions (`makeCell`, `setRange`, `THIN`, `MEDIUM`)
   - Column queries batched per connection (single query for all selected tables) instead of one query per table — improves perf on large selections; both PG and MySQL paths updated
   - UI updates in `src/pages/schema-explorer.tsx` and `src/styles/globals.css` to align with new export flow
+  - Status: done
+
+## 2026-05-22
+- **revision** — Normalizer: duplicate rows preview + smart duplicate detection
+  - **Smart duplicate detection**: added `DUP_SKIP_TYPES = new Set(['TIMESTAMP', 'DATE', 'UUID'])` at module level; `defaultColsForDupe(sheet)` helper auto-excludes datetime-type columns and 100%-unique columns (distinctCount ≥ total - nullCount) from duplicate key computation
+  - **"Dup" checkbox column in Column Profile table**: each column has a checkbox letting users manually include/exclude it from duplicate comparison; `colsForDupe: Set<number>` state lifted to `NormalizerPage`; `handleToggleColForDupe` toggles individual columns; state resets (via `defaultColsForDupe`) on parse, sheet change, job load, and reset
+  - **Duplicate count "Preview" button** in Analysis Summary: clicking it switches the center panel to Duplicate Rows view (`setShowDupes(true)`)
+  - **Duplicate rows preview tab in `ProfileRightPanel`**: tab header with "Column Profile" | "Duplicate Rows" tabs; `showDupes` state controls which view renders; duplicate groups computed with `Map<key, string[][]>`, sorted by group size descending; group headers show "× N copies" in rose; excluded columns dimmed with "excl" label
+  - `showDupes` state (`useState(false)`) added to `NormalizerPage`; reset to `false` in `handleParsed`, `handleSheetChange`, and `reset`
+  - Props wired: `onShowDupes={() => setShowDupes(true)}` into `ProfileLeftPanel`; `showDupes` + `onSetShowDupes={setShowDupes}` into `ProfileRightPanel`
+  - `tsc --noEmit` clean; file: `src/pages/normalizer.tsx`
   - Status: done
 
 ## 2026-05-21

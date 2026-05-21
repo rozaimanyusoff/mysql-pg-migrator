@@ -6,7 +6,14 @@ html { scroll-behavior: smooth; }
 
 @layer base {
   body {
-    @apply bg-white text-gray-900 transition-colors duration-200;
+    /* Sage canvas — the page background in light mode */
+    background-color: #edf0ed;
+    @apply text-gray-900 transition-colors duration-200;
+  }
+
+  /* Panels that use bg-white get the sage surface instead of pure white */
+  :not(.dark) .bg-white {
+    background-color: #f4f6f4;
   }
 
   html.dark body {
@@ -14,7 +21,7 @@ html { scroll-behavior: smooth; }
   }
 
   html.dark .bg-white {
-    @apply bg-slate-900;
+    @apply bg-slate-900 !important;
   }
 
   html.dark .bg-gray-50 {
