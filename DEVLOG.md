@@ -3,6 +3,14 @@
 ---
 
 ## 2026-05-22
+- **implement** — Data Normalizer: Drizzle ORM export + build schema in PostgreSQL
+  - Added `'drizzle'` export mode to `ExportMode` type and export grid (4 cards, 2-col grid)
+  - `generateDrizzle()` in `src/pages/api/normalizer/export.ts`: generates `pgTable` definitions with `serial`, `text`, `integer`, `bigint`, `numeric`, `boolean`, `timestamp`, `date` mapped from inferred PG types; lookup tables get `text('value').notNull().unique()`; FK columns reference parent table via `.references()`; downloads as `.ts`
+  - New API route `src/pages/api/normalizer/execute.ts`: accepts `{ conn: ExplorerConn, sheet, confirmedLookups }`, generates CREATE TABLE IF NOT EXISTS statements (no INSERTs), executes via `withPg`, returns per-statement log with ok/error status
+  - `ExportStep` component updated: added "Build Schema in PostgreSQL" section — fetches saved PG connections on mount, connection picker, Execute button, execution log panel showing success/error per statement
+  - Status: done
+
+
 - **implement** — Flow-to-Database Designer module (`/flow-designer`)
   - 6-step guided wizard: Business Flow Canvas → Data Flow Review → Entities → Relationships → ERD → Outputs
   - **Business Flow Canvas**: React Flow canvas with 6 custom node types (Start, Process, Decision, Approval, Data Object, End); node metadata editor panel (actor, action, business object, operation type, input/output data, status before/after, decision condition, related document, remarks)

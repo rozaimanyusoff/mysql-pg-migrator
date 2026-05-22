@@ -7,7 +7,7 @@ import {
   Upload, FileSpreadsheet, FileText, FileJson,
   ChevronRight, ChevronLeft, Check, X, Download, RefreshCw, Loader2,
   Table2, Wand2, Database, AlertTriangle, Info,
-  BarChart2, Hash, Layers, Save, Trash2, Clock,
+  BarChart2, Hash, Layers, Save, Trash2, Clock, Play, Terminal,
 } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { useAuth } from '../lib/auth-context';
@@ -67,7 +67,7 @@ interface NormalizerJob {
 }
 
 type Step = 1 | 2 | 3 | 4;
-type ExportMode = 'sql' | 'csv' | 'json';
+type ExportMode = 'sql' | 'csv' | 'json' | 'drizzle';
 
 // Columns to auto-exclude from duplicate comparison (overrideable by the user)
 const DUP_SKIP_TYPES = new Set(['TIMESTAMP', 'DATE', 'UUID']);
@@ -644,6 +644,23 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Build-in-PG state
+  const [pgConns, setPgConns] = useState<ConnRow[]>([]);
+  const [selectedPgConn, setSelectedPgConn] = useState<number | null>(null);
+  const [execLoading, setExecLoading] = useState(false);
+  const [execLog, setExecLog] = useState<{ sql: string; ok: boolean; text: string }[] | null>(null);
+  const [execError, setExecError] = useState<string | null>(null);
+
+  useEffect(() => {
+    axios.get<{ connections: ConnRow[] }>('/api/connections', { headers: authH() })
+      .then(r => {
+        const pg = r.data.connections.filter(c => c.db_type === 'postgres');
+        setPgConns(pg);
+        if (pg.length === 1) setSelectedPgConn(pg[0].id);
+      })
+      .catch(() => {});
+  }, []);
+
   const download = async () => {
     setLoading(true); setError(null);
     try {
@@ -652,20 +669,44 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
         { mode, sheet: { tableName: sheet.tableName, headers: sheet.headers, allRows: sheet.allRows }, confirmedLookups },
         { headers: { ...authH(), 'Content-Type': 'application/json' }, responseType: 'blob' },
       );
-      const ext = mode === 'sql' ? 'sql' : mode === 'csv' ? 'csv' : 'json';
+      const ext = mode === 'sql' ? 'sql' : mode === 'csv' ? 'csv' : mode === 'drizzle' ? 'ts' : 'json';
+      const name = mode === 'drizzle' ? `${sheet.tableName}_schema.ts` : `${sheet.tableName}_normalized.${ext}`;
       const url = URL.createObjectURL(new Blob([resp.data as BlobPart]));
       const a = document.createElement('a'); a.href = url;
-      a.download = `${sheet.tableName}_normalized.${ext}`; a.click();
+      a.download = name; a.click();
       URL.revokeObjectURL(url);
     } catch (err: unknown) {
       setError(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
     } finally { setLoading(false); }
   };
 
+  const executeSchema = async () => {
+    const conn = pgConns.find(c => c.id === selectedPgConn);
+    if (!conn) return;
+    setExecLoading(true); setExecLog(null); setExecError(null);
+    try {
+      const explorerConn = {
+        type: 'postgresql' as const,
+        host: conn.host, port: conn.port,
+        database: conn.database_name,
+        username: conn.username, password: conn.password_enc ?? '',
+      };
+      const { data } = await axios.post<{ log: { sql: string; ok: boolean; text: string }[] }>(
+        '/api/normalizer/execute',
+        { conn: explorerConn, sheet: { tableName: sheet.tableName, headers: sheet.headers, allRows: sheet.allRows }, confirmedLookups },
+        { headers: authH() },
+      );
+      setExecLog(data.log);
+    } catch (err: unknown) {
+      setExecError(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
+    } finally { setExecLoading(false); }
+  };
+
   const modeOptions: { key: ExportMode; label: string; desc: string }[] = [
-    { key: 'sql', label: 'SQL', desc: 'CREATE TABLE + INSERT statements (PostgreSQL)' },
-    { key: 'csv', label: 'CSV', desc: 'Normalised flat file with FK id columns' },
-    { key: 'json', label: 'JSON', desc: 'All tables as JSON arrays in a single file' },
+    { key: 'sql',    label: 'SQL',    desc: 'CREATE TABLE + INSERT statements (PostgreSQL)' },
+    { key: 'csv',    label: 'CSV',    desc: 'Normalised flat file with FK id columns' },
+    { key: 'json',   label: 'JSON',   desc: 'All tables as JSON arrays in a single file' },
+    { key: 'drizzle', label: 'Drizzle ORM', desc: 'TypeScript schema for Drizzle ORM (pgTable)' },
   ];
 
   return (
@@ -685,7 +726,7 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
 
         <div className="space-y-2">
           <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Export Format</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {modeOptions.map(opt => (
               <button key={opt.key} onClick={() => setMode(opt.key)}
                 className={`p-3 rounded-xl border text-left transition-colors space-y-1
@@ -707,8 +748,69 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
           <button onClick={download} disabled={loading}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
             {loading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-            {loading ? 'Generating…' : `Download .${mode.toUpperCase()}`}
+            {loading ? 'Generating…' : mode === 'drizzle' ? 'Download .TS' : `Download .${mode.toUpperCase()}`}
           </button>
+        </div>
+
+        {/* Build in PostgreSQL */}
+        <div className="border-t border-gray-200 dark:border-slate-700 pt-5 space-y-3">
+          <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 flex items-center gap-1.5">
+            <Database size={12} className="text-blue-500" /> Build Schema in PostgreSQL
+          </p>
+          <p className="text-[11px] text-gray-400 dark:text-slate-500">
+            Execute CREATE TABLE statements directly against a saved PostgreSQL connection. No data is inserted — only the table structure is created.
+          </p>
+
+          {pgConns.length === 0 ? (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400">No PostgreSQL connections saved. Add one in Settings.</p>
+          ) : (
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedPgConn ?? ''}
+                onChange={e => setSelectedPgConn(Number(e.target.value) || null)}
+                className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="">— select connection —</option>
+                {pgConns.map(c => (
+                  <option key={c.id} value={c.id}>{c.label} ({c.host}:{c.port}/{c.database_name})</option>
+                ))}
+              </select>
+              <button
+                onClick={() => void executeSchema()}
+                disabled={!selectedPgConn || execLoading}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition-colors shrink-0"
+              >
+                {execLoading ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                {execLoading ? 'Running…' : 'Execute'}
+              </button>
+            </div>
+          )}
+
+          {execError && (
+            <div className="flex items-start gap-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-3 py-2.5 text-xs text-red-700 dark:text-red-300">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {execError}
+            </div>
+          )}
+
+          {execLog && (
+            <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
+                <Terminal size={11} className="text-gray-400 dark:text-slate-500" />
+                <span className="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Execution Log</span>
+                <span className={`ml-auto text-[10px] font-medium ${execLog.every(l => l.ok) ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {execLog.every(l => l.ok) ? `All ${execLog.length} statement(s) succeeded` : `${execLog.filter(l => !l.ok).length} error(s)`}
+                </span>
+              </div>
+              <div className="divide-y divide-gray-100 dark:divide-slate-800">
+                {execLog.map((line, i) => (
+                  <div key={i} className={`flex items-start gap-2 px-3 py-2 text-[11px] font-mono ${line.ok ? 'text-gray-700 dark:text-slate-300' : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20'}`}>
+                    <span className={`shrink-0 font-bold ${line.ok ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{line.ok ? '✓' : '✗'}</span>
+                    <span className="break-all">{line.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
