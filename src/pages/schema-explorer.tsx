@@ -2,6 +2,7 @@
 import Head from 'next/head';
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, createContext } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import axios from 'axios';
 import {
   ReactFlow, Background, MiniMap,
@@ -18,6 +19,7 @@ import {
   ExternalLink, Printer, ArrowLeft, Layers, ZoomIn, ZoomOut,
   ArrowRight, ArrowDown, ArrowLeft as ArrowLeftIcon, ArrowUp,
   AlignJustify, LayoutGrid, SortAsc, GitBranch, Minus, Hand, MousePointer2,
+  AlertCircle, Wand2, CheckCircle2, Send,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 import type { ConnectionRow } from './api/connections/index';
@@ -33,7 +35,17 @@ function getStoredToken(): string {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type ActiveTab = 'columns' | 'erd' | 'export';
+type ActiveTab = 'columns' | 'erd' | 'export' | 'advisor';
+
+type AdvisorConfidence = 'high' | 'low' | 'unresolved';
+interface AdvisorSuggestion {
+  id: string;               // "schema.table::colName" — unique key
+  fromTableKey: string;     // "schema.table"
+  fromCol: string;
+  toTableKey: string | null;  // inferred target, null when unresolved
+  toCol: string;              // always "id"
+  confidence: AdvisorConfidence;
+}
 type LayoutDir     = 'LR' | 'TB' | 'RL' | 'BT';
 type LayoutSpacing = 'compact' | 'normal' | 'loose';
 type LayoutSort    = 'none' | 'name' | 'columns' | 'connections';
@@ -645,6 +657,7 @@ function ERDInner({
 export default function SchemaExplorer() {
   useAuth(); // ensure auth context is mounted
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${getStoredToken()}` }), []);
+  const router = useRouter();
 
   // Saved connections
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
@@ -718,8 +731,14 @@ export default function SchemaExplorer() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('columns');
 
   // Export
-  const [exportFormat, setExportFormat] = useState<'sql' | 'xlsx'>('sql');
+  const [exportFormat, setExportFormat] = useState<'sql' | 'xlsx' | 'drizzle' | 'prisma' | 'typeorm'>('sql');
   const [exporting, setExporting] = useState(false);
+
+  // FK Advisor
+  const [advisorSuggestions, setAdvisorSuggestions] = useState<AdvisorSuggestion[]>([]);
+  const [advisorAccepted, setAdvisorAccepted] = useState<Set<string>>(new Set());
+  const [advisorManual, setAdvisorManual] = useState<Record<string, string>>({});
+  const [sendingToDesigner, setSendingToDesigner] = useState(false);
 
   // Canvas capture (state lives here so Export tab can show/control it)
   const [paperSize, setPaperSize] = useState<PaperSize>('a4');
@@ -888,11 +907,144 @@ export default function SchemaExplorer() {
       const url = URL.createObjectURL(new Blob([resp.data as BlobPart]));
       const a = document.createElement('a');
       a.href = url;
-      a.download = exportFormat === 'xlsx' ? 'schema-overview.xlsx' : 'migration.sql';
+      const dlMap: Record<string, string> = {
+        xlsx: 'schema-overview.xlsx', sql: 'migration.sql',
+        drizzle: 'drizzle-schema.ts', prisma: 'schema.prisma', typeorm: 'typeorm-entities.ts',
+      };
+      a.download = dlMap[exportFormat] ?? 'export.txt';
       a.click();
       URL.revokeObjectURL(url);
     } catch { /* ignore */ } finally {
       setExporting(false);
+    }
+  };
+
+  // ── FK Advisor ────────────────────────────────────────────────────────────
+
+  const computeAdvisorSuggestions = useCallback(() => {
+    const allKeys = Object.keys(columnsCache);
+    const tableNames = allKeys.map(k => ({ key: k, name: k.split('.').pop()!.toLowerCase() }));
+    const suggestions: AdvisorSuggestion[] = [];
+
+    for (const key of allKeys) {
+      const cached = columnsCache[key];
+      if (!cached) continue;
+
+      for (const col of cached.columns) {
+        if (!col.name.endsWith('_id') || col.isFk || col.isPk) continue;
+
+        const prefix = col.name.slice(0, -3); // strip '_id'
+        const candidates: string[] = [
+          prefix,
+          prefix + 's',
+          prefix + 'es',
+          prefix.endsWith('y') ? prefix.slice(0, -1) + 'ies' : '',
+          prefix.endsWith('s') ? prefix.slice(0, -1) : '',
+        ].filter(Boolean);
+
+        let toTableKey: string | null = null;
+        let confidence: AdvisorConfidence = 'unresolved';
+
+        for (const candidate of candidates) {
+          const match = tableNames.find(t => t.name === candidate && t.key !== key);
+          if (match) {
+            toTableKey = match.key;
+            confidence = candidate === prefix || candidate === prefix + 's' ? 'high' : 'low';
+            break;
+          }
+        }
+
+        suggestions.push({ id: `${key}::${col.name}`, fromTableKey: key, fromCol: col.name, toTableKey, toCol: 'id', confidence });
+      }
+    }
+
+    setAdvisorSuggestions(suggestions);
+    // Auto-accept high + low confidence suggestions that have a resolved target
+    setAdvisorAccepted(new Set(suggestions.filter(s => s.toTableKey).map(s => s.id)));
+    setAdvisorManual({});
+  }, [columnsCache]);
+
+  // Auto-scan when user switches to the advisor tab
+  const computeAdvisorRef = useRef(computeAdvisorSuggestions);
+  computeAdvisorRef.current = computeAdvisorSuggestions;
+  useEffect(() => {
+    if (activeTab === 'advisor' && Object.keys(columnsCache).length > 0) {
+      computeAdvisorRef.current();
+    }
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const PG_INTERNAL_TO_DDL: Record<string, string> = {
+    int4: 'INTEGER', int2: 'SMALLINT', int8: 'BIGINT',
+    serial: 'SERIAL', bigserial: 'BIGSERIAL', smallserial: 'SMALLSERIAL',
+    bool: 'BOOLEAN', float4: 'REAL', float8: 'FLOAT8',
+    bpchar: 'CHAR', timestamptz: 'TIMESTAMPTZ',
+  };
+
+  const buildAdvisorDdl = useCallback((accepted: Set<string>, manual: Record<string, string>): string => {
+    // Build effective FK map: "tableKey::colName" → { toTable, toCol }
+    const fkApply = new Map<string, { toTable: string; toCol: string }>();
+    for (const s of advisorSuggestions) {
+      if (!accepted.has(s.id)) continue;
+      const targetKey = manual[s.id] ?? s.toTableKey;
+      if (!targetKey) continue;
+      fkApply.set(s.id, { toTable: targetKey.split('.').pop()!, toCol: s.toCol });
+    }
+
+    const stmts: string[] = [`-- FK Advisor schema — ${new Date().toISOString()}`];
+
+    for (const [key, cached] of Object.entries(columnsCache)) {
+      if (!cached) continue;
+      const parts = key.split('.');
+      const [schema, table] = parts.length === 2 ? parts : ['public', parts[0]];
+
+      const colDefs: string[] = [];
+      for (const col of cached.columns) {
+        const dt = col.dataType.toLowerCase();
+        const base = PG_INTERNAL_TO_DDL[dt] ?? col.fullType.toUpperCase();
+        const notNull = !col.nullable ? ' NOT NULL' : '';
+        const pk = col.isPk ? ' PRIMARY KEY' : '';
+        const def = col.defaultValue && !col.isPk ? ` DEFAULT ${col.defaultValue}` : '';
+
+        const fkKey = `${key}::${col.name}`;
+        const fk = fkApply.get(fkKey);
+        let ref = '';
+        if (fk) {
+          ref = ` REFERENCES "${fk.toTable}"("${fk.toCol}")`;
+        } else if (col.isFk && col.fkRef) {
+          const fkParts = col.fkRef.split('.');
+          if (fkParts.length >= 2) {
+            ref = ` REFERENCES "${fkParts[fkParts.length - 2]}"("${fkParts[fkParts.length - 1]}")`;
+          }
+        }
+
+        colDefs.push(`  "${col.name}" ${base}${notNull}${def}${pk}${ref}`);
+      }
+
+      const tbl = schema === 'public' ? `"${table}"` : `"${schema}"."${table}"`;
+      stmts.push(`\nCREATE TABLE IF NOT EXISTS ${tbl} (\n${colDefs.join(',\n')}\n);`);
+    }
+
+    return stmts.join('\n');
+  }, [advisorSuggestions, columnsCache, PG_INTERNAL_TO_DDL]);
+
+  const sendToDesigner = async () => {
+    const accepted = advisorSuggestions.filter(s => advisorAccepted.has(s.id));
+    const appliedCount = accepted.filter(s => (advisorManual[s.id] ?? s.toTableKey)).length;
+
+    const ddl = buildAdvisorDdl(advisorAccepted, advisorManual);
+    const connLabel = selectedConn?.label ?? selectedConn?.host ?? 'db';
+    const jobName = `FK Advisor — ${connLabel}/${selectedDb} (${new Date().toLocaleDateString()})`;
+
+    setSendingToDesigner(true);
+    try {
+      await axios.post('/api/schema-generator/jobs', {
+        job_name: jobName,
+        description: `Imported from FK Advisor — ${appliedCount} inferred FK relationship(s) applied`,
+        schema_sql: ddl,
+      }, { headers: authHeader });
+      void router.push('/schema-designer');
+    } catch { /* ignore */ } finally {
+      setSendingToDesigner(false);
     }
   };
 
@@ -1136,6 +1288,7 @@ export default function SchemaExplorer() {
                 { key: 'columns', label: 'Columns', Icon: Columns },
                 { key: 'erd',     label: 'ERD',     Icon: Network },
                 { key: 'export',  label: 'Export',  Icon: Download },
+                { key: 'advisor', label: 'FK Advisor', Icon: Wand2 },
               ] as { key: ActiveTab; label: string; Icon: React.FC<{size:number}> }[]).map(({ key, label, Icon }) => (
                 <button key={key} onClick={() => setActiveTab(key)}
                   className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${
@@ -1147,6 +1300,11 @@ export default function SchemaExplorer() {
                   {key === 'erd' && erdTables.size > 0 && (
                     <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400 text-[10px] font-semibold">
                       {erdTables.size}
+                    </span>
+                  )}
+                  {key === 'advisor' && advisorSuggestions.length > 0 && (
+                    <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 text-[10px] font-semibold">
+                      {advisorSuggestions.length}
                     </span>
                   )}
                 </button>
@@ -1203,7 +1361,7 @@ export default function SchemaExplorer() {
                         </div>
                         <div>
                           <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Download size={11} className="text-blue-500" /> Export tab</p>
-                          <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Download selected tables as SQL (CREATE TABLE + FK constraints) or XLSX (single-sheet schema overview). Also export the ERD canvas as a PNG or send to the printer.</p>
+                          <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Download selected tables as SQL, XLSX, or ORM schema (Drizzle, Prisma, TypeORM). Also export the ERD canvas as a PNG or send to the printer.</p>
                         </div>
                       </div>
                     </div>
@@ -1400,6 +1558,177 @@ export default function SchemaExplorer() {
                 );
               })()}
 
+              {/* FK Advisor tab */}
+              {activeTab === 'advisor' && (
+                <div className="h-full overflow-auto p-6">
+                  <div className="max-w-2xl space-y-5">
+
+                    {/* Header */}
+                    <div>
+                      <h2 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-1">FK Advisor</h2>
+                      <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
+                        Scans loaded tables for <code className="font-mono bg-gray-100 dark:bg-slate-800 px-1 rounded">*_id</code> columns that have no FK constraint defined in the database. Suggests the most likely relationship target using naming conventions, then sends the revised schema to Schema Designer with all accepted FKs applied.
+                      </p>
+                    </div>
+
+                    {/* Not connected / no columns yet */}
+                    {Object.keys(columnsCache).length === 0 ? (
+                      <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20">
+                        <AlertCircle size={15} className="text-amber-500 shrink-0 mt-0.5" />
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                          No table columns loaded yet. Connect to a database and load at least one schema first.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Scan bar */}
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-gray-500 dark:text-slate-400">
+                            <strong className="text-gray-700 dark:text-slate-300">{Object.keys(columnsCache).length}</strong> tables loaded
+                            {advisorSuggestions.length > 0 && (
+                              <> · <strong className="text-gray-700 dark:text-slate-300">{advisorSuggestions.length}</strong> potential FK(s) found</>
+                            )}
+                          </span>
+                          <button onClick={computeAdvisorSuggestions}
+                            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-xs text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                            <RefreshCw size={11} /> Re-scan
+                          </button>
+                        </div>
+
+                        {/* No suggestions */}
+                        {advisorSuggestions.length === 0 && (
+                          <div className="flex items-center gap-3 p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20">
+                            <CheckCircle2 size={15} className="text-emerald-500 shrink-0" />
+                            <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                              No missing FK relationships detected — all <code className="font-mono">*_id</code> columns either already have constraints or no matching table was inferred.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Suggestions list */}
+                        {advisorSuggestions.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Suggested relationships</p>
+                              <span className="text-[10px] text-gray-400 dark:text-slate-500 ml-auto">
+                                {advisorAccepted.size} accepted · {advisorSuggestions.filter(s => !s.toTableKey && !advisorManual[s.id]).length} unresolved
+                              </span>
+                            </div>
+
+                            <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden divide-y divide-gray-100 dark:divide-slate-800">
+                              {advisorSuggestions.map(s => {
+                                const isAccepted = advisorAccepted.has(s.id);
+                                const effectiveTarget = advisorManual[s.id] ?? s.toTableKey;
+                                const canAccept = !!effectiveTarget;
+
+                                return (
+                                  <div key={s.id} className={`flex items-center gap-3 px-4 py-3 text-xs transition-colors ${
+                                    isAccepted ? 'bg-white dark:bg-slate-900' : 'bg-gray-50/60 dark:bg-slate-800/40'
+                                  }`}>
+                                    {/* Accept toggle */}
+                                    <button
+                                      onClick={() => {
+                                        if (!canAccept) return;
+                                        setAdvisorAccepted(prev => {
+                                          const next = new Set(prev);
+                                          next.has(s.id) ? next.delete(s.id) : next.add(s.id);
+                                          return next;
+                                        });
+                                      }}
+                                      disabled={!canAccept}
+                                      title={canAccept ? (isAccepted ? 'Click to reject' : 'Click to accept') : 'Resolve target first'}
+                                      className={`shrink-0 w-5 h-5 rounded flex items-center justify-center border transition-colors ${
+                                        isAccepted
+                                          ? 'border-emerald-500 bg-emerald-500 text-white'
+                                          : canAccept
+                                            ? 'border-gray-300 dark:border-slate-600 text-gray-400 hover:border-emerald-400 hover:text-emerald-500'
+                                            : 'border-gray-200 dark:border-slate-700 text-gray-300 dark:text-slate-700 cursor-not-allowed'
+                                      }`}>
+                                      {isAccepted ? <Check size={11} /> : <Minus size={11} />}
+                                    </button>
+
+                                    {/* From */}
+                                    <div className="flex-1 min-w-0">
+                                      <span className="font-mono text-gray-500 dark:text-slate-500">{s.fromTableKey}.</span>
+                                      <span className="font-mono font-medium text-gray-800 dark:text-slate-200">{s.fromCol}</span>
+                                    </div>
+
+                                    <ArrowRight size={13} className="shrink-0 text-gray-300 dark:text-slate-600" />
+
+                                    {/* To — resolved or picker */}
+                                    <div className="flex-1 min-w-0">
+                                      {effectiveTarget ? (
+                                        <span className={`font-mono ${isAccepted ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-slate-500 line-through'}`}>
+                                          {effectiveTarget}.{s.toCol}
+                                        </span>
+                                      ) : (
+                                        <select
+                                          value={advisorManual[s.id] ?? ''}
+                                          onChange={e => {
+                                            const val = e.target.value;
+                                            setAdvisorManual(prev => ({ ...prev, [s.id]: val }));
+                                            if (val) setAdvisorAccepted(prev => new Set(prev).add(s.id));
+                                          }}
+                                          className="text-[11px] font-mono rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[180px]">
+                                          <option value="">— pick target table —</option>
+                                          {Object.keys(columnsCache).filter(k => k !== s.fromTableKey).map(k => (
+                                            <option key={k} value={k}>{k}</option>
+                                          ))}
+                                        </select>
+                                      )}
+                                    </div>
+
+                                    {/* Confidence badge */}
+                                    <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                                      s.confidence === 'high'       ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400' :
+                                      s.confidence === 'low'        ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400' :
+                                                                      'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400'
+                                    }`}>
+                                      {s.confidence}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Legend */}
+                            <div className="flex items-center gap-4 text-[11px] text-gray-400 dark:text-slate-500 pt-1">
+                              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-emerald-400" /> high — exact name match</span>
+                              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-amber-400" /> low — plural/singular guess</span>
+                              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-gray-300 dark:bg-slate-600" /> unresolved — manual pick required</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Send to Designer */}
+                        {advisorSuggestions.length > 0 && (
+                          <div className="pt-5 border-t border-gray-100 dark:border-slate-800 space-y-3">
+                            <div>
+                              <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-0.5">Send to Designer</h3>
+                              <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
+                                Generates DDL for all <strong>{Object.keys(columnsCache).length}</strong> loaded tables with <strong>{advisorAccepted.size}</strong> inferred FK(s) applied as <code className="font-mono bg-gray-100 dark:bg-slate-800 px-1 rounded">REFERENCES</code> constraints, saves it as a new Schema Designer job, and opens the designer.
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => void sendToDesigner()}
+                              disabled={sendingToDesigner || advisorAccepted.size === 0}
+                              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors"
+                            >
+                              <Send size={14} />
+                              {sendingToDesigner ? 'Saving…' : `Send to Designer (${advisorAccepted.size} FK applied)`}
+                            </button>
+                            <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                              In Schema Designer: load the saved job → review → export ORM (Drizzle / Prisma / TypeORM).
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                  </div>
+                </div>
+              )}
+
               {/* Export tab */}
               {activeTab === 'export' && (
                 <div className="h-full overflow-auto p-6">
@@ -1413,13 +1742,15 @@ export default function SchemaExplorer() {
                     </div>
 
                     {/* Format picker */}
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Format</p>
-                      <div className="flex gap-3">
+
+                      {/* Schema files */}
+                      <div className="flex gap-2">
                         {([
-                          { v: 'sql',  label: 'Migration SQL',       Icon: Code2,           desc: 'CREATE TABLE statements with FK constraints' },
-                          { v: 'xlsx', label: 'Schema Overview XLSX', Icon: FileSpreadsheet,  desc: 'Single sheet — all tables × columns in one file' },
-                        ] as { v: 'sql'|'xlsx'; label: string; Icon: React.FC<{size:number;className:string}>; desc: string }[]).map(({ v, label, Icon, desc }) => (
+                          { v: 'sql' as const,  label: 'Migration SQL',  Icon: Code2,          desc: 'CREATE TABLE + FK constraints' },
+                          { v: 'xlsx' as const, label: 'Schema XLSX',    Icon: FileSpreadsheet, desc: 'Single sheet — all columns' },
+                        ]).map(({ v, label, Icon, desc }) => (
                           <button key={v} onClick={() => setExportFormat(v)}
                             className={`flex-1 flex flex-col items-start gap-1 p-3 rounded-xl border-2 text-left transition-colors ${
                               exportFormat === v
@@ -1427,12 +1758,34 @@ export default function SchemaExplorer() {
                                 : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                             }`}>
                             <div className="flex items-center gap-2">
-                              <Icon size={15} className={exportFormat === v ? 'text-blue-600' : 'text-gray-500 dark:text-slate-400'} />
+                              <Icon size={14} className={exportFormat === v ? 'text-blue-600' : 'text-gray-500 dark:text-slate-400'} />
                               <span className={`text-xs font-semibold ${exportFormat === v ? 'text-blue-700 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>{label}</span>
                             </div>
                             <p className="text-[11px] text-gray-400 dark:text-slate-500">{desc}</p>
                           </button>
                         ))}
+                      </div>
+
+                      {/* ORM */}
+                      <div>
+                        <p className="text-[11px] text-gray-400 dark:text-slate-500 mb-1.5">ORM Schema</p>
+                        <div className="flex gap-2">
+                          {([
+                            { v: 'drizzle'  as const, label: 'Drizzle',  desc: 'drizzle-schema.ts' },
+                            { v: 'prisma'   as const, label: 'Prisma',   desc: 'schema.prisma' },
+                            { v: 'typeorm'  as const, label: 'TypeORM',  desc: 'typeorm-entities.ts' },
+                          ]).map(({ v, label, desc }) => (
+                            <button key={v} onClick={() => setExportFormat(v)}
+                              className={`flex-1 flex flex-col items-start gap-1 p-3 rounded-xl border-2 text-left transition-colors ${
+                                exportFormat === v
+                                  ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/20'
+                                  : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
+                              }`}>
+                              <span className={`text-xs font-semibold ${exportFormat === v ? 'text-violet-700 dark:text-violet-400' : 'text-gray-700 dark:text-slate-300'}`}>{label}</span>
+                              <p className="text-[11px] text-gray-400 dark:text-slate-500 font-mono">{desc}</p>
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
 
@@ -1460,7 +1813,7 @@ export default function SchemaExplorer() {
                       className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                     >
                       <Download size={14} />
-                      {exporting ? 'Exporting…' : `Export ${exportFormat === 'xlsx' ? 'XLSX' : 'SQL'}`}
+                      {exporting ? 'Exporting…' : `Export ${({ sql: 'SQL', xlsx: 'XLSX', drizzle: 'Drizzle', prisma: 'Prisma', typeorm: 'TypeORM' } as Record<string,string>)[exportFormat] ?? exportFormat}`}
                     </button>
 
                     {/* ── Canvas image export ─────────────────────────── */}

@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyAccessToken } from '../../../lib/auth-store';
 import { withPg, withMysql, type ExplorerConn } from '../../../lib/explorer-db';
 import ExcelJS from 'exceljs';
+import { generateOrm, type OrmTableDef, type OrmColDef, type OrmTarget } from '../../../lib/orm-generator';
 
 const argb = (rgb: string) => `FF${rgb}`;
 
@@ -51,7 +52,7 @@ function styleCell(cell: ExcelJS.Cell, style: CellStyle, value?: string | number
   if (style.alignment) cell.alignment = style.alignment as ExcelJS.Alignment;
 }
 
-type ExportFormat = 'sql' | 'xlsx';
+type ExportFormat = 'sql' | 'xlsx' | 'drizzle' | 'prisma' | 'typeorm';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -186,6 +187,135 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', 'attachment; filename="schema-overview.xlsx"');
       return res.status(200).send(Buffer.from(buf));
+    }
+
+    // ORM export (drizzle | prisma | typeorm)
+    if (format === 'drizzle' || format === 'prisma' || format === 'typeorm') {
+      const ormTables: OrmTableDef[] = [];
+
+      for (const key of tableKeys) {
+        const parts = key.split('.');
+        const [schema, table] = parts.length === 2 ? parts : ['public', parts[0]];
+
+        if (conn.type === 'postgresql') {
+          await withPg(conn, async (client) => {
+            const { rows: cols } = await client.query<any>(`
+              SELECT c.column_name, c.udt_name, c.character_maximum_length,
+                c.numeric_precision, c.numeric_scale, c.is_nullable, c.column_default,
+                EXISTS(
+                  SELECT 1 FROM information_schema.table_constraints tc
+                  JOIN information_schema.key_column_usage kcu
+                    ON kcu.constraint_name=tc.constraint_name AND kcu.table_schema=tc.table_schema
+                  WHERE tc.constraint_type='PRIMARY KEY'
+                    AND tc.table_schema=$1 AND tc.table_name=$2
+                    AND kcu.column_name=c.column_name
+                ) AS is_pk,
+                EXISTS(
+                  SELECT 1 FROM information_schema.table_constraints tc
+                  JOIN information_schema.key_column_usage kcu
+                    ON kcu.constraint_name=tc.constraint_name AND kcu.table_schema=tc.table_schema
+                  WHERE tc.constraint_type='UNIQUE'
+                    AND tc.table_schema=$1 AND tc.table_name=$2
+                    AND kcu.column_name=c.column_name
+                ) AS is_unique,
+                pgd.description AS comment
+              FROM information_schema.columns c
+              LEFT JOIN pg_catalog.pg_statio_all_tables st
+                ON st.schemaname=c.table_schema AND st.relname=c.table_name
+              LEFT JOIN pg_catalog.pg_description pgd
+                ON pgd.objoid=st.relid AND pgd.objsubid=c.ordinal_position
+              WHERE c.table_schema=$1 AND c.table_name=$2
+              ORDER BY c.ordinal_position
+            `, [schema, table]);
+
+            const { rows: fkRows } = await client.query<any>(`
+              SELECT kcu.column_name AS from_col,
+                ccu.table_name AS ref_table, ccu.column_name AS ref_col
+              FROM information_schema.table_constraints tc
+              JOIN information_schema.key_column_usage kcu
+                ON kcu.constraint_name=tc.constraint_name AND kcu.table_schema=tc.table_schema
+              JOIN information_schema.referential_constraints rc
+                ON rc.constraint_name=tc.constraint_name AND rc.constraint_schema=tc.table_schema
+              JOIN information_schema.key_column_usage ccu
+                ON ccu.constraint_name=rc.unique_constraint_name AND ccu.table_schema=rc.unique_constraint_schema
+              WHERE tc.constraint_type='FOREIGN KEY'
+                AND tc.table_schema=$1 AND tc.table_name=$2
+            `, [schema, table]);
+
+            const fkMap = new Map<string, { toTable: string; toCol: string }>();
+            fkRows.forEach((r: any) => fkMap.set(r.from_col, { toTable: r.ref_table, toCol: r.ref_col }));
+
+            const columns: OrmColDef[] = cols.map((c: any) => ({
+              name: c.column_name,
+              rawType: c.udt_name,
+              maxLength: c.character_maximum_length ? Number(c.character_maximum_length) : null,
+              numericPrecision: c.numeric_precision ? Number(c.numeric_precision) : null,
+              numericScale: c.numeric_scale ? Number(c.numeric_scale) : null,
+              fullType: c.character_maximum_length ? `${c.udt_name}(${c.character_maximum_length})` : c.udt_name,
+              nullable: c.is_nullable === 'YES',
+              defaultValue: c.column_default ?? null,
+              isPk: c.is_pk === true,
+              isUnique: c.is_unique === true,
+              isAutoIncrement: ['serial', 'bigserial', 'smallserial'].includes(c.udt_name),
+              comment: c.comment ?? null,
+              fkToTable: fkMap.get(c.column_name)?.toTable ?? null,
+              fkToCol: fkMap.get(c.column_name)?.toCol ?? null,
+            }));
+
+            ormTables.push({ schema, table, columns });
+          });
+        } else {
+          await withMysql(conn, async (c) => {
+            const [cols] = await c.query<any[]>(`
+              SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE,
+                COLUMN_DEFAULT, COLUMN_KEY, CHARACTER_MAXIMUM_LENGTH,
+                NUMERIC_PRECISION, NUMERIC_SCALE, EXTRA, COLUMN_COMMENT
+              FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA=? AND TABLE_NAME=?
+              ORDER BY ORDINAL_POSITION
+            `, [schema, table]);
+
+            const [fkRows] = await c.query<any[]>(`
+              SELECT kcu.COLUMN_NAME AS from_col,
+                kcu.REFERENCED_TABLE_NAME AS ref_table,
+                kcu.REFERENCED_COLUMN_NAME AS ref_col
+              FROM information_schema.KEY_COLUMN_USAGE kcu
+              JOIN information_schema.TABLE_CONSTRAINTS tc
+                ON tc.CONSTRAINT_NAME=kcu.CONSTRAINT_NAME AND tc.TABLE_SCHEMA=kcu.TABLE_SCHEMA
+              WHERE tc.CONSTRAINT_TYPE='FOREIGN KEY'
+                AND kcu.TABLE_SCHEMA=? AND kcu.TABLE_NAME=?
+            `, [schema, table]);
+
+            const fkMap = new Map<string, { toTable: string; toCol: string }>();
+            (fkRows as any[]).forEach(r => fkMap.set(r.from_col, { toTable: r.ref_table, toCol: r.ref_col }));
+
+            const columns: OrmColDef[] = (cols as any[]).map(c => ({
+              name: c.COLUMN_NAME,
+              rawType: c.DATA_TYPE,
+              maxLength: c.CHARACTER_MAXIMUM_LENGTH ? Number(c.CHARACTER_MAXIMUM_LENGTH) : null,
+              numericPrecision: c.NUMERIC_PRECISION ? Number(c.NUMERIC_PRECISION) : null,
+              numericScale: c.NUMERIC_SCALE ? Number(c.NUMERIC_SCALE) : null,
+              fullType: c.COLUMN_TYPE,
+              nullable: c.IS_NULLABLE === 'YES',
+              defaultValue: c.COLUMN_DEFAULT ?? null,
+              isPk: c.COLUMN_KEY === 'PRI',
+              isUnique: c.COLUMN_KEY === 'UNI',
+              isAutoIncrement: String(c.EXTRA).toLowerCase().includes('auto_increment'),
+              comment: c.COLUMN_COMMENT || null,
+              fkToTable: fkMap.get(c.COLUMN_NAME)?.toTable ?? null,
+              fkToCol: fkMap.get(c.COLUMN_NAME)?.toCol ?? null,
+            }));
+
+            ormTables.push({ schema, table, columns });
+          });
+        }
+      }
+
+      const code = generateOrm(ormTables, conn.type, format as OrmTarget);
+      const filename = format === 'prisma' ? 'schema.prisma' : `${format}-schema.ts`;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.status(200).send(code);
     }
 
     // SQL migration export

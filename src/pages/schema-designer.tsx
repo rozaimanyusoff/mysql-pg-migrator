@@ -28,6 +28,7 @@ import type { TableInfo } from './api/schema-explorer/tables';
 import type { ColumnInfo, TableColumnsResult } from './api/schema-explorer/columns';
 import type { SchemaJob } from './api/schema-generator/jobs';
 import { parseExcelFile } from '../lib/excel-parser';
+import { generateOrm, type OrmTarget, type OrmTableDef, type OrmColDef } from '../lib/orm-generator';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1528,6 +1529,41 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
     URL.revokeObjectURL(url);
   };
 
+  const downloadOrm = (target: OrmTarget) => {
+    const ormTables: OrmTableDef[] = tables.map(t => {
+      const columns: OrmColDef[] = t.columns.map(col => {
+        const fkParts = col.fkRef ? col.fkRef.split('.') : [];
+        const rawType = col.type.toLowerCase();
+        const lenNum = col.length ? Number(col.length.split(',')[0]) : null;
+        const scaleNum = col.length?.includes(',') ? Number(col.length.split(',')[1]) : null;
+        return {
+          name: col.name,
+          rawType,
+          maxLength: ['varchar', 'char'].includes(rawType) ? lenNum : null,
+          numericPrecision: rawType === 'numeric' ? lenNum : null,
+          numericScale: rawType === 'numeric' ? scaleNum : null,
+          fullType: col.length ? `${col.type}(${col.length})` : col.type,
+          nullable: col.nullable,
+          defaultValue: col.defaultValue || null,
+          isPk: col.isPk,
+          isUnique: col.isUnique,
+          isAutoIncrement: col.isAutoIncrement,
+          comment: col.comment || null,
+          fkToTable: fkParts[0] ?? null,
+          fkToCol: fkParts[1] ?? null,
+        };
+      });
+      return { schema: t.schema || 'public', table: t.name, columns };
+    });
+    const code = generateOrm(ormTables, 'postgresql', target);
+    const filename = target === 'prisma' ? 'schema.prisma' : `${target}-schema.ts`;
+    const blob = new Blob([code], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const copySeed = async () => {
     await navigator.clipboard.writeText(seedSql);
     setCopiedSeed(true);
@@ -1547,6 +1583,14 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
             <span className="text-xs font-semibold text-gray-700 dark:text-slate-200">Generated DDL</span>
             <span className="text-[11px] text-gray-400 dark:text-slate-500 ml-1">(postgresql)</span>
             <div className="ml-auto flex items-center gap-2">
+              {/* ORM export buttons */}
+              {(['drizzle', 'prisma', 'typeorm'] as OrmTarget[]).map(target => (
+                <button key={target} onClick={() => downloadOrm(target)} disabled={!ddlText} title={`Export ${target} schema`}
+                  className="px-2 py-1 text-[10px] font-medium rounded-lg border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors capitalize">
+                  {target}
+                </button>
+              ))}
+              <div className="w-px h-4 bg-gray-200 dark:bg-slate-700" />
               <button onClick={downloadDdl} disabled={!ddlText} title="Download .sql"
                 className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 transition-colors">
                 <Download size={13} />
@@ -2149,7 +2193,7 @@ function SchemaDesignerInner() {
 
   // Left panel mode toggle
   const [designerMode, setDesignerMode] = useState<'create' | 'import'>('create');
-  const [importSource, setImportSource] = useState<'paste' | 'sql-file' | 'csv' | 'xlsx'>('paste');
+  const [importSource, setImportSource] = useState<'paste' | 'sql-file' | 'csv' | 'xlsx' | 'db'>('paste');
   const [importSql, setImportSql] = useState('');
   const [importCsvName, setImportCsvName] = useState('');
   const [importXlsxLoading, setImportXlsxLoading] = useState(false);
@@ -2158,6 +2202,19 @@ function SchemaDesignerInner() {
   const importSqlFileRef = useRef<HTMLInputElement>(null);
   const importCsvFileRef = useRef<HTMLInputElement>(null);
   const importXlsxFileRef = useRef<HTMLInputElement>(null);
+
+  // Live DB import state
+  const [importDbConnId, setImportDbConnId] = useState<number | null>(null);
+  const [importDbDbs, setImportDbDbs] = useState<string[]>([]);
+  const [importDbDatabase, setImportDbDatabase] = useState('');
+  const [importDbLoadingDbs, setImportDbLoadingDbs] = useState(false);
+  const [importDbSchemas, setImportDbSchemas] = useState<SchemaInfo[]>([]);
+  const [importDbTables, setImportDbTables] = useState<Record<string, TableInfo[]>>({});
+  const [importDbExpanded, setImportDbExpanded] = useState<Set<string>>(new Set());
+  const [importDbSelected, setImportDbSelected] = useState<Set<string>>(new Set());
+  const [importDbLoadingSchemas, setImportDbLoadingSchemas] = useState(false);
+  const [importDbImporting, setImportDbImporting] = useState(false);
+  const importDbConn = connections.find(c => c.id === importDbConnId) ?? null;
 
   // DDL preview in middle panel
   const [ddlCopied, setDdlCopied] = useState(false);
@@ -2244,6 +2301,86 @@ function SchemaDesignerInner() {
         })),
       })));
     } catch { /* ignore */ } finally { setImportXlsxLoading(false); }
+  };
+
+  // ── Live DB import helpers ────────────────────────────────────────────────
+
+  const loadImportDbDbs = useCallback(async (conn: ConnectionRow) => {
+    setImportDbLoadingDbs(true);
+    setImportDbDbs([]);
+    setImportDbDatabase('');
+    setImportDbSchemas([]);
+    setImportDbTables({});
+    try {
+      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn), { headers: authH() });
+      setImportDbDbs(data.databases);
+      if (data.databases.length) setImportDbDatabase(data.databases[0]);
+    } catch { /* ignore */ } finally { setImportDbLoadingDbs(false); }
+  }, []);
+
+  useEffect(() => {
+    if (importDbConn) void loadImportDbDbs(importDbConn);
+  }, [importDbConn, loadImportDbDbs]);
+
+  const loadImportDbSchemas = useCallback(async () => {
+    if (!importDbConn || !importDbDatabase) return;
+    setImportDbLoadingSchemas(true);
+    setImportDbSchemas([]);
+    setImportDbTables({});
+    setImportDbExpanded(new Set());
+    setImportDbSelected(new Set());
+    try {
+      const ec = connToExplorerConn(importDbConn, importDbDatabase);
+      const { data } = await axios.post<{ schemas: SchemaInfo[] }>('/api/schema-explorer/schemas', ec, { headers: authH() });
+      setImportDbSchemas(data.schemas);
+    } catch { /* ignore */ } finally { setImportDbLoadingSchemas(false); }
+  }, [importDbConn, importDbDatabase]);
+
+  const loadImportDbSchemaTables = async (schema: string) => {
+    if (!importDbConn || !importDbDatabase || importDbTables[schema]) return;
+    try {
+      const ec = connToExplorerConn(importDbConn, importDbDatabase);
+      const { data } = await axios.post<{ tables: TableInfo[] }>('/api/schema-explorer/tables', { conn: ec, schemas: [schema] }, { headers: authH() });
+      setImportDbTables(p => ({ ...p, [schema]: data.tables }));
+    } catch { /* ignore */ }
+  };
+
+  const toggleImportDbSchema = async (schema: string) => {
+    setImportDbExpanded(p => { const n = new Set(p); n.has(schema) ? n.delete(schema) : n.add(schema); return n; });
+    await loadImportDbSchemaTables(schema);
+  };
+
+  const toggleImportDbAll = (schema: string) => {
+    const schemaTables = importDbTables[schema] ?? [];
+    const keys = schemaTables.map(t => `${t.schema}.${t.name}`);
+    const allChecked = keys.every(k => importDbSelected.has(k));
+    setImportDbSelected(prev => {
+      const next = new Set(prev);
+      keys.forEach(k => allChecked ? next.delete(k) : next.add(k));
+      return next;
+    });
+  };
+
+  const importFromLiveDb = async () => {
+    if (!importDbConn || !importDbDatabase || !importDbSelected.size) return;
+    setImportDbImporting(true);
+    const ec = connToExplorerConn(importDbConn, importDbDatabase);
+    const imported: DesignerTable[] = [];
+    for (const key of importDbSelected) {
+      try {
+        const { data } = await axios.post<TableColumnsResult>('/api/schema-explorer/columns', { conn: ec, tableKey: key }, { headers: authH() });
+        const [schema, name] = key.includes('.') ? key.split('.', 2) : ['public', key];
+        imported.push({ id: crypto.randomUUID(), schema, name, columns: data.columns.map(colInfoToDesigner) });
+      } catch { /* ignore */ }
+    }
+    if (imported.length) {
+      setTables(p => mergeTables(p, imported));
+      const schemas = [...new Set(imported.map(t => t.schema))];
+      setDesignerSchemas(p => [...new Set([...p, ...schemas])]);
+      setImportDbSelected(new Set());
+      setDesignerMode('create');
+    }
+    setImportDbImporting(false);
   };
 
   const selectedTable = tables.find(t => t.id === selectedTableId) ?? null;
@@ -2465,7 +2602,7 @@ function SchemaDesignerInner() {
                     onClick={() => setDesignerMode('import')}
                     className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium border-l border-gray-200 dark:border-slate-700 transition-colors ${designerMode === 'import' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
                   >
-                    <Upload size={11} /> Import SQL
+                    <Upload size={11} /> Import
                   </button>
                 </div>
                 {designerMode === 'create' && (
@@ -2567,7 +2704,7 @@ function SchemaDesignerInner() {
 
               {/* SQL import area — import mode only, no table selected */}
               {!activeEditTable && designerMode === 'import' && (
-                <div className="shrink-0 flex flex-col border-b border-gray-200 dark:border-slate-800" style={{ height: 200 }}>
+                <div className="shrink-0 flex flex-col border-b border-gray-200 dark:border-slate-800" style={{ height: importSource === 'db' ? 340 : 200 }}>
                   {/* Toolbar: source tabs + action */}
                   <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
                     <div className="flex rounded-md border border-gray-200 dark:border-slate-700 overflow-hidden">
@@ -2576,6 +2713,7 @@ function SchemaDesignerInner() {
                         { key: 'sql-file' as const, label: '.sql', Icon: Upload },
                         { key: 'csv' as const, label: 'CSV', Icon: FileText },
                         { key: 'xlsx' as const, label: 'XLSX', Icon: FileSpreadsheet },
+                        { key: 'db' as const, label: 'Live DB', Icon: Database },
                       ]).map(({ key, label, Icon }) => (
                         <button
                           key={key}
@@ -2612,8 +2750,54 @@ function SchemaDesignerInner() {
                           {importXlsxLoading ? <Loader2 size={10} className="animate-spin" /> : <Upload size={10} />} Choose .xlsx
                         </button>
                       )}
+                      {importSource === 'db' && importDbSelected.size > 0 && (
+                        <button onClick={() => void importFromLiveDb()} disabled={importDbImporting}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 disabled:opacity-40 transition-colors">
+                          {importDbImporting ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+                          Import Selected ({importDbSelected.size})
+                        </button>
+                      )}
                     </div>
                   </div>
+
+                  {/* DB sub-toolbar: connection + database + load */}
+                  {importSource === 'db' && (
+                    <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-gray-50 dark:bg-slate-950 border-b border-gray-100 dark:border-slate-800">
+                      <select
+                        value={importDbConnId ?? ''}
+                        onChange={e => setImportDbConnId(e.target.value ? Number(e.target.value) : null)}
+                        className="text-[10px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="">— connection —</option>
+                        {connections.map(c => (
+                          <option key={c.id} value={c.id}>{c.label} ({c.db_type})</option>
+                        ))}
+                      </select>
+                      {importDbConn && (
+                        <>
+                          {importDbLoadingDbs ? (
+                            <Loader2 size={10} className="animate-spin text-gray-400 dark:text-slate-500" />
+                          ) : (
+                            <select
+                              value={importDbDatabase}
+                              onChange={e => setImportDbDatabase(e.target.value)}
+                              className="text-[10px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500"
+                            >
+                              <option value="">— database —</option>
+                              {importDbDbs.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                          )}
+                          <button
+                            onClick={() => void loadImportDbSchemas()}
+                            disabled={!importDbDatabase || importDbLoadingSchemas}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                          >
+                            {importDbLoadingSchemas ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />} Load
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   {/* Content area */}
                   <div className="flex-1 overflow-hidden bg-gray-50 dark:bg-slate-950">
@@ -2697,6 +2881,76 @@ function SchemaDesignerInner() {
                               <Upload size={11} /> Choose File
                             </button>
                           </>
+                        )}
+                      </div>
+                    )}
+                    {importSource === 'db' && (
+                      <div className="h-full overflow-y-auto sidebar-scroll">
+                        {!importDbConn ? (
+                          <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
+                            <Database size={20} className="text-gray-300 dark:text-slate-700" />
+                            <p className="text-[11px] text-gray-400 dark:text-slate-500">Select a connection above to browse live schemas</p>
+                          </div>
+                        ) : importDbLoadingSchemas ? (
+                          <div className="flex flex-col items-center justify-center h-full gap-2">
+                            <Loader2 size={18} className="animate-spin text-gray-400 dark:text-slate-500" />
+                            <p className="text-[11px] text-gray-400 dark:text-slate-500">Loading schemas…</p>
+                          </div>
+                        ) : importDbSchemas.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
+                            <Layers size={18} className="text-gray-300 dark:text-slate-700" />
+                            <p className="text-[11px] text-gray-400 dark:text-slate-500">Choose a database and click Load to browse schemas</p>
+                          </div>
+                        ) : (
+                          <div className="py-1">
+                            {importDbSchemas.map(s => {
+                              const schemaTables = importDbTables[s.schema] ?? [];
+                              const expanded = importDbExpanded.has(s.schema);
+                              const schemaKeys = schemaTables.map(t => `${t.schema}.${t.name}`);
+                              const allChecked = schemaKeys.length > 0 && schemaKeys.every(k => importDbSelected.has(k));
+                              const someChecked = schemaKeys.some(k => importDbSelected.has(k));
+                              return (
+                                <div key={s.schema}>
+                                  <div className="flex items-center gap-1 px-2 py-1 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-pointer"
+                                    onClick={() => void toggleImportDbSchema(s.schema)}>
+                                    {expanded ? <ChevronDown size={10} className="text-gray-400 dark:text-slate-500 shrink-0" /> : <ChevronRight size={10} className="text-gray-400 dark:text-slate-500 shrink-0" />}
+                                    <input type="checkbox" checked={allChecked} ref={el => { if (el) el.indeterminate = !allChecked && someChecked; }}
+                                      onChange={e => { e.stopPropagation(); toggleImportDbAll(s.schema); }}
+                                      onClick={e => e.stopPropagation()}
+                                      className="w-3 h-3 rounded accent-blue-500 shrink-0" />
+                                    <Layers size={10} className="text-blue-400 dark:text-blue-500 shrink-0" />
+                                    <span className="text-[10px] font-semibold text-gray-600 dark:text-slate-300 truncate">{s.schema}</span>
+                                    <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500">{s.tableCount}</span>
+                                  </div>
+                                  {expanded && (
+                                    <div className="pl-6">
+                                      {schemaTables.length === 0 ? (
+                                        <div className="flex items-center gap-1 px-2 py-1">
+                                          <Loader2 size={9} className="animate-spin text-gray-400 dark:text-slate-600" />
+                                          <span className="text-[10px] text-gray-400 dark:text-slate-500">Loading…</span>
+                                        </div>
+                                      ) : schemaTables.map(t => {
+                                        const key = `${t.schema}.${t.name}`;
+                                        const checked = importDbSelected.has(key);
+                                        return (
+                                          <label key={key} className="flex items-center gap-1.5 px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-pointer">
+                                            <input type="checkbox" checked={checked}
+                                              onChange={() => setImportDbSelected(p => { const n = new Set(p); checked ? n.delete(key) : n.add(key); return n; })}
+                                              className="w-3 h-3 rounded accent-blue-500 shrink-0" />
+                                            <Table2 size={9} className="text-gray-400 dark:text-slate-500 shrink-0" />
+                                            <span className="text-[10px] font-mono text-gray-600 dark:text-slate-300 truncate">{t.name}</span>
+                                            {t.rowCount !== undefined && (
+                                              <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500">{t.rowCount.toLocaleString()}</span>
+                                            )}
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         )}
                       </div>
                     )}

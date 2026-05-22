@@ -2,6 +2,38 @@
 
 ---
 
+## 2026-05-22
+- **implement** — Live DB import tab in Schema Designer
+  - Added `'db'` (Live DB) source tab to the inline import area in Schema Designer, alongside Paste SQL / .sql / CSV / XLSX
+  - **Sub-toolbar**: connection dropdown (all saved connections) + database dropdown (loaded automatically when connection is selected via `POST /api/schema-designer/databases`) + Load button (calls `/api/schema-explorer/schemas`)
+  - **Schema tree**: expandable schemas with `ChevronDown`/`ChevronRight`, per-schema select-all checkbox (with indeterminate state), per-table checkbox; row count shown from `rowCount`
+  - **Import Selected (N)** button in toolbar (emerald, visible only when ≥1 table selected): calls `importFromLiveDb()` which fetches columns for each selected table via `/api/schema-explorer/columns`, converts via `colInfoToDesigner()`, merges into designer tables + `designerSchemas`, switches to create mode
+  - Import area height dynamically expands to 340 px when `importSource === 'db'` (vs 200 px for other sources)
+  - Mode toggle label changed from "Import SQL" → "Import" to reflect broader import options
+  - TypeScript clean — all field names corrected to `SchemaInfo.schema`, `SchemaInfo.tableCount`, `TableInfo.rowCount`, `ConnectionRow.label`
+  - Files: `src/pages/schema-designer.tsx` only — no new API endpoints (reuses schema-explorer and schema-designer/databases APIs)
+  - Status: done
+
+- **implement** — FK Advisor tab in Schema Explorer
+  - Use case: production DBs with isolated tables (no FK constraints defined) where `*_id` columns imply relationships; advisor surfaces them so developer can apply, save, and generate ORM
+  - New `'advisor'` tab in Schema Explorer (4th tab, amber badge when suggestions exist)
+  - **FK inference** (frontend-only, uses `columnsCache`): for each `*_id` column without `isFk`, tries `prefix`, `prefix+s`, `prefix+es`, `prefix[y→ies]` against all loaded table names; assigns `high` (exact/simple plural match), `low` (heuristic guess), or `unresolved` confidence
+  - **Suggestion list UI**: checkbox toggle per row, ArrowRight divider, target column; unresolved rows show a `<select>` dropdown to manually pick the target table; confidence badge (emerald/amber/gray)
+  - **Send to Designer**: generates CREATE TABLE DDL with accepted FK suggestions applied as inline `REFERENCES "table"("col")` + preserves existing `isFk` constraints; saves via `POST /api/schema-generator/jobs`; redirects to `/schema-designer`; Schema Designer's `parseSqlToTables()` picks up inline REFERENCES and populates `fkRef` automatically
+  - Full workflow: Advisor → accept → Send to Designer → load job → ORM export (Drizzle/Prisma/TypeORM)
+  - Files: `src/pages/schema-explorer.tsx` only — no new API endpoints (inference is pure frontend)
+  - Status: done
+
+- **implement** — ORM export (Drizzle, Prisma, TypeORM) for Schema Explorer + Schema Designer
+  - New `src/lib/orm-generator.ts`: pure codegen module with full PG + MySQL type mapping for all three ORM targets
+    - **Drizzle**: generates `pgTable`/`mysqlTable` schema with chained modifiers (`.primaryKey()`, `.notNull()`, `.unique()`, `.defaultNow()`, `.references()`); bigint/bigserial uses `{ mode: 'number' }`; timestamptz uses `{ withTimezone: true }`
+    - **Prisma**: generates full `schema.prisma` with `datasource`, `generator`, `model` blocks, `@relation` for FK fields, back-ref arrays, `@@map` for snake_case table names
+    - **TypeORM**: generates `@Entity` classes with `@PrimaryGeneratedColumn`, `@Column`, `@ManyToOne`/`@OneToMany`/`@JoinColumn` decorators; FK columns get both raw column prop and relation prop
+  - `src/pages/api/schema-explorer/export.ts`: added `ExportFormat = 'drizzle' | 'prisma' | 'typeorm'`; new ORM branch queries PK/unique/FK per-table (separate from XLSX/SQL paths) and streams plain-text response
+  - `src/pages/schema-explorer.tsx`: export format state extended to 5 options; format picker split into "Schema files" row (SQL, XLSX) + "ORM Schema" row (Drizzle, Prisma, TypeORM) with violet accent; button label dynamically reflects selected format
+  - `src/pages/schema-designer.tsx`: `ExecutePanel` — added `downloadOrm()` converting `DesignerColumn[]` → `OrmColDef[]`; three violet ORM buttons (drizzle / prisma / typeorm) added in DDL header bar next to existing download/copy buttons
+  - Status: done
+
 ## 2026-05-21
 - **fix** — Replace `xlsx` with `exceljs` (security fix)
   - `xlsx` (SheetJS community edition) had 2 unpatched CVEs: Prototype Pollution (GHSA-4r6h-8v6p-xvw6) and ReDoS (GHSA-5pgg-2g8v-p4x9); package abandoned, no fix available
