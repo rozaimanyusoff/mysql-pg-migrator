@@ -3,6 +3,22 @@
 ---
 
 ## 2026-05-22
+- **implement** — Flow-to-Database Designer module (`/flow-designer`)
+  - 6-step guided wizard: Business Flow Canvas → Data Flow Review → Entities → Relationships → ERD → Outputs
+  - **Business Flow Canvas**: React Flow canvas with 6 custom node types (Start, Process, Decision, Approval, Data Object, End); node metadata editor panel (actor, action, business object, operation type, input/output data, status before/after, decision condition, related document, remarks)
+  - **Data Flow Generator** (`src/lib/flow-analyzer.ts`): rule-based analysis converts canvas nodes into DataFlow objects; infers operation type from node label keywords when not set; enriches output fields with standard approval/verify/cancel patterns
+  - **Entity Extractor** (`src/lib/entity-extractor.ts`): groups data flows by business object → candidate entities; infers PostgreSQL column types from field name patterns; classifies entity category (master/transaction/detail/junction/log/audit/config); injects `users` and `status_logs` entities when needed
+  - **Relationship Engine** (`src/lib/relationship-engine.ts`): scans FK fields (_id, _by suffixes) → one_to_many; detects junction table pattern → many_to_many
+  - **ERD Generator**: React Flow canvas from confirmed entities + relationships; custom `erd_table` node with columns, PK/FK indicators
+  - **DDL Generator** (`src/lib/flow-ddl-generator.ts`): `CREATE SCHEMA` + `CREATE TABLE` + FK constraints + indexes
+  - **Drizzle Generator** (`src/lib/flow-drizzle-generator.ts`): full drizzle-orm/pg-core schema with `pgSchema`, `references()`, `relations()`
+  - **Dictionary + Validation** (`src/lib/flow-dict-validator.ts`): data dictionary table + design issue detection
+  - **DB migration** `006_flow_designer.sql`: 7 tables (`dbt_ftd_projects`, `dbt_ftd_nodes`, `dbt_ftd_edges`, `dbt_ftd_data_flows`, `dbt_ftd_entities`, `dbt_ftd_relationships`, `dbt_ftd_outputs`, `dbt_ftd_validations`)
+  - **API routes** (`src/pages/api/flow-designer/`): `projects.ts`, `canvas.ts`, `analyze.ts`, `entities.ts`, `relationships.ts`, `generate.ts`, `dataflows.ts`
+  - **Outputs**: PostgreSQL DDL, Drizzle ORM schema, Data Dictionary, Validation — copy + download per tab
+  - Domain-agnostic — works for any business domain
+  - Status: done
+
 - **implement** — Live DB import tab in Schema Designer
   - Added `'db'` (Live DB) source tab to the inline import area in Schema Designer, alongside Paste SQL / .sql / CSV / XLSX
   - **Sub-toolbar**: connection dropdown (all saved connections) + database dropdown (loaded automatically when connection is selected via `POST /api/schema-designer/databases`) + Load button (calls `/api/schema-explorer/schemas`)

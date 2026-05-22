@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   Database, ArrowRight, UploadCloud, Wand2, Network,
-  Settings2, Lock, LogIn, LogOut, User, Eye, EyeOff, Mail, Columns,
+  Settings2, Lock, LogIn, LogOut, User, Eye, EyeOff, Mail, Columns, Workflow,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 
@@ -14,6 +14,7 @@ const modules = [
   { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '/normalizer',   available: true,  Icon: Wand2 },
   { key: 'schema-explorer', title: 'Schema Explorer', desc: 'Browse any database, inspect columns, visualise ERD, and export migration SQL or XLSX.', href: '/schema-explorer', available: true, Icon: Network },
   { key: 'migration',    title: 'Migration',           desc: 'Map and migrate data across any two databases (MySQL ↔ PostgreSQL), with serial→UUID conversion, rollback, and job management.', href: '/migration', available: true, Icon: Database },
+  { key: 'flow-designer', title: 'Flow-to-Database Designer', desc: 'Design your database starting from a business process flow. Get entities, relationships, ERD, PostgreSQL DDL, and Drizzle ORM schema.', href: '/flow-designer', available: true, Icon: Workflow },
 ];
 
 export default function ModuleMenu() {
