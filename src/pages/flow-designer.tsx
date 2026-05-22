@@ -310,6 +310,138 @@ const STEPS = [
   { n: 6, label: 'Outputs',       icon: FileCode2 },
 ];
 
+// ─── Guide ────────────────────────────────────────────────────────────────────
+
+const FTD_GUIDE_SECTIONS = [
+  {
+    title: 'How it works',
+    icon: '①',
+    color: 'text-blue-600 dark:text-blue-400',
+    body: [
+      'Draw your business process on the canvas (Step 1). Add nodes for each activity, decision, approval, or data object. Fill in the metadata panel on the right for each node.',
+      'Click Analyse Flow — the system extracts data flows, suggests entities, infers column types, and proposes FK/M:N relationships automatically.',
+      'Review and confirm entities (Step 3) and relationships (Step 4), then generate the ERD (Step 5) and export PostgreSQL DDL + Drizzle ORM schema (Step 6).',
+    ],
+  },
+  {
+    title: 'Node types',
+    icon: '②',
+    color: 'text-violet-600 dark:text-violet-400',
+    body: [
+      'Start / End — mark the entry and exit points of the process. Not analysed for data.',
+      'Process — a discrete activity (e.g. "Submit Purchase Request"). Most entity inference comes from process nodes.',
+      'Decision — a branching condition (e.g. "Amount > 10,000?"). Connect multiple outgoing edges with labels.',
+      'Approval — a human sign-off step. Automatically injects approved_by / approved_at / approval_status fields.',
+      'Data Object — a document or artefact that flows through the process (e.g. "Invoice", "Purchase Order").',
+    ],
+  },
+  {
+    title: 'Node metadata',
+    icon: '③',
+    color: 'text-amber-600 dark:text-amber-400',
+    body: [
+      'Actor — who performs this step (e.g. "Finance Manager"). Drives the users entity and _by FK columns.',
+      'Business Object — the main data entity involved (e.g. "Purchase Request"). Used as the table name.',
+      'Operation Type — CREATE, READ, UPDATE, DELETE, APPROVE, VERIFY, ASSIGN, etc. Controls which fields are generated.',
+      'Output / Produced Data — fields created or set in this step (e.g. "request_date, total_amount"). Become table columns.',
+      'Input / Referenced Data — fields read but not written (e.g. "supplier_name, budget_code"). Influence FK inference.',
+      'Status Before / After — document the status machine. Drives the status_logs table and status ENUM columns.',
+    ],
+  },
+  {
+    title: 'Entities step',
+    icon: '④',
+    color: 'text-teal-600 dark:text-teal-400',
+    body: [
+      'Each candidate entity shows its suggested table name, category, and auto-inferred fields with PostgreSQL types.',
+      'Edit the table name, category, or individual field names and types. All changes are saved back to the project.',
+      'Confirm entities you want to keep. Reject entities that are duplicates or not relevant. Use Confirm All to accept the full set.',
+      'The users entity is always injected when actor metadata is present. status_logs is injected for approval/verify workflows.',
+    ],
+  },
+  {
+    title: 'Relationships step',
+    icon: '⑤',
+    color: 'text-pink-600 dark:text-pink-400',
+    body: [
+      'Relationships are inferred from FK field patterns: _id suffix → one_to_many; _by suffix → FK to users.',
+      'Tables with 2+ FK columns and ≤ 3 total non-FK columns are detected as junction tables → many_to_many.',
+      'Add custom relationships manually via the Add button. Edit cardinality (optional / mandatory) and the FK column name.',
+      'Confirmed relationships become FOREIGN KEY CONSTRAINT in the DDL and references() calls in the Drizzle schema.',
+    ],
+  },
+  {
+    title: 'Outputs',
+    icon: '⑥',
+    color: 'text-green-600 dark:text-green-400',
+    body: [
+      'PostgreSQL DDL — CREATE SCHEMA + CREATE TABLE statements with FK constraints and indexes on FK columns.',
+      'Drizzle ORM — TypeScript schema using pgSchema(), pgTable(), and relations() ready to drop into your project.',
+      'Data Dictionary — tabular reference of every table and column with type, nullability, FK target, description, and example.',
+      'Validation — design issues flagged as errors, warnings, or info (missing PK, vague column names, unconstrained status, etc.).',
+    ],
+  },
+] as const;
+
+function FlowGuidePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouse = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as globalThis.Node)) setOpen(false); };
+    const onKey   = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onMouse);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onMouse); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium border transition-colors
+          ${open
+            ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+            : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/60 dark:hover:bg-blue-950/20'}`}
+      >
+        <span className="font-bold">?</span> Guide
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-[9999] w-[440px] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
+            <div className="flex items-center gap-2">
+              <Workflow size={13} className="text-blue-500" />
+              <p className="text-sm font-semibold text-gray-800 dark:text-slate-100">Flow-to-Database Designer — Guide</p>
+            </div>
+            <button onClick={() => setOpen(false)} className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-200">
+              <X size={13} />
+            </button>
+          </div>
+          <div className="overflow-y-auto max-h-[70vh] divide-y divide-gray-100 dark:divide-slate-800">
+            {FTD_GUIDE_SECTIONS.map(sec => (
+              <div key={sec.title} className="px-4 py-3.5 space-y-2">
+                <p className={`text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${sec.color}`}>
+                  <span>{sec.icon}</span> {sec.title}
+                </p>
+                <ul className="space-y-1.5">
+                  {sec.body.map((line, i) => (
+                    <li key={i} className="flex gap-2 text-xs text-gray-600 dark:text-slate-300 leading-relaxed">
+                      <span className="text-gray-300 dark:text-slate-600 shrink-0 mt-0.5">–</span>
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function FlowDesignerPage() {
@@ -647,11 +779,15 @@ export default function FlowDesignerPage() {
                 <p className="text-xs text-gray-500 dark:text-slate-400">Design a business process → generate PostgreSQL schema &amp; Drizzle ORM</p>
               </div>
             </div>
-            <nav className="ml-auto flex items-center gap-1 text-sm shrink-0">
-              <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
-              <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-              <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Flow Designer</span>
-            </nav>
+            <div className="ml-auto flex items-center gap-3 shrink-0">
+              <FlowGuidePopover />
+              <div className="h-5 w-px bg-gray-200 dark:bg-slate-700" />
+              <nav className="flex items-center gap-1 text-sm">
+                <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
+                <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
+                <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Flow Designer</span>
+              </nav>
+            </div>
           </header>
 
           {/* Projects */}
@@ -782,12 +918,16 @@ export default function FlowDesignerPage() {
               </button>
             ))}
           </div>
-          {/* Breadcrumb */}
-          <nav className="ml-auto flex items-center gap-1 text-sm shrink-0">
-            <button onClick={() => setActive(null)} className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Projects</button>
-            <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-            <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold truncate max-w-[160px]">{activeProject.name}</span>
-          </nav>
+          {/* Guide + Breadcrumb */}
+          <div className="ml-auto flex items-center gap-3 shrink-0">
+            <FlowGuidePopover />
+            <div className="h-5 w-px bg-gray-200 dark:bg-slate-700" />
+            <nav className="flex items-center gap-1 text-sm">
+              <button onClick={() => setActive(null)} className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Projects</button>
+              <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
+              <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold truncate max-w-[160px]">{activeProject.name}</span>
+            </nav>
+          </div>
         </header>
 
         {/* Step content */}
