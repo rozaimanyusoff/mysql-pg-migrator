@@ -114,6 +114,146 @@ function ConnSelect({ connections, value, onChange, onNew, accent = 'blue' }: {
   );
 }
 
+// ── Guide ─────────────────────────────────────────────────────────────────────
+
+const MIGRATION_GUIDE_SECTIONS = [
+  {
+    title: 'Overview',
+    icon: '①',
+    color: 'text-blue-600 dark:text-blue-400',
+    body: [
+      'This module maps and migrates tables between any two databases (MySQL → PostgreSQL or reverse). It auto-creates the target database, schema, and table if they do not exist.',
+      'Serial/auto-increment primary keys are converted to deterministic UUIDs. The original integer is preserved in a separate BIGINT column (e.g. old_id) so parent-table FK references stay intact.',
+      'Migration runs in chunks of 500 rows. Each run can be rolled back by deleting inserted PKs, or by TRUNCATE if more than 5,000 rows were inserted.',
+    ],
+  },
+  {
+    title: 'Connect source & target',
+    icon: '②',
+    color: 'text-violet-600 dark:text-violet-400',
+    body: [
+      'Pick a saved connection for Source (MySQL) and Target (PostgreSQL). Passwords are resolved from the stored connection record.',
+      'Select the source database from the dropdown — only tables belonging to that database are listed.',
+      'For the target, select an existing database or click "+ New DB" to create one on the fly. Click "+ New Schema" to type a custom schema name — the runner runs CREATE SCHEMA IF NOT EXISTS automatically.',
+      'The target table list refreshes automatically after a completed migration run.',
+    ],
+  },
+  {
+    title: 'Select tables',
+    icon: '③',
+    color: 'text-amber-600 dark:text-amber-400',
+    body: [
+      'Check the tables you want to migrate. Clicking a table row opens the column mapping panel.',
+      'After a completed run, migrated tables show a strikethrough name and a green ✓ badge — but only when the job is saved. Unsaved jobs never show strikethrough.',
+      'The strikethrough resets when you load a different saved job.',
+    ],
+  },
+  {
+    title: 'Column mapping',
+    icon: '④',
+    color: 'text-teal-600 dark:text-teal-400',
+    body: [
+      'Src Col → Tgt Col — map each source column to the corresponding target column. Set to "— none —" to exclude a column from the INSERT.',
+      'Tgt Type — auto-inferred from the source type; editable. UUID is set automatically for serial_to_uuid columns.',
+      'Conv — transformation applied per-value: keep (copy as-is), →UUID (serial int → UUID v4), →TEXT/INT/BIGINT/NUMERIC/BOOL/TIMESTAMPTZ/DATE/JSONB.',
+      'Keep Orig — only for →UUID columns. Auto-set to old_<colname> on load. Stores the original MySQL integer in a separate BIGINT column alongside the UUID. Clear with ✕ to disable.',
+      'FK Ref — if this is a FK column pointing to a UUID-converted PK in another table, enter the source schema.table (e.g. public.users). The migrator derives the same deterministic UUID for the FK value.',
+      'Include checkbox — uncheck to exclude a column entirely from the migration.',
+    ],
+  },
+  {
+    title: 'UUID conversion',
+    icon: '⑤',
+    color: 'text-pink-600 dark:text-pink-400',
+    body: [
+      'serial_to_uuid converts MySQL INT/BIGINT PKs to UUID v4 using SHA-256(schema.table + "\\0" + id). The same integer always produces the same UUID across runs.',
+      'The old_<colname> BIGINT column is created in the target table alongside the UUID PK. Other tables can FK via this column if they have not been migrated yet.',
+      'For child tables: set fkRef = "source_schema.parent_table" on the FK column. The migrator applies the same seqToUUID() function, so the FK resolves to the correct UUID without a pre-pass.',
+    ],
+  },
+  {
+    title: 'Jobs',
+    icon: '⑥',
+    color: 'text-green-600 dark:text-green-400',
+    body: [
+      'Save Job — saves the current source/target connection meta and full column mapping config. Unsaved changes are tracked with an "unsaved changes" badge in the header.',
+      'Save as existing — in the Save dialog, pick any saved job from the list to overwrite it with the current table mappings. The button label changes to "Update Job". Use this to consolidate multiple migration sessions under one job for export.',
+      'Load — restores the full column mapping from a saved job, including source/target connection, schema, and per-column conversions.',
+      'Export MD — downloads the current job mapping as a Markdown document (table list, column mapping, source/target meta).',
+    ],
+  },
+  {
+    title: 'Run & rollback',
+    icon: '⑦',
+    color: 'text-rose-600 dark:text-rose-400',
+    body: [
+      'Click Migrate to start. The run console appears at the bottom showing per-table progress, row counts, and logs.',
+      'The runner processes tables sequentially in chunks of 500 rows. INSERT ON CONFLICT DO NOTHING prevents duplicate row errors on re-runs.',
+      'Rollback — deletes inserted rows by their PK list (tracked up to 5,000 rows). If more than 5,000 rows were inserted, rollback falls back to TRUNCATE CASCADE. The rollback SQL is included in the Export MD report.',
+      'After a completed run the target table list refreshes automatically and migrated source tables are marked with strikethrough.',
+    ],
+  },
+] as const;
+
+function MigrationGuidePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouse = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as globalThis.Node)) setOpen(false); };
+    const onKey   = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onMouse);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onMouse); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors
+          ${open
+            ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+            : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/60 dark:hover:bg-blue-950/20'}`}
+      >
+        <span className="font-bold">?</span> Guide
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-[9999] w-[440px] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
+            <div className="flex items-center gap-2">
+              <Network size={13} className="text-blue-500" />
+              <p className="text-sm font-semibold text-gray-800 dark:text-slate-100">Migration — Guide</p>
+            </div>
+            <button onClick={() => setOpen(false)} className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-200">
+              <X size={13} />
+            </button>
+          </div>
+          <div className="overflow-y-auto max-h-[70vh] divide-y divide-gray-100 dark:divide-slate-800">
+            {MIGRATION_GUIDE_SECTIONS.map(sec => (
+              <div key={sec.title} className="px-4 py-3.5 space-y-2">
+                <p className={`text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${sec.color}`}>
+                  <span>{sec.icon}</span> {sec.title}
+                </p>
+                <ul className="space-y-1.5">
+                  {sec.body.map((line, i) => (
+                    <li key={i} className="flex gap-2 text-xs text-gray-600 dark:text-slate-300 leading-relaxed">
+                      <span className="text-gray-300 dark:text-slate-600 shrink-0 mt-0.5">–</span>
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function Migration() {
@@ -162,6 +302,7 @@ export default function Migration() {
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
   const [colsCache, setColsCache] = useState<Record<string, MigColumnInfo[]>>({});
   const [loadingCols, setLoadingCols] = useState(false);
+  const [fkPickerIdx, setFkPickerIdx] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
   useUnsavedGuard(dirty, 'This job has unsaved changes that will be lost if you leave.\nSave the job first or discard changes.');
 
@@ -172,9 +313,11 @@ export default function Migration() {
   const [saveJobDesc, setSaveJobDesc] = useState('');
   const [savingJob, setSavingJob] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveAsTarget, setSaveAsTarget] = useState<string | null>(null);
   const [jobsOpen, setJobsOpen] = useState(true);
 
   // ── Run ───────────────────────────────────────────────────────────────────────
+  const [migratedTableKeys, setMigratedTableKeys] = useState<Set<string>>(new Set());
   const [currentRun, setCurrentRun] = useState<MigRun | null>(null);
   const [polling, setPolling] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
@@ -346,6 +489,25 @@ export default function Migration() {
       .finally(() => setTgtConnecting(false));
   }, [tgtDb]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const reloadTgtTables = useCallback(() => {
+    if (!tgtConnId || !tgtDb) return;
+    const row = connections.find(c => c.id === tgtConnId);
+    if (!row) return;
+    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', tgtConn, { headers: authHeaders() })
+      .then(({ data }) => {
+        setTgtTables(data.tables);
+        if (row.db_type === 'postgres') {
+          const schemas = [...new Set(data.tables.map(t => t.schema))].sort();
+          const list = schemas.length ? schemas : ['public'];
+          setTgtSchemas(prev => {
+            const merged = [...new Set([...prev, ...list])].sort();
+            return merged;
+          });
+        }
+      })
+      .catch(() => {});
+  }, [tgtConnId, tgtDb, tgtConn, connections]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Table toggle ──────────────────────────────────────────────────────────────
   const isTableIncluded = (schema: string, table: string) =>
     tableMaps.some(m => m.source.schema === schema && m.source.table === table && m.include);
@@ -361,8 +523,11 @@ export default function Migration() {
     }
     const key = `${schema}.${table}`;
     const mapId = newId();
-    // When target DB is empty, auto-assign the same table name so migration can proceed
-    const autoTargetTable = tgtConnected && tgtTables.length === 0 ? table : '';
+    // Auto-assign same name unless a table with that name already exists in the target schema
+    const existsInTarget = tgtConnected && tgtTables.some(
+      t => t.schema === (tgtDefaultSchema || 'public') && t.name === table
+    );
+    const autoTargetTable = !existsInTarget ? table : '';
     // Create placeholder map immediately so preview fires right away
     setTableMaps(prev => [...prev, {
       id: mapId, include: true,
@@ -393,6 +558,7 @@ export default function Migration() {
           include: true,
           conversion: isSerial ? 'serial_to_uuid' : 'keep',
           fkRef: c.isFk && c.fkRef ? c.fkRef.split('.').slice(0, 2).join('.') : null,
+          keepLegacyAs: isSerial ? `old_${c.name}` : null,
         };
       });
       columns.forEach(c => {
@@ -477,8 +643,9 @@ export default function Migration() {
     if (!saveJobName.trim()) return;
     setSavingJob(true);
     try {
+      const targetId = saveAsTarget ?? activeJobId ?? undefined;
       const payload: Partial<MigJob> = {
-        id: activeJobId ?? undefined,
+        id: targetId,
         name: saveJobName.trim(), description: saveJobDesc.trim(),
         sourceMeta: { type: srcConn.type, host: srcConn.host, port: srcConn.port, database: srcConn.database, username: srcConn.username },
         targetMeta: { type: tgtConn.type, host: tgtConn.host, port: tgtConn.port, database: tgtConn.database, username: tgtConn.username },
@@ -486,6 +653,7 @@ export default function Migration() {
       };
       const { data } = await axios.post<{ job: MigJob }>('/api/migv2/jobs', payload, { headers: authHeaders() });
       setActiveJobId(data.job.id);
+      setSaveAsTarget(null);
       setDirty(false); setShowSaveDialog(false);
       await loadJobs();
     } catch { /* ignore */ } finally { setSavingJob(false); }
@@ -497,6 +665,20 @@ export default function Migration() {
       const job = data.job;
       setActiveJobId(id);
       setSaveJobName(job.name); setSaveJobDesc(job.description); setDirty(false);
+
+      // Restore migrated table keys from persisted run history for this job
+      void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { headers: authHeaders() })
+        .then(({ data: runData }) => {
+          const keys = new Set<string>();
+          for (const run of runData.runs) {
+            if (run.jobId !== id || run.status !== 'completed') continue;
+            for (const ts of run.tableStates) {
+              if (ts.status === 'completed') keys.add(ts.sourceKey);
+            }
+          }
+          setMigratedTableKeys(keys);
+        })
+        .catch(() => setMigratedTableKeys(new Set()));
 
       const srcMatch = connections.find(c =>
         c.host === job.sourceMeta.host && c.username === job.sourceMeta.username &&
@@ -619,7 +801,16 @@ export default function Migration() {
         { runId, source: srcConn, target: tgtConn }, { headers: authHeaders() });
       setCurrentRun(data.run);
       if (data.run.status === 'running') scheduleAdvance(runId);
-      else setPolling(false);
+      else {
+        setPolling(false);
+        if (data.run.status === 'completed') {
+          const completedKeys = data.run.tableStates
+            .filter(ts => ts.status === 'completed')
+            .map(ts => ts.sourceKey);
+          setMigratedTableKeys(prev => new Set([...prev, ...completedKeys]));
+          reloadTgtTables();
+        }
+      }
     } catch { setPolling(false); }
   };
 
@@ -683,6 +874,8 @@ export default function Migration() {
      .catch(() => {}).finally(() => setTgtPreviewLoading(false));
   }, [selectedMapId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => { setFkPickerIdx(null); }, [selectedMapId]);
+
   // ── Select target table for current mapping ───────────────────────────────────
   const selectTargetTable = async (schema: string, table: string) => {
     if (!selectedMapId) return;
@@ -728,7 +921,8 @@ export default function Migration() {
             <span className="text-xs text-gray-400 dark:text-slate-500">{includedCount} table{includedCount > 1 ? 's' : ''} selected</span>
           )}
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            <button onClick={() => { setSaveJobName(saveJobName || 'New Job'); setShowSaveDialog(true); }}
+            <MigrationGuidePopover />
+            <button onClick={() => { setSaveJobName(saveJobName || 'New Job'); setSaveAsTarget(null); setShowSaveDialog(true); }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
               <Save size={12} /> Save Job
             </button>
@@ -835,6 +1029,7 @@ export default function Migration() {
                         const included = isTableIncluded(t.schema, t.name);
                         const mapEntry = tableMaps.find(m => m.source.schema === t.schema && m.source.table === t.name);
                         const isSelected = mapEntry?.id === selectedMapId;
+                        const isMigrated = !!activeJobId && migratedTableKeys.has(`${t.schema}.${t.name}`);
                         return (
                           <div key={`${t.schema}.${t.name}`}
                             className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-50 dark:border-slate-800/40 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
@@ -846,10 +1041,11 @@ export default function Migration() {
                               onChange={e => { e.stopPropagation(); void toggleTable(t.schema, t.name); }}
                               onClick={e => e.stopPropagation()}
                               className="shrink-0 accent-blue-500" />
-                            <Table2 size={10} className="text-gray-400 shrink-0" />
-                            <span className={`text-[11px] font-mono flex-1 truncate ${isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-slate-300'}`}>
-                              <span className="text-[9px] text-gray-400 dark:text-slate-500 font-normal">{t.schema}.</span>{t.name}
+                            <Table2 size={10} className={`shrink-0 ${isMigrated ? 'text-emerald-400 dark:text-emerald-600' : 'text-gray-400'}`} />
+                            <span className={`text-[11px] font-mono flex-1 truncate ${isMigrated ? 'line-through text-gray-400 dark:text-slate-600' : isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-slate-300'}`}>
+                              <span className="text-[9px] font-normal">{t.schema}.</span>{t.name}
                             </span>
+                            {isMigrated && <span className="text-[9px] text-emerald-500 dark:text-emerald-600 shrink-0">✓</span>}
                             <span className="text-[10px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
                           </div>
                         );
@@ -1290,11 +1486,68 @@ export default function Migration() {
                                     )}
                                   </td>
                                   <td className="px-2 py-1">
-                                    <input value={col.fkRef ?? ''}
-                                      onChange={e => updateColumn(selectedMap.id, idx, { fkRef: e.target.value || null })}
-                                      placeholder="schema.table"
-                                      disabled={col.conversion !== 'serial_to_uuid' && !col.fkRef}
-                                      className="w-24 px-1.5 py-0.5 text-[10px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-mono disabled:opacity-30" />
+                                    {col.conversion === 'serial_to_uuid' ? (
+                                      <span className="text-[10px] text-gray-200 dark:text-slate-700 font-mono">—</span>
+                                    ) : (
+                                      <div className="relative">
+                                        <button
+                                          onClick={() => setFkPickerIdx(fkPickerIdx === idx ? null : idx)}
+                                          className={`w-24 px-1.5 py-0.5 text-[10px] rounded border font-mono text-left truncate block w-full
+                                            ${col.fkRef
+                                              ? 'border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50/30 dark:bg-blue-950/20'
+                                              : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 bg-white dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700'}`}>
+                                          {col.fkRef || 'pick…'}
+                                        </button>
+                                        {fkPickerIdx === idx && (
+                                          <div className="absolute left-0 top-full mt-1 z-[9999] w-60 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                                            <div className="px-2.5 py-1.5 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
+                                              <span className="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">FK Reference</span>
+                                              <button onClick={() => setFkPickerIdx(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"><X size={10} /></button>
+                                            </div>
+                                            <div className="max-h-52 overflow-y-auto">
+                                              <button
+                                                onClick={() => { updateColumn(selectedMap.id, idx, { fkRef: null }); setFkPickerIdx(null); }}
+                                                className="w-full px-2.5 py-1 text-left text-[10px] text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800 italic">
+                                                — clear —
+                                              </button>
+                                              {(tgtSchemas.length > 0 ? tgtSchemas : [...new Set(tgtTables.map(t => t.schema))]).map(schema => {
+                                                const tables = tgtTables.filter(t => t.schema === schema);
+                                                if (!tables.length) return null;
+                                                return (
+                                                  <div key={schema}>
+                                                    <div className="px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500 bg-gray-50 dark:bg-slate-800/60 sticky top-0">
+                                                      {schema}
+                                                    </div>
+                                                    {tables.map(t => {
+                                                      const mapEntry = tableMaps.find(m => m.target.schema === t.schema && m.target.table === t.name);
+                                                      const sourceRef = mapEntry
+                                                        ? `${mapEntry.source.schema}.${mapEntry.source.table}`
+                                                        : `${t.schema}.${t.name}`;
+                                                      return (
+                                                        <button key={`${t.schema}.${t.name}`}
+                                                          onClick={() => {
+                                                            updateColumn(selectedMap.id, idx, {
+                                                              fkRef: sourceRef,
+                                                              ...(tgtConn.type === 'postgresql' ? { targetType: 'UUID' } : {}),
+                                                            });
+                                                            setFkPickerIdx(null);
+                                                          }}
+                                                          className="w-full px-2.5 py-1.5 text-left hover:bg-blue-50 dark:hover:bg-blue-950/30 border-b border-gray-50 dark:border-slate-800/50 last:border-0">
+                                                          <div className="text-[10px] font-mono font-medium text-gray-700 dark:text-slate-200">{t.name}</div>
+                                                          <div className="text-[9px] text-gray-400 dark:text-slate-500 font-mono mt-0.5">
+                                                            {mapEntry ? `↩ src: ${sourceRef}` : `↩ ${sourceRef}`}
+                                                          </div>
+                                                        </button>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
                                   </td>
                                   <td className="px-2 py-1.5 text-center">
                                     <input type="checkbox" checked={col.include}
@@ -1515,6 +1768,11 @@ export default function Migration() {
         )}
       </div>
 
+      {/* FK picker backdrop */}
+      {fkPickerIdx !== null && (
+        <div className="fixed inset-0 z-[9998]" onClick={() => setFkPickerIdx(null)} />
+      )}
+
       {/* Save Job dialog */}
       {showSaveDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -1523,7 +1781,7 @@ export default function Migration() {
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Job name *</label>
-                <input value={saveJobName} onChange={e => setSaveJobName(e.target.value)} placeholder="e.g. Dev → Staging"
+                <input value={saveJobName} onChange={e => { setSaveJobName(e.target.value); setSaveAsTarget(null); }} placeholder="e.g. Dev → Staging"
                   className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
               <div>
@@ -1531,15 +1789,45 @@ export default function Migration() {
                 <input value={saveJobDesc} onChange={e => setSaveJobDesc(e.target.value)} placeholder="Optional"
                   className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
+              {/* Save as existing job */}
+              {jobs.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Save as existing job</label>
+                  <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-gray-200 dark:border-slate-600 p-1.5 bg-gray-50 dark:bg-slate-900/50">
+                    {jobs.map(j => (
+                      <button key={j.id} type="button"
+                        onClick={() => {
+                          if (saveAsTarget === j.id) {
+                            setSaveAsTarget(null);
+                            setSaveJobName(saveJobName);
+                          } else {
+                            setSaveAsTarget(j.id);
+                            setSaveJobName(j.name);
+                            setSaveJobDesc(j.description);
+                          }
+                        }}
+                        className={`w-full text-left px-2 py-1.5 rounded-md text-[11px] transition-colors ${saveAsTarget === j.id ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium' : 'hover:bg-white dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300'}`}>
+                        <span className="font-medium">{j.name}</span>
+                        <span className="ml-1.5 text-gray-400 dark:text-slate-500">{j.tableCount} tables · v{j.version}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {saveAsTarget && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+                      Will overwrite existing job with current table mappings.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex gap-2 mt-5">
-              <button onClick={() => setShowSaveDialog(false)}
+              <button onClick={() => { setShowSaveDialog(false); setSaveAsTarget(null); }}
                 className="flex-1 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
                 Cancel
               </button>
               <button onClick={() => void handleSaveJob()} disabled={savingJob || !saveJobName.trim()}
                 className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                {savingJob ? 'Saving…' : 'Save'}
+                {savingJob ? 'Saving…' : saveAsTarget ? 'Update Job' : 'Save'}
               </button>
             </div>
           </div>

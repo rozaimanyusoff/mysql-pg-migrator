@@ -2,6 +2,32 @@
 
 ---
 
+## 2026-05-27
+- **implement** — Migration module: FK Ref picker — schema → table hierarchy from target DB
+  - `src/pages/migration.tsx` — replaced FK Ref text input with a dropdown picker button; clicking opens a popover grouped by target schema listing all tables in the target DB; each table row shows the table name + auto-resolved source namespace annotation (`↩ src: assets.types`) when the table exists in current `tableMaps`; on selection stores `source.schema.source.table` (resolved from tableMaps) instead of target namespace, preventing the `assetdata.types` vs `assets.types` mistake; falls back to `target.schema.target.table` if table not in current job maps
+  - Also auto-sets `targetType: UUID` on selection (same as before); picker closes on item select, outside click (backdrop overlay), or table switch (useEffect on selectedMapId)
+  - `fkPickerIdx: number | null` state tracks which column row has the picker open
+  - Status: done
+
+- **fix** — Migration module: FK Ref auto-sets targetType to UUID on PostgreSQL target
+  - `src/pages/migration.tsx` — FK Ref `onChange` now also sets `targetType: 'UUID'` when a `fkRef` value is entered and target is PostgreSQL; prevents INSERT type mismatch where `seqToUUID()` returns a UUID string but the DDL column was still typed as BIGINT/INTEGER
+  - Status: done
+
+- **fix** — Migration module: FK Ref field disabled for non-UUID columns
+  - `src/pages/migration.tsx` — FK Ref `disabled` condition was `col.conversion !== 'serial_to_uuid' && !col.fkRef`, which blocked FK columns with `keep` conversion (e.g. `type_id`) from being editable; fixed to `col.conversion === 'serial_to_uuid'` — disables only on the PK column that generates the UUID (it is the source, not a consumer), enables for all other columns
+  - Status: done
+
+- **fix** — Migration module: strikethrough not restored on job load + column mapping not appearing for new tables
+  - `src/pages/migration.tsx` — `handleLoadJob`: instead of resetting `migratedTableKeys` to empty, now fetches run history via `GET /api/migv2/run/status`, filters runs where `jobId === id && status === 'completed'`, and rebuilds the set from completed `tableStates.sourceKey`; strikethrough now correctly reflects previous sessions
+  - `src/pages/migration.tsx` — `toggleTable`: replaced `tgtConnected && tgtTables.length === 0` condition with `!existsInTarget` check (looks up whether the same table name exists in `tgtDefaultSchema`); new tables not yet in target get `autoTargetTable = table` so column mapping appears immediately; existing target tables stay blank to avoid accidental overwrite
+  - Status: done
+
+
+- **implement** — Migration module: ? Guide popover
+  - `src/pages/migration.tsx` — added `MIGRATION_GUIDE_SECTIONS` (7 sections: Overview, Connect source & target, Select tables, Column mapping, UUID conversion, Jobs, Run & rollback) and `MigrationGuidePopover` component; follows same pattern as FlowGuidePopover; button placed in header before Save Job; popover dismisses on outside click or Escape
+  - Guide content reflects all latest implementation: auto-DB/schema creation, strikethrough for migrated tables (job-save condition), keepLegacyAs auto-set, fkRef for FK columns, Save as existing job, rollback behaviour (PK list vs TRUNCATE fallback)
+  - Status: done
+
 ## 2026-05-26
 - **fix** — Migration module: MySQL source table filtering + target DB/schema creation
   - `src/pages/api/migv2/tables.ts`: MySQL query now filters `TABLE_SCHEMA = ?` using `conn.database` so only tables from the selected source DB are listed (previously showed tables from all non-system databases)
@@ -15,6 +41,20 @@
   - `src/lib/migv2/types.ts` — added `keepLegacyAs?: string | null` to `ColumnMap`; when set on a `serial_to_uuid` column, the original MySQL integer is also written to a separate BIGINT column
   - `src/lib/migv2/runner.ts` — `buildCreateTableSQL`: injects the extra BIGINT column (e.g. `"old_id" BIGINT NULL`) before the PK constraint; `transformRow`: writes `Number(originalVal)` to `out[keepLegacyAs]` alongside the converted UUID
   - `src/pages/migration.tsx` — added "Keep Orig" column to the mapping table header (with tooltip); cell shows `—` for non-UUID conversions; for `serial_to_uuid` shows `+ keep` button (defaults to `old_<srcCol>`) that expands to an editable name input + X to clear; switching Conv away from →UUID auto-clears the field
+  - Status: done
+
+- **implement** — Migration module: strike-through migrated source tables + Save as existing job
+  - `src/pages/migration.tsx` — added `migratedTableKeys: Set<string>` state; populated in `advanceMigration` when run status is `completed` (accumulates `sourceKey` of each completed table); cleared in `handleLoadJob` when switching jobs
+  - `src/pages/migration.tsx` — source table list: `isMigrated` flag applied only when `activeJobId` is set (job saved); migrated rows show `line-through` text, green table icon, and a `✓` badge; unsaved jobs never show strike-through
+  - `src/pages/migration.tsx` — added `saveAsTarget: string | null` state; Save Job dialog now shows a scrollable "Save as existing job" picker listing all saved jobs; selecting one prefills name/desc and sets `saveAsTarget`; `handleSaveJob` uses `saveAsTarget ?? activeJobId` as the payload ID, overwriting the selected job with current table mappings; save button label changes to "Update Job" when a target is selected; typing in the name field clears the selection
+  - Status: done
+
+- **implement** — Migration module: auto-reload target schema & tables after migration completes
+  - `src/pages/migration.tsx` — added `reloadTgtTables` callback; calls `/api/migv2/tables` with current `tgtConn` and silently updates `tgtTables` + `tgtSchemas` without resetting connection state; called from `advanceMigration` when run status is `completed`
+  - Status: done
+
+- **fix** — Migration module: `keepLegacyAs` not auto-populated on column load
+  - `src/pages/migration.tsx` — column initialization block (line ~394): when a PK column is detected as serial (`isSerial === true`), `keepLegacyAs` is now auto-set to `old_<colName>` instead of `undefined`; previously the `+ keep` button had to be clicked manually, meaning users who skipped it got no legacy column in PostgreSQL
   - Status: done
 
 - **fix** — Migration module: auto-map target table name when target is empty
