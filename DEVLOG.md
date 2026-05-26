@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-05-26
+- **fix** — Migration module: MySQL source table filtering + target DB/schema creation
+  - `src/pages/api/migv2/tables.ts`: MySQL query now filters `TABLE_SCHEMA = ?` using `conn.database` so only tables from the selected source DB are listed (previously showed tables from all non-system databases)
+  - `src/pages/api/migv2/create-db.ts` (new): POST endpoint to create a new database on the target connection; supports PostgreSQL (connects to `postgres` DB then runs `CREATE DATABASE`) and MySQL; validates DB name is alphanumeric/underscore/hyphen only
+  - `src/pages/migration.tsx` — Source table list: each row now shows `schema.tablename` (schema in dim text) so the user can see which DB/schema each table belongs to
+  - `src/pages/migration.tsx` — Target panel: added "+ New DB" button next to the DB dropdown; opens an inline text input + "Create" button that calls `/api/migv2/create-db`, then refreshes the DB list and auto-selects the new DB
+  - `src/pages/migration.tsx` — Target panel: added "+ New Schema" button next to the PG schema dropdown; opens an inline text input that sets `tgtDefaultSchema` to the typed value; migration runner already handles `CREATE SCHEMA IF NOT EXISTS` automatically
+  - Status: done
+
+- **implement** — Migration module: keep original serial ID alongside UUID (`keepLegacyAs`)
+  - `src/lib/migv2/types.ts` — added `keepLegacyAs?: string | null` to `ColumnMap`; when set on a `serial_to_uuid` column, the original MySQL integer is also written to a separate BIGINT column
+  - `src/lib/migv2/runner.ts` — `buildCreateTableSQL`: injects the extra BIGINT column (e.g. `"old_id" BIGINT NULL`) before the PK constraint; `transformRow`: writes `Number(originalVal)` to `out[keepLegacyAs]` alongside the converted UUID
+  - `src/pages/migration.tsx` — added "Keep Orig" column to the mapping table header (with tooltip); cell shows `—` for non-UUID conversions; for `serial_to_uuid` shows `+ keep` button (defaults to `old_<srcCol>`) that expands to an editable name input + X to clear; switching Conv away from →UUID auto-clears the field
+  - Status: done
+
+- **fix** — Migration module: auto-map target table name when target is empty
+  - `src/pages/migration.tsx` — `toggleTable`: when `tgtConnected && tgtTables.length === 0`, auto-sets `target.table` to the same name as the source table so no manual target assignment is needed
+  - Column mapping uses free-text inputs (no dropdown) since no target columns exist yet; the runner's `ensureTargetTable` creates the table on first run using the DDL from the mapping
+  - Target panel empty-state updated: when target has no tables, shows "Empty target — source table names will be used" instead of generic "No tables found"; search-filtered empty state shows "No tables match"
+  - Status: done
+
 ## 2026-05-22
 - **implement** — Data Normalizer: Drizzle ORM export + build schema in PostgreSQL
   - Added `'drizzle'` export mode to `ExportMode` type and export grid (4 cards, 2-col grid)

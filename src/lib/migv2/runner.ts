@@ -109,6 +109,17 @@ function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mys
     }
   });
 
+  // Legacy columns: extra BIGINT to preserve the original serial integer alongside the UUID
+  for (const c of cols) {
+    if (c.keepLegacyAs && c.conversion === 'serial_to_uuid') {
+      if (targetType === 'postgresql') {
+        colDefs.push(`  "${c.keepLegacyAs}" BIGINT NULL`);
+      } else {
+        colDefs.push(`  \`${c.keepLegacyAs}\` BIGINT NULL`);
+      }
+    }
+  }
+
   if (pkCol) {
     if (targetType === 'postgresql') {
       colDefs.push(`  PRIMARY KEY ("${pkCol.targetCol}")`);
@@ -168,7 +179,12 @@ function transformRow(
       // target-only column: use default (null or literal)
       out[col.targetCol] = col.defaultValue ?? null;
     } else {
-      out[col.targetCol] = coerceValue(row[col.sourceCol], col, tableMap);
+      const originalVal = row[col.sourceCol];
+      out[col.targetCol] = coerceValue(originalVal, col, tableMap);
+      // Preserve original serial integer in the legacy column alongside the UUID
+      if (col.keepLegacyAs && col.conversion === 'serial_to_uuid') {
+        out[col.keepLegacyAs] = originalVal != null ? Number(originalVal) : null;
+      }
     }
   }
   return out;

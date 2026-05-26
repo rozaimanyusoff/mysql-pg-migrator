@@ -146,6 +146,11 @@ export default function Migration() {
   const [tgtDbError, setTgtDbError] = useState('');
   const [tgtSchemas, setTgtSchemas] = useState<string[]>([]);
   const [tgtDefaultSchema, setTgtDefaultSchema] = useState('public');
+  const [tgtNewDbMode, setTgtNewDbMode] = useState(false);
+  const [tgtNewDbName, setTgtNewDbName] = useState('');
+  const [tgtCreatingDb, setTgtCreatingDb] = useState(false);
+  const [tgtNewSchemaMode, setTgtNewSchemaMode] = useState(false);
+  const [tgtNewSchemaName, setTgtNewSchemaName] = useState('');
   const [tgtTables, setTgtTables] = useState<MigTableInfo[]>([]);
   const [tgtConn, setTgtConn] = useState<MigConn>({ type: 'postgresql', host: '', port: 5432, database: '', username: '', password: '' });
   const [tgtConnected, setTgtConnected] = useState(false);
@@ -281,8 +286,36 @@ export default function Migration() {
 
   useEffect(() => {
     if (tgtConnId) void loadTgtDbs(tgtConnId);
-    else { setTgtDbs([]); setTgtDb(''); setTgtConnected(false); }
+    else {
+      setTgtDbs([]); setTgtDb(''); setTgtConnected(false);
+      setTgtNewDbMode(false); setTgtNewDbName('');
+    }
   }, [tgtConnId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleCreateTgtDb = async () => {
+    if (!tgtConnId || !tgtNewDbName.trim()) return;
+    const row = connections.find(c => c.id === tgtConnId);
+    if (!row) return;
+    setTgtCreatingDb(true); setTgtDbError('');
+    try {
+      await axios.post('/api/migv2/create-db', {
+        type: row.db_type === 'postgres' ? 'postgresql' : 'mysql',
+        host: row.host, port: row.port,
+        username: row.username, password: row.password_enc ?? '',
+        newDatabase: tgtNewDbName.trim(),
+      }, { headers: authHeaders() });
+      const { data } = await axios.post<{ databases: string[] }>(
+        '/api/schema-designer/databases',
+        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' },
+        { headers: authHeaders() }
+      );
+      setTgtDbs(data.databases);
+      setTgtDb(tgtNewDbName.trim());
+      setTgtNewDbMode(false); setTgtNewDbName('');
+    } catch (err) {
+      setTgtDbError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Failed to create database') : 'Failed to create database');
+    } finally { setTgtCreatingDb(false); }
+  };
 
   useEffect(() => {
     if (!tgtConnId || !tgtDb) { setTgtConnected(false); setTgtSchemas([]); return; }
@@ -291,6 +324,7 @@ export default function Migration() {
     const conn = connRowToMigConn(row, tgtDb);
     setTgtConn(conn);
     setTgtConnecting(true); setTgtError(''); setTgtConnected(false); setTgtSchemas([]); setTgtTables([]);
+    setTgtNewSchemaMode(false); setTgtNewSchemaName('');
     void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', conn, { headers: authHeaders() })
       .then(({ data }) => {
         setTgtConnected(true);
@@ -327,11 +361,13 @@ export default function Migration() {
     }
     const key = `${schema}.${table}`;
     const mapId = newId();
+    // When target DB is empty, auto-assign the same table name so migration can proceed
+    const autoTargetTable = tgtConnected && tgtTables.length === 0 ? table : '';
     // Create placeholder map immediately so preview fires right away
     setTableMaps(prev => [...prev, {
       id: mapId, include: true,
       source: { schema, table },
-      target: { schema: tgtDefaultSchema || '', table: '' },
+      target: { schema: tgtDefaultSchema || '', table: autoTargetTable },
       columns: [], truncateBeforeMigrate: false,
     }]);
     setSelectedMapId(mapId);
@@ -812,7 +848,7 @@ export default function Migration() {
                               className="shrink-0 accent-blue-500" />
                             <Table2 size={10} className="text-gray-400 shrink-0" />
                             <span className={`text-[11px] font-mono flex-1 truncate ${isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-slate-300'}`}>
-                              {t.name}
+                              <span className="text-[9px] text-gray-400 dark:text-slate-500 font-normal">{t.schema}.</span>{t.name}
                             </span>
                             <span className="text-[10px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
                           </div>
@@ -846,25 +882,105 @@ export default function Migration() {
                       <div className="flex flex-col gap-1.5">
                         <ConnSelect connections={connections} value={tgtConnId}
                           onChange={id => setTgtConnId(id)} onNew={() => void router.push('/connections')} accent="violet" />
-                        <div className="flex items-center gap-1.5">
-                          {tgtConnId && (tgtLoadingDbs
-                            ? <Loader2 size={11} className="animate-spin text-gray-400" />
-                            : (
-                              <select value={tgtDb} onChange={e => setTgtDb(e.target.value)}
-                                className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-violet-400 cursor-pointer font-mono">
-                                {!tgtDb && <option value="">— select db —</option>}
-                                {tgtDbs.map(d => <option key={d} value={d}>{d}</option>)}
-                              </select>
+
+                        {/* DB selector / create-new-DB row */}
+                        {tgtConnId && (tgtLoadingDbs
+                          ? <Loader2 size={11} className="animate-spin text-gray-400" />
+                          : tgtNewDbMode
+                            ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  value={tgtNewDbName}
+                                  onChange={e => setTgtNewDbName(e.target.value)}
+                                  onKeyDown={e => e.key === 'Enter' && void handleCreateTgtDb()}
+                                  placeholder="new-database"
+                                  autoFocus
+                                  className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-violet-300 dark:border-violet-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+                                />
+                                <button
+                                  onClick={() => void handleCreateTgtDb()}
+                                  disabled={tgtCreatingDb || !tgtNewDbName.trim()}
+                                  className="px-2 py-1 text-[11px] rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1">
+                                  {tgtCreatingDb ? <Loader2 size={10} className="animate-spin" /> : 'Create'}
+                                </button>
+                                <button
+                                  onClick={() => { setTgtNewDbMode(false); setTgtNewDbName(''); }}
+                                  className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
+                                  <X size={11} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <select value={tgtDb} onChange={e => setTgtDb(e.target.value)}
+                                  className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-violet-400 cursor-pointer font-mono">
+                                  {!tgtDb && <option value="">— select db —</option>}
+                                  {tgtDbs.map(d => <option key={d} value={d}>{d}</option>)}
+                                </select>
+                                <button
+                                  onClick={() => setTgtNewDbMode(true)}
+                                  title="Create new database"
+                                  className="shrink-0 p-1 rounded text-gray-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
+                                  <Plus size={12} />
+                                </button>
+                              </div>
                             )
-                          )}
-                          {tgtConnected && tgtSchemas.length > 0 && (
-                            <select value={tgtDefaultSchema} onChange={e => setTgtDefaultSchema(e.target.value)}
-                              title="Default target schema"
-                              className="w-24 shrink-0 px-2 py-1 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 focus:outline-none cursor-pointer font-mono">
-                              {tgtSchemas.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                          )}
-                        </div>
+                        )}
+
+                        {/* Schema selector / create-new-schema row (PG only) */}
+                        {tgtConnected && tgtConn.type === 'postgresql' && (
+                          tgtNewSchemaMode
+                            ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  value={tgtNewSchemaName}
+                                  onChange={e => setTgtNewSchemaName(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' && tgtNewSchemaName.trim()) {
+                                      setTgtDefaultSchema(tgtNewSchemaName.trim());
+                                      setTgtNewSchemaMode(false); setTgtNewSchemaName('');
+                                    }
+                                  }}
+                                  placeholder="new_schema"
+                                  autoFocus
+                                  className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 font-mono focus:outline-none focus:border-violet-500"
+                                />
+                                <button
+                                  onClick={() => {
+                                    if (tgtNewSchemaName.trim()) {
+                                      setTgtDefaultSchema(tgtNewSchemaName.trim());
+                                      setTgtNewSchemaMode(false); setTgtNewSchemaName('');
+                                    }
+                                  }}
+                                  disabled={!tgtNewSchemaName.trim()}
+                                  className="px-2 py-1 text-[11px] rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50">
+                                  Use
+                                </button>
+                                <button
+                                  onClick={() => { setTgtNewSchemaMode(false); setTgtNewSchemaName(''); }}
+                                  className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
+                                  <X size={11} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <select value={tgtDefaultSchema} onChange={e => setTgtDefaultSchema(e.target.value)}
+                                  title="Default target schema"
+                                  className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 focus:outline-none cursor-pointer font-mono">
+                                  {tgtSchemas.map(s => <option key={s} value={s}>{s}</option>)}
+                                  {tgtDefaultSchema && !tgtSchemas.includes(tgtDefaultSchema) && (
+                                    <option value={tgtDefaultSchema}>{tgtDefaultSchema} (new)</option>
+                                  )}
+                                </select>
+                                <button
+                                  onClick={() => setTgtNewSchemaMode(true)}
+                                  title="Use a new schema"
+                                  className="shrink-0 p-1 rounded text-gray-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
+                                  <Plus size={12} />
+                                </button>
+                              </div>
+                            )
+                        )}
+
                         {tgtDbError && <span className="text-[10px] text-rose-500">{tgtDbError}</span>}
                       </div>
                     </div>
@@ -894,7 +1010,15 @@ export default function Migration() {
                           <p className="text-[11px] text-gray-400 dark:text-slate-500">Select a connection and database</p>
                         </div>
                       ) : filteredTgtTables.length === 0 ? (
-                        <div className="flex items-center justify-center h-full text-[11px] text-gray-400 dark:text-slate-500 italic">No tables found</div>
+                        tgtTables.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center h-full gap-2 px-4 text-center">
+                            <Table2 size={24} className="text-gray-200 dark:text-slate-700" />
+                            <p className="text-[11px] text-gray-500 dark:text-slate-400 font-medium">Empty target</p>
+                            <p className="text-[10px] text-gray-400 dark:text-slate-500">Source table names will be used — tables are created on first run.</p>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center h-full text-[11px] text-gray-400 dark:text-slate-500 italic">No tables match</div>
+                        )
                       ) : filteredTgtTables.map(t => {
                         const mapping = tableMaps.find(m => m.target.schema === t.schema && m.target.table === t.name);
                         const isTarget = selectedMap?.target.schema === t.schema && selectedMap?.target.table === t.name;
@@ -985,6 +1109,7 @@ export default function Migration() {
                               { label: 'Tgt Name', tip: 'Target Name', desc: 'Override the column name written in the migration output.\n• keep — use the same name as Tgt Col\n• rename — type a custom column name\nExample: rename user_id → member_id' },
                               { label: 'Tgt Type', tip: 'Target Type', desc: 'Data type inferred for the target column. Auto-set when you pick a Tgt Col or change Conv.\nExample: BIGINT, TEXT, TIMESTAMPTZ' },
                               { label: 'Conv', tip: 'Conversion', desc: 'Datatype cast or transformation applied during migration.\n• keep — copy value as-is\n• →UUID — serial int → UUID v4\n• →TEXT, →INT, →BIGINT, →NUMERIC, →BOOL, →TIMESTAMPTZ, →DATE, →JSONB — cast to that PG type' },
+                              { label: 'Keep Orig', tip: 'Keep Original ID', desc: 'Only for →UUID conversion. Stores the original MySQL serial integer in a separate BIGINT column.\nSet a column name (e.g. legacy_id) to enable.\nUseful when other tables still reference the old serial integer as a FK.' },
                               { label: 'FK Ref', tip: 'Foreign Key Reference', desc: 'If this column is a UUID FK, enter the target table it references so the migrator can resolve IDs correctly.\nExample: public.users' },
                               { label: '✓', tip: 'Include', desc: 'Toggle whether this column is included in the migration. Uncheck to exclude a column from the INSERT.' },
                               { label: '', tip: null, desc: null },
@@ -1115,7 +1240,11 @@ export default function Migration() {
                                           to_jsonb: 'JSONB',
                                         };
                                         const targetType = typeMap[conv] ?? col.targetType;
-                                        updateColumn(selectedMap.id, idx, { conversion: conv, targetType });
+                                        updateColumn(selectedMap.id, idx, {
+                                          conversion: conv, targetType,
+                                          // clear legacy column name if switching away from serial_to_uuid
+                                          ...(conv !== 'serial_to_uuid' ? { keepLegacyAs: null } : {}),
+                                        });
                                       }}
                                       className="text-[10px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 py-0.5 px-1">
                                       <option value="keep">keep</option>
@@ -1131,6 +1260,34 @@ export default function Migration() {
                                         <option value="to_jsonb">→JSONB</option>
                                       </optgroup>
                                     </select>
+                                  </td>
+                                  {/* KEEP ORIG — only active for serial_to_uuid */}
+                                  <td className="px-2 py-1">
+                                    {col.conversion === 'serial_to_uuid' ? (
+                                      col.keepLegacyAs ? (
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            value={col.keepLegacyAs}
+                                            onChange={e => updateColumn(selectedMap.id, idx, { keepLegacyAs: e.target.value || null })}
+                                            className="w-20 px-1.5 py-0.5 text-[10px] rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 font-mono focus:outline-none focus:border-amber-500" />
+                                          <button
+                                            onClick={() => updateColumn(selectedMap.id, idx, { keepLegacyAs: null })}
+                                            className="text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors">
+                                            <X size={10} />
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          onClick={() => updateColumn(selectedMap.id, idx, {
+                                            keepLegacyAs: col.sourceCol ? `old_${col.sourceCol}` : 'legacy_id',
+                                          })}
+                                          className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 font-mono transition-colors">
+                                          + keep
+                                        </button>
+                                      )
+                                    ) : (
+                                      <span className="text-[10px] text-gray-200 dark:text-slate-700">—</span>
+                                    )}
                                   </td>
                                   <td className="px-2 py-1">
                                     <input value={col.fkRef ?? ''}

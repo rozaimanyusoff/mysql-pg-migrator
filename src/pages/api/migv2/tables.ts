@@ -42,6 +42,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ tables });
     } else {
       const tables = await withMysql(conn, async c => {
+        const params: string[] = [];
+        const dbFilter = conn.database
+          ? (params.push(conn.database), 'AND t.TABLE_SCHEMA = ?')
+          : '';
         const [rows] = await c.query<any[]>(`
           SELECT t.TABLE_SCHEMA AS \`schema\`, t.TABLE_NAME AS name,
             COALESCE(t.TABLE_ROWS, 0) AS row_count,
@@ -50,9 +54,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           LEFT JOIN information_schema.COLUMNS col ON col.TABLE_SCHEMA = t.TABLE_SCHEMA AND col.TABLE_NAME = t.TABLE_NAME
           WHERE t.TABLE_TYPE = 'BASE TABLE'
             AND t.TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys')
+            ${dbFilter}
           GROUP BY t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_ROWS
           ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
-        `);
+        `, params);
         return (rows as any[]).map(r => ({
           schema: r.schema, name: r.name,
           rowCount: Number(r.row_count), columnCount: Number(r.col_count),

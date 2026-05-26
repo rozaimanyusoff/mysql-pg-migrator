@@ -37,6 +37,9 @@ export interface ColumnMap {
   // For FK columns that point to a UUID-converted PK:
   // e.g. "public.users" means "look up seqToUUID('public.users', fk_value)"
   fkRef: string | null;
+  // When conversion is serial_to_uuid: also write the original integer into this extra
+  // BIGINT column (e.g. "legacy_id"). Useful when other tables still FK via the old serial.
+  keepLegacyAs?: string | null;
 }
 
 export interface TableMap {
