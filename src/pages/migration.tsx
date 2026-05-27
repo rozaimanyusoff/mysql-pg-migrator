@@ -308,6 +308,7 @@ export default function Migration() {
 
   // ── Jobs ──────────────────────────────────────────────────────────────────────
   const [jobs, setJobs] = useState<MigJobSummary[]>([]);
+  const [tgtToSrcRef, setTgtToSrcRef] = useState<Record<string, string>>({});
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [saveJobName, setSaveJobName] = useState('');
   const [saveJobDesc, setSaveJobDesc] = useState('');
@@ -637,7 +638,17 @@ export default function Migration() {
       setJobs(data.jobs);
     } catch { /* ignore */ }
   };
-  useEffect(() => { void loadJobs(); }, []);
+  const loadTableRefs = async () => {
+    try {
+      const { data } = await axios.get<{ refs: { targetKey: string; sourceKey: string }[] }>(
+        '/api/migv2/jobs/table-refs', { headers: authHeaders() }
+      );
+      const map: Record<string, string> = {};
+      for (const r of data.refs) map[r.targetKey] = r.sourceKey;
+      setTgtToSrcRef(map);
+    } catch { /* ignore */ }
+  };
+  useEffect(() => { void loadJobs(); void loadTableRefs(); }, []);
 
   const handleSaveJob = async () => {
     if (!saveJobName.trim()) return;
@@ -655,7 +666,7 @@ export default function Migration() {
       setActiveJobId(data.job.id);
       setSaveAsTarget(null);
       setDirty(false); setShowSaveDialog(false);
-      await loadJobs();
+      await loadJobs(); void loadTableRefs();
     } catch { /* ignore */ } finally { setSavingJob(false); }
   };
 
@@ -1519,10 +1530,12 @@ export default function Migration() {
                                                       {schema}
                                                     </div>
                                                     {tables.map(t => {
+                                                      const targetKey = `${t.schema}.${t.name}`;
                                                       const mapEntry = tableMaps.find(m => m.target.schema === t.schema && m.target.table === t.name);
-                                                      const sourceRef = mapEntry
-                                                        ? `${mapEntry.source.schema}.${mapEntry.source.table}`
-                                                        : `${t.schema}.${t.name}`;
+                                                      const sourceRef =
+                                                        tgtToSrcRef[targetKey] ??
+                                                        (mapEntry ? `${mapEntry.source.schema}.${mapEntry.source.table}` : targetKey);
+                                                      const resolved = !!tgtToSrcRef[targetKey] || !!mapEntry;
                                                       return (
                                                         <button key={`${t.schema}.${t.name}`}
                                                           onClick={() => {
@@ -1534,8 +1547,10 @@ export default function Migration() {
                                                           }}
                                                           className="w-full px-2.5 py-1.5 text-left hover:bg-blue-50 dark:hover:bg-blue-950/30 border-b border-gray-50 dark:border-slate-800/50 last:border-0">
                                                           <div className="text-[10px] font-mono font-medium text-gray-700 dark:text-slate-200">{t.name}</div>
-                                                          <div className="text-[9px] text-gray-400 dark:text-slate-500 font-mono mt-0.5">
-                                                            {mapEntry ? `↩ src: ${sourceRef}` : `↩ ${sourceRef}`}
+                                                          <div className="text-[9px] font-mono mt-0.5">
+                                                            {resolved
+                                                              ? <span className="text-emerald-600 dark:text-emerald-500">↩ src: {sourceRef}</span>
+                                                              : <span className="text-amber-500 dark:text-amber-400">↩ {sourceRef} (unresolved)</span>}
                                                           </div>
                                                         </button>
                                                       );

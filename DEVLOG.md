@@ -3,6 +3,12 @@
 ---
 
 ## 2026-05-27
+- **fix** — Migration module: FK Ref picker resolves source namespace across all saved jobs
+  - `src/pages/api/migv2/jobs/table-refs.ts` (new): `GET /api/migv2/jobs/table-refs` scans all saved job files and returns `{targetKey, sourceKey}[]` pairs (e.g. `assetdata.types → assets.types`); deduplicates by targetKey
+  - `src/pages/migration.tsx` — added `tgtToSrcRef: Record<string, string>` state; loaded at mount via `loadTableRefs()` and refreshed after every save; picker now resolves source namespace using `tgtToSrcRef[targetKey]` first (cross-job lookup), then `tableMaps` fallback (current job); annotation shows green `↩ src: assets.types` when resolved, amber `(unresolved)` when not found in any saved job
+  - Root cause: previous fallback used target namespace (`assetdata.types`) when table not in current tableMaps; now correctly resolved from run history across all jobs
+  - Status: done
+
 - **implement** — Migration module: FK Ref picker — schema → table hierarchy from target DB
   - `src/pages/migration.tsx` — replaced FK Ref text input with a dropdown picker button; clicking opens a popover grouped by target schema listing all tables in the target DB; each table row shows the table name + auto-resolved source namespace annotation (`↩ src: assets.types`) when the table exists in current `tableMaps`; on selection stores `source.schema.source.table` (resolved from tableMaps) instead of target namespace, preventing the `assetdata.types` vs `assets.types` mistake; falls back to `target.schema.target.table` if table not in current job maps
   - Also auto-sets `targetType: UUID` on selection (same as before); picker closes on item select, outside click (backdrop overlay), or table switch (useEffect on selectedMapId)
