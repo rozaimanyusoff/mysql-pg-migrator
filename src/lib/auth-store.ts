@@ -22,11 +22,27 @@ export function sha256(str: string): string {
 export async function validateCredentials(username: string, password: string): Promise<boolean> {
   const hash = sha256(password);
   try {
-    const { rows } = await getPool().query(
+    const pool = getPool();
+    const { rows } = await pool.query(
       `SELECT id FROM dbt_users WHERE username = $1 AND password_hash = $2 AND is_active = TRUE`,
       [username, hash]
     );
-    return rows.length > 0;
+    if (rows.length > 0) return true;
+
+    // Auto-seed default admin on first use (empty table + matching default credentials)
+    if (username === FALLBACK_USER && hash === FALLBACK_HASH) {
+      const { rows: countRows } = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM dbt_users`
+      );
+      if (countRows[0]?.c === '0') {
+        await pool.query(
+          `INSERT INTO dbt_users (username, password_hash, role) VALUES ($1, $2, 'admin') ON CONFLICT (username) DO NOTHING`,
+          [FALLBACK_USER, FALLBACK_HASH]
+        );
+        return true;
+      }
+    }
+    return false;
   } catch {
     return username === FALLBACK_USER && hash === FALLBACK_HASH;
   }

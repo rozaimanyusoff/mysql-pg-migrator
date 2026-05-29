@@ -19,6 +19,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useAuth } from '../lib/auth-context';
+import { useAlert } from '../lib/alert-context';
 import type {
   FtdProject, FtdEntity, FtdRelationship,
   EntityField, ValidationIssue, DictionaryEntry, NodeMetadata, NodeType,
@@ -446,10 +447,13 @@ function FlowGuidePopover() {
 
 export default function FlowDesignerPage() {
   useAuth();
+  const { showWarning } = useAlert();
 
   // ── Project selection ─────────────────────────────────────────────────────
   const [projects, setProjects]       = useState<FtdProject[]>([]);
   const [activeProject, setActive]    = useState<FtdProject | null>(null);
+  const [renamingProjId, setRenamingProjId] = useState<number | null>(null);
+  const [renameProjVal, setRenameProjVal]   = useState('');
   const [showNewProj, setShowNewProj] = useState(false);
   const [newProjForm, setNewProjForm] = useState({ name: '', description: '', domain: '', schemaName: 'app' });
   const [projLoading, setProjLoading] = useState(false);
@@ -518,11 +522,31 @@ export default function FlowDesignerPage() {
     finally { setProjLoading(false); }
   }
 
-  async function deleteProject(id: number) {
-    if (!confirm('Delete this project and all its data?')) return;
-    await axios.delete(`/api/flow-designer/projects?id=${id}`);
-    setProjects(p => p.filter(x => x.id !== id));
-    if (activeProject?.id === id) setActive(null);
+  function deleteProject(id: number) {
+    const p = projects.find(x => x.id === id);
+    showWarning({
+      title: `Delete "${p?.name ?? 'this project'}"?`,
+      description: 'The project and all its entities, relationships, and flow data will be permanently removed.',
+      confirmLabel: 'Delete Project',
+      onConfirm: async () => {
+        await axios.delete(`/api/flow-designer/projects?id=${id}`);
+        setProjects(prev => prev.filter(x => x.id !== id));
+        if (activeProject?.id === id) setActive(null);
+      },
+    });
+  }
+
+  async function renameProject(id: number, newName: string) {
+    if (!newName.trim()) return;
+    const p = projects.find(x => x.id === id);
+    if (!p) return;
+    await axios.put('/api/flow-designer/projects', {
+      id, name: newName.trim(),
+      description: p.description, domain: p.domain,
+      schemaName: p.schema_name,
+    });
+    setProjects(prev => prev.map(x => x.id === id ? { ...x, name: newName.trim() } : x));
+    setRenamingProjId(null);
   }
 
   async function openProject(proj: FtdProject) {
@@ -848,11 +872,33 @@ export default function FlowDesignerPage() {
               {projects.map(p => (
                 <div key={p.id} className="p-5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <h3 className="font-semibold text-base">{p.name}</h3>
+                    <div className="flex-1 min-w-0 mr-2">
+                      {renamingProjId === p.id ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            value={renameProjVal}
+                            onChange={e => setRenameProjVal(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') void renameProject(p.id, renameProjVal);
+                              if (e.key === 'Escape') setRenamingProjId(null);
+                            }}
+                            className="flex-1 text-sm font-semibold bg-white dark:bg-slate-700 border border-blue-400 rounded px-2 py-0.5 text-gray-900 dark:text-slate-100 outline-none min-w-0"
+                          />
+                          <button onClick={() => void renameProject(p.id, renameProjVal)} className="p-0.5 text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded transition-colors"><Check size={13} /></button>
+                          <button onClick={() => setRenamingProjId(null)} className="p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"><X size={13} /></button>
+                        </div>
+                      ) : (
+                        <h3 className="font-semibold text-base truncate">{p.name}</h3>
+                      )}
                       {p.domain && <p className="text-xs text-blue-500 mt-0.5">{p.domain}</p>}
                     </div>
-                    <button onClick={() => deleteProject(p.id)} className="p-1.5 text-gray-400 hover:text-rose-500"><Trash2 size={14} /></button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {renamingProjId !== p.id && (
+                        <button onClick={() => { setRenamingProjId(p.id); setRenameProjVal(p.name); }} className="p-1.5 text-gray-400 hover:text-blue-500 transition-colors"><Edit3 size={13} /></button>
+                      )}
+                      <button onClick={() => deleteProject(p.id)} className="p-1.5 text-gray-400 hover:text-rose-500 transition-colors"><Trash2 size={14} /></button>
+                    </div>
                   </div>
                   {p.description && <p className="text-xs text-gray-500 dark:text-slate-400 mb-3 line-clamp-2">{p.description}</p>}
                   <div className="flex items-center justify-between">

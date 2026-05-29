@@ -10,7 +10,7 @@ import {
   XCircle, Loader2, X, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Download,
   Columns, Sprout, Save, Clock,
   FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info, HelpCircle, BookOpen,
-  Network,
+  Network, Pencil,
 } from 'lucide-react';
 import {
   ReactFlow, Background, Controls,
@@ -21,6 +21,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useAuth } from '../lib/auth-context';
+import { useAlert } from '../lib/alert-context';
 import type { ConnectionRow } from './api/connections/index';
 import type { ExplorerConn } from '../lib/explorer-db';
 import type { SchemaInfo } from './api/schema-explorer/schemas';
@@ -429,22 +430,62 @@ function JobRunCard({ job }: { job: SchemaJob }) {
   );
 }
 
-function JobGroupCard({ group, onLoad }: { group: JobGroup; onLoad: (j: SchemaJob) => void }) {
+function JobGroupCard({ group, onLoad, onRename, onDelete }: { group: JobGroup; onLoad: (j: SchemaJob) => void; onRename?: (oldName: string, newName: string) => void; onDelete?: (jobName: string) => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameVal, setRenameVal] = useState('');
   const latest = group.runs[0];
   const hasFailure = group.runs.some(r => r.status === 'failed');
   const allSuccess = group.runs.every(r => r.status === 'success');
+
+  const commitRename = () => {
+    if (renameVal.trim() && renameVal.trim() !== group.job_name) onRename?.(group.job_name, renameVal.trim());
+    setRenaming(false);
+  };
+
   return (
     <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/60">
       <div className="w-full flex items-center gap-2.5 px-3 py-3">
-        <button onClick={() => setExpanded(v => !v)} className="flex-1 flex items-center gap-2 text-left hover:opacity-80 transition-opacity min-w-0">
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-gray-900 dark:text-slate-100 truncate">{group.job_name}</p>
-            <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{group.runs.length} run{group.runs.length !== 1 ? 's' : ''} · latest {timeAgo(latest.created_at)}</p>
+        {renaming ? (
+          <div className="flex-1 flex items-center gap-1 min-w-0">
+            <input
+              autoFocus
+              value={renameVal}
+              onChange={e => setRenameVal(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(false); }}
+              className="flex-1 text-xs font-semibold bg-white dark:bg-slate-700 border border-blue-400 rounded px-1.5 py-0.5 text-gray-900 dark:text-slate-100 outline-none min-w-0"
+            />
+            <button onClick={commitRename} className="p-0.5 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors shrink-0"><Check size={12} /></button>
+            <button onClick={() => setRenaming(false)} className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors shrink-0"><X size={12} /></button>
           </div>
-          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${allSuccess ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : hasFailure ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'}`}>{allSuccess ? 'success' : hasFailure ? 'has failures' : latest.status}</span>
-        </button>
+        ) : (
+          <button onClick={() => setExpanded(v => !v)} className="flex-1 flex items-center gap-2 text-left hover:opacity-80 transition-opacity min-w-0">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-gray-900 dark:text-slate-100 truncate">{group.job_name}</p>
+              <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{group.runs.length} run{group.runs.length !== 1 ? 's' : ''} · latest {timeAgo(latest.created_at)}</p>
+            </div>
+            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${allSuccess ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : hasFailure ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'}`}>{allSuccess ? 'success' : hasFailure ? 'has failures' : latest.status}</span>
+          </button>
+        )}
         <div className="flex items-center gap-1.5 shrink-0">
+          {!renaming && (
+            <>
+              <button
+                onClick={() => { setRenameVal(group.job_name); setRenaming(true); }}
+                title="Rename job"
+                className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
+              >
+                <Pencil size={11} />
+              </button>
+              <button
+                onClick={() => onDelete?.(group.job_name)}
+                title="Delete job"
+                className="p-1 rounded text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+              >
+                <Trash2 size={11} />
+              </button>
+            </>
+          )}
           <button
             onClick={() => onLoad(latest)}
             title="Load latest schema into designer"
@@ -2150,6 +2191,7 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
 
 function SchemaDesignerInner() {
   const { authenticated, loading: authLoading } = useAuth();
+  const { showWarning } = useAlert();
 
   // Connections (kept for ImportPanel + ExecuteJobModal)
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
@@ -2263,8 +2305,13 @@ function SchemaDesignerInner() {
   };
 
   const handleDeleteParsedTable = (id: string) => {
-    setImportParsed(p => p.filter(t => t.id !== id));
-    setSelectedParsedId(null);
+    const t = importParsed.find(x => x.id === id);
+    showWarning({
+      title: `Remove "${t?.name ?? 'this table'}"?`,
+      description: 'The table will be removed from the import list.',
+      confirmLabel: 'Remove',
+      onConfirm: () => { setImportParsed(p => p.filter(x => x.id !== id)); setSelectedParsedId(null); },
+    });
   };
 
   const handleImportSqlFile = (file: File) => {
@@ -2421,8 +2468,13 @@ function SchemaDesignerInner() {
   };
 
   const handleDeleteTable = (id: string) => {
-    setTables(p => p.filter(t => t.id !== id));
-    if (selectedTableId === id) setSelectedTableId(null);
+    const t = tables.find(x => x.id === id);
+    showWarning({
+      title: `Delete "${t?.name ?? 'this table'}"?`,
+      description: 'The table and all its column definitions will be removed from the schema.',
+      confirmLabel: 'Delete',
+      onConfirm: () => { setTables(p => p.filter(x => x.id !== id)); if (selectedTableId === id) setSelectedTableId(null); },
+    });
   };
 
   const handleUpdateTable = (updated: DesignerTable) => {
@@ -2476,6 +2528,27 @@ function SchemaDesignerInner() {
         log: null,
       }));
     } catch { /* ignore */ } finally { setShowSaveModal(false); }
+  };
+
+  const handleRenameGroup = async (oldName: string, newName: string) => {
+    try {
+      await axios.patch('/api/schema-generator/jobs', { oldName, newName }, { headers: authH() });
+      void loadJobs();
+    } catch { /* ignore */ }
+  };
+
+  const handleDeleteJobGroup = (jobName: string) => {
+    showWarning({
+      title: `Delete "${jobName}"?`,
+      description: 'All runs under this job will be permanently removed and cannot be recovered.',
+      confirmLabel: 'Delete Job',
+      onConfirm: async () => {
+        try {
+          await axios.delete(`/api/schema-generator/jobs?jobName=${encodeURIComponent(jobName)}`, { headers: authH() });
+          void loadJobs();
+        } catch { /* ignore */ }
+      },
+    });
   };
 
   const handleLoadJob = (job: SchemaJob) => {
@@ -3034,6 +3107,8 @@ function SchemaDesignerInner() {
                             key={g.job_name}
                             group={g}
                             onLoad={handleLoadJob}
+                            onRename={handleRenameGroup}
+                            onDelete={handleDeleteJobGroup}
                           />
                         ))}
                       </div>

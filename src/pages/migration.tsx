@@ -5,9 +5,9 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
-  ArrowRight, Check, ChevronLeft, ChevronRight,
+  ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
   Database, FileText, Layers, Loader2,
-  Play, Plus, RotateCcw, Save, Search,
+  Pencil, Play, Plus, RotateCcw, Save, Search,
   Table2, Trash2, X, AlertTriangle, CheckCircle2, Clock,
   Network,
 } from 'lucide-react';
@@ -17,7 +17,7 @@ import { useAuth } from '../lib/auth-context';
 import { useAlert } from '../lib/alert-context';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { suggestTargetType, isPkLikeSerial } from '../lib/migv2/type-map';
-import type { MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigRun, IdConversion } from '../lib/migv2/types';
+import type { MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigJobTableSummary, MigRun, IdConversion } from '../lib/migv2/types';
 import type { MigTableInfo } from './api/migv2/tables';
 import type { MigColumnInfo } from './api/migv2/columns';
 import type { ConnectionRow } from './api/connections/index';
@@ -316,6 +316,9 @@ export default function Migration() {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveAsTarget, setSaveAsTarget] = useState<string | null>(null);
   const [jobsOpen, setJobsOpen] = useState(true);
+  const [renamingJobId, setRenamingJobId] = useState<string | null>(null);
+  const [renameJobVal, setRenameJobVal] = useState('');
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
   // ── Run ───────────────────────────────────────────────────────────────────────
   const [migratedTableKeys, setMigratedTableKeys] = useState<Set<string>>(new Set());
@@ -490,6 +493,13 @@ export default function Migration() {
       .finally(() => setTgtConnecting(false));
   }, [tgtDb]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const reloadSrcTables = useCallback(() => {
+    if (!srcConnId || !srcDb) return;
+    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', srcConn, { headers: authHeaders() })
+      .then(({ data }) => setSrcTables(data.tables))
+      .catch(() => {});
+  }, [srcConnId, srcDb, srcConn]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const reloadTgtTables = useCallback(() => {
     if (!tgtConnId || !tgtDb) return;
     const row = connections.find(c => c.id === tgtConnId);
@@ -650,8 +660,7 @@ export default function Migration() {
   };
   useEffect(() => { void loadJobs(); void loadTableRefs(); }, []);
 
-  const handleSaveJob = async () => {
-    if (!saveJobName.trim()) return;
+  const doSaveJob = async () => {
     setSavingJob(true);
     try {
       const targetId = saveAsTarget ?? activeJobId ?? undefined;
@@ -668,6 +677,31 @@ export default function Migration() {
       setDirty(false); setShowSaveDialog(false);
       await loadJobs(); void loadTableRefs();
     } catch { /* ignore */ } finally { setSavingJob(false); }
+  };
+
+  const handleSaveJob = () => {
+    if (!saveJobName.trim()) return;
+    const existingJob = jobs.find(j => j.id === (saveAsTarget ?? activeJobId ?? ''));
+    if (tableMaps.length === 0 && existingJob && existingJob.tableCount > 0) {
+      showWarning({
+        title: 'Save with no tables?',
+        description: `"${existingJob.name}" currently has ${existingJob.tableCount} saved table${existingJob.tableCount !== 1 ? 's' : ''}. Saving now will overwrite it with an empty table list.\n\nThis usually happens after changing the source connection. Are you sure?`,
+        confirmLabel: 'Save Anyway',
+        onConfirm: () => void doSaveJob(),
+      });
+      return;
+    }
+    void doSaveJob();
+  };
+
+  const handleRestoreJobFromRuns = async (jobId: string) => {
+    try {
+      const { data } = await axios.post<{ job: MigJob; restored: number }>(
+        `/api/migv2/jobs/restore?id=${jobId}`, {}, { headers: authHeaders() }
+      );
+      await loadJobs();
+      if (activeJobId === jobId) setTableMaps(data.job.tables);
+    } catch { /* ignore */ }
   };
 
   const handleLoadJob = async (id: string) => {
@@ -780,12 +814,45 @@ export default function Migration() {
     URL.revokeObjectURL(url);
   };
 
-  const handleDeleteJob = async (id: string) => {
+  const handleDeleteJob = (id: string, name: string) => {
+    showWarning({
+      title: `Delete "${name}"?`,
+      description: 'This saved job will be permanently removed and cannot be recovered.',
+      confirmLabel: 'Delete Job',
+      onConfirm: async () => {
+        try {
+          await axios.delete(`/api/migv2/jobs/${id}`, { headers: authHeaders() });
+          await loadJobs();
+          if (activeJobId === id) { setActiveJobId(null); setSaveJobName(''); setSaveJobDesc(''); }
+        } catch { /* ignore */ }
+      },
+    });
+  };
+
+  const handleRemoveTableFromJob = (jobId: string, tableId: string, tableLabel: string) => {
+    showWarning({
+      title: `Remove "${tableLabel}"?`,
+      description: 'This table entry will be removed from the saved job.',
+      confirmLabel: 'Remove',
+      onConfirm: async () => {
+        try {
+          const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${jobId}`, { headers: authHeaders() });
+          const updatedTables = data.job.tables.filter(t => t.id !== tableId);
+          await axios.put(`/api/migv2/jobs/${jobId}`, { tables: updatedTables }, { headers: authHeaders() });
+          await loadJobs();
+          if (activeJobId === jobId) setTableMaps(updatedTables);
+        } catch { /* ignore */ }
+      },
+    });
+  };
+
+  const handleRenameJob = async (id: string, name: string) => {
+    if (!name.trim()) return;
     try {
-      await axios.delete(`/api/migv2/jobs/${id}`, { headers: authHeaders() });
+      await axios.put(`/api/migv2/jobs/${id}`, { name: name.trim() }, { headers: authHeaders() });
       await loadJobs();
-      if (activeJobId === id) { setActiveJobId(null); setSaveJobName(''); setSaveJobDesc(''); }
-    } catch { /* ignore */ }
+      if (activeJobId === id) setSaveJobName(name.trim());
+    } catch { /* ignore */ } finally { setRenamingJobId(null); }
   };
 
   // ── Run ───────────────────────────────────────────────────────────────────────
@@ -819,6 +886,7 @@ export default function Migration() {
             .filter(ts => ts.status === 'completed')
             .map(ts => ts.sourceKey);
           setMigratedTableKeys(prev => new Set([...prev, ...completedKeys]));
+          reloadSrcTables();
           reloadTgtTables();
         }
       }
@@ -1687,13 +1755,78 @@ export default function Migration() {
                   <div key={job.id}
                     className={`rounded-lg border p-2 transition-colors ${activeJobId === job.id ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'}`}>
                     <div className="flex items-start gap-1 mb-0.5">
-                      <p className="text-[11px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">{job.name}</p>
-                      <span className="text-[10px] text-gray-400 shrink-0">v{job.version}</span>
+                      {renamingJobId === job.id ? (
+                        <input
+                          autoFocus
+                          value={renameJobVal}
+                          onChange={e => setRenameJobVal(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') void handleRenameJob(job.id, renameJobVal);
+                            if (e.key === 'Escape') setRenamingJobId(null);
+                          }}
+                          className="flex-1 text-[11px] font-medium bg-white dark:bg-slate-700 border border-blue-400 rounded px-1 py-0.5 text-gray-800 dark:text-slate-200 outline-none"
+                        />
+                      ) : (
+                        <p className="text-[11px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">{job.name}</p>
+                      )}
+                      {renamingJobId === job.id ? (
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button onClick={() => void handleRenameJob(job.id, renameJobVal)}
+                            className="p-0.5 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
+                            <Check size={11} />
+                          </button>
+                          <button onClick={() => setRenamingJobId(null)}
+                            className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-gray-400 shrink-0">v{job.version}</span>
+                      )}
                     </div>
                     {job.description && (
                       <p className="text-[10px] text-gray-400 dark:text-slate-500 truncate mb-1">{job.description}</p>
                     )}
-                    <p className="text-[10px] text-gray-400 mb-1.5">{job.tableCount} tables · {new Date(job.updatedAt).toLocaleDateString()}</p>
+                    <div className="flex items-center gap-1 mb-1.5">
+                      <p className="text-[10px] text-gray-400 flex-1">{job.tableCount} tables · {new Date(job.updatedAt).toLocaleDateString()}</p>
+                      <button
+                        onClick={() => setExpandedJobId(expandedJobId === job.id ? null : job.id)}
+                        className="flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+                      >
+                        {expandedJobId === job.id ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                      </button>
+                    </div>
+                    {expandedJobId === job.id && (
+                      <div className="mb-1.5 border border-gray-100 dark:border-slate-700 rounded overflow-hidden">
+                        {job.tables.length === 0 ? (
+                          <div className="px-2 py-2 flex items-center gap-2">
+                            <p className="text-[10px] text-amber-500 dark:text-amber-400 italic flex-1">No tables — job may be corrupted</p>
+                            <button
+                              onClick={() => void handleRestoreJobFromRuns(job.id)}
+                              title="Restore tables from run history"
+                              className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        ) : job.tables.map((t: MigJobTableSummary) => (
+                          <div key={t.id} className={`flex items-center gap-1 px-2 py-1 border-b border-gray-50 dark:border-slate-800 last:border-0 ${!t.include ? 'opacity-40' : ''}`}>
+                            <span className="text-[10px] text-gray-600 dark:text-slate-300 flex-1 truncate min-w-0">
+                              <span className="text-gray-400">{t.source.schema}.</span>{t.source.table}
+                              <span className="text-gray-300 dark:text-slate-600 mx-1">→</span>
+                              <span className="text-gray-400">{t.target.schema}.</span>{t.target.table}
+                            </span>
+                            <button
+                              onClick={() => handleRemoveTableFromJob(job.id, t.id, `${t.source.schema}.${t.source.table}`)}
+                              title="Remove table from job"
+                              className="shrink-0 p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex items-center gap-1">
                       {activeJobId === job.id && (
                         <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>
@@ -1702,7 +1835,11 @@ export default function Migration() {
                         className="ml-auto px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors">
                         Load
                       </button>
-                      <button onClick={() => void handleDeleteJob(job.id)}
+                      <button onClick={() => { setRenamingJobId(job.id); setRenameJobVal(job.name); }}
+                        className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
+                        <Pencil size={11} />
+                      </button>
+                      <button onClick={() => handleDeleteJob(job.id, job.name)}
                         className="p-1 rounded text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
                         <Trash2 size={11} />
                       </button>
@@ -1840,7 +1977,7 @@ export default function Migration() {
                 className="flex-1 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
                 Cancel
               </button>
-              <button onClick={() => void handleSaveJob()} disabled={savingJob || !saveJobName.trim()}
+              <button onClick={handleSaveJob} disabled={savingJob || !saveJobName.trim()}
                 className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
                 {savingJob ? 'Saving…' : saveAsTarget ? 'Update Job' : 'Save'}
               </button>

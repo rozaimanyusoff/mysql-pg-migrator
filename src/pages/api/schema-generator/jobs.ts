@@ -78,5 +78,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(201).json({ id: rows[0].id });
   }
 
+  // ── DELETE: remove all runs under a job_name ─────────────────────────────
+  if (req.method === 'DELETE') {
+    const jobName = req.query.jobName as string;
+    if (!jobName) return res.status(400).json({ error: 'jobName is required' });
+    await pool.query(`DELETE FROM dbt_schema_jobs WHERE job_name=$1 AND username=$2`, [jobName, username]);
+    return res.status(200).json({ success: true });
+  }
+
+  // ── PATCH: rename all runs under a job_name ──────────────────────────────
+  if (req.method === 'PATCH') {
+    const { oldName, newName } = req.body as { oldName?: string; newName?: string };
+    if (!oldName || !newName?.trim()) return res.status(400).json({ error: 'oldName and newName are required' });
+    await pool.query(
+      `UPDATE dbt_schema_jobs SET job_name=$1 WHERE job_name=$2 AND username=$3`,
+      [newName.trim(), oldName, username]
+    );
+    return res.status(200).json({ success: true });
+  }
+
   return res.status(405).json({ error: 'Method not allowed' });
 }

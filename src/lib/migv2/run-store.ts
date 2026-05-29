@@ -32,3 +32,15 @@ export function listRuns(): MigRun[] {
     .sort((a, b) => b!.createdAt.localeCompare(a!.createdAt))
     .slice(0, 20) as MigRun[];
 }
+
+export function listRunsForJob(jobId: string): MigRun[] {
+  ensureDir();
+  return fs.readdirSync(RUN_DIR)
+    .filter(f => f.endsWith('.json'))
+    .map(f => {
+      try { return JSON.parse(fs.readFileSync(path.join(RUN_DIR, f), 'utf8')) as MigRun; }
+      catch { return null; }
+    })
+    .filter((r): r is MigRun => !!r && r.jobId === jobId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}

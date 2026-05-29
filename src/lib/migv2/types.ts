@@ -66,6 +66,13 @@ export interface MigJob {
   tables: TableMap[];
 }
 
+export interface MigJobTableSummary {
+  id: string;
+  include: boolean;
+  source: { schema: string; table: string };
+  target: { schema: string; table: string };
+}
+
 export interface MigJobSummary {
   id: string;
   name: string;
@@ -74,6 +81,7 @@ export interface MigJobSummary {
   createdAt: string;
   updatedAt: string;
   tableCount: number;
+  tables: MigJobTableSummary[];
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────

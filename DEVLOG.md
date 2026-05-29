@@ -2,6 +2,45 @@
 
 ---
 
+## 2026-05-30
+- **fix** — Saved job shows 0 tables / "No tables" — corruption guard + run-history restore
+  - Root cause: `useEffect` at src/pages/migration.tsx clears `tableMaps` when `srcDb` changes and `pendingRestoreRef.current` is null; if user saves at that moment the job file is written with `tables: []`; the `assetdata` job (v10, 30/05/2026) had this happen
+  - `src/lib/migv2/run-store.ts` — added `listRunsForJob(jobId)` to scan all run files for a specific job without the 20-run global cap
+  - `src/pages/api/migv2/jobs/restore.ts` — new `POST /api/migv2/jobs/restore?id=` endpoint: collects unique tables from all completed runs for the job (newest snapshot wins per source key), writes back to job file
+  - `src/pages/migration.tsx` — `handleSaveJob` split into `doSaveJob` + guard: if `tableMaps` is empty and the existing job has saved tables, shows `showWarning` before overwriting; added `handleRestoreJobFromRuns`; job card now shows amber "No tables — job may be corrupted" + "Restore" button when `tables.length === 0`
+  - Status: done — `assetdata` job can be recovered via the Restore button in Saved Jobs
+
+- **implement** — Warning AlertDialog on all destructive actions across modules
+  - `src/pages/migration.tsx` — `handleDeleteJob` + `handleRemoveTableFromJob` now call `showWarning` with title/description before executing; no longer use `void` async directly
+  - `src/pages/schema-designer.tsx` — added `useAlert` import + `showWarning` hook; wrapped `handleDeleteTable` + `handleDeleteParsedTable`; added delete button (Trash2) to `JobGroupCard` with `onDelete` prop; added `handleDeleteJobGroup` in parent
+  - `src/pages/api/schema-generator/jobs.ts` — added `DELETE ?jobName=` handler to remove all runs in a job group for the current user
+  - `src/pages/flow-designer.tsx` — added `useAlert` import + `showWarning` hook; replaced native `confirm()` in `deleteProject` with `showWarning` dialog
+  - Status: done
+
+- **implement** — Migration module: expand saved job to list tables & remove individual entries
+  - `src/lib/migv2/types.ts` — added `MigJobTableSummary` interface; added `tables: MigJobTableSummary[]` to `MigJobSummary`
+  - `src/lib/migv2/job-store.ts` — `listJobs()` now includes compact table list (id, include, source, target) in each summary
+  - `src/pages/migration.tsx` — added `expandedJobId` state; added `handleRemoveTableFromJob` (GET full job → filter → PUT); job card now has chevron toggle to expand/collapse table list; each table row shows `schema.table → schema.table` with X remove button; excluded tables (include=false) shown dimmed; removing from active job also updates live `tableMaps`
+  - Root cause for the feature: tables that were executed but don't exist in target schema couldn't be cleaned up from the saved job
+  - Status: done
+
+- **fix** — Migration module: reload both source and target tables after execution completes
+  - `src/pages/migration.tsx` — added `reloadSrcTables` callback (mirrors existing `reloadTgtTables`); both are now called in `advanceMigration` when `run.status === 'completed'`
+  - Root cause: only `reloadTgtTables` was called on completion; source table list stayed stale
+  - Status: done
+
+- **implement** — Inline rename for saved jobs across all modules
+  - `src/pages/migration.tsx` — pencil button per job card → inline input; `handleRenameJob` calls `PUT /api/migv2/jobs/[id]`; Enter confirms, Escape cancels; active job name synced on rename
+  - `src/pages/schema-designer.tsx` — `JobGroupCard` gains `onRename` prop + local editing state; pencil button in card header; renames all runs under the same `job_name`; `handleRenameGroup` calls `PATCH /api/schema-generator/jobs`
+  - `src/pages/api/schema-generator/jobs.ts` — added `PATCH` handler: `UPDATE dbt_schema_jobs SET job_name=$1 WHERE job_name=$2 AND username=$3`
+  - `src/pages/flow-designer.tsx` — Edit3 pencil button per project card → inline input; `renameProject` calls `PUT /api/flow-designer/projects` (existing endpoint); local state updated optimistically
+  - Status: done
+
+- **fix** — Auth: auto-seed default admin user on first login if `dbt_users` is empty
+  - `src/lib/auth-store.ts` — `validateCredentials` now checks if table is empty when default credentials are used; auto-inserts the admin row via `ON CONFLICT DO NOTHING`, so login works on fresh setups without needing `npm run db:seed`
+  - Root cause: fallback hash only activated on DB exception; reachable-but-unseeded DB returned 0 rows → "Invalid credentials" on any new machine
+  - Status: done
+
 ## 2026-05-27
 - **fix** — Migration module: FK Ref picker resolves source namespace across all saved jobs
   - `src/pages/api/migv2/jobs/table-refs.ts` (new): `GET /api/migv2/jobs/table-refs` scans all saved job files and returns `{targetKey, sourceKey}[]` pairs (e.g. `assetdata.types → assets.types`); deduplicates by targetKey
