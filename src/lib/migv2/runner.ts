@@ -91,7 +91,7 @@ async function readChunk(
 
 // ── DDL generation for target table ──────────────────────────────────────────
 
-function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mysql'): string {
+export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mysql'): string {
   const { schema, table } = tableMap.target;
   const cols = tableMap.columns.filter(c => c.include);
 

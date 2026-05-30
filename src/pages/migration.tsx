@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
-  Database, FileText, Layers, Loader2,
+  Database, FileCode, FileText, Layers, Loader2,
   Pencil, Play, Plus, RotateCcw, Save, Search,
   Table2, Trash2, X, AlertTriangle, CheckCircle2, Clock,
   Network,
@@ -812,6 +812,21 @@ export default function Migration() {
     a.download = `${jobName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportJobSql = async (jobId: string) => {
+    try {
+      const res = await fetch(`/api/migv2/jobs/export-sql?id=${jobId}`, { headers: authHeaders() });
+      if (!res.ok) { showError('Export SQL failed', await res.text()); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match?.[1] ?? `job-${jobId.slice(0, 8)}.sql`;
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch { showError('Export SQL failed', 'Could not download SQL file.'); }
   };
 
   const handleDeleteJob = (id: string, name: string) => {
@@ -1834,6 +1849,11 @@ export default function Migration() {
                       <button onClick={() => void handleLoadJob(job.id)}
                         className="ml-auto px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors">
                         Load
+                      </button>
+                      <button onClick={() => void handleExportJobSql(job.id)}
+                        title="Export DDL SQL for all tables"
+                        className="p-1 rounded text-gray-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
+                        <FileCode size={11} />
                       </button>
                       <button onClick={() => { setRenamingJobId(job.id); setRenameJobVal(job.name); }}
                         className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">

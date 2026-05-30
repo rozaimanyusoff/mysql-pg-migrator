@@ -2,6 +2,13 @@
 
 ---
 
+## 2026-05-31
+- **implement** — Export DDL SQL per saved job
+  - `src/lib/migv2/runner.ts` — exported `buildCreateTableSQL` (was unexported private function); generates `CREATE SCHEMA IF NOT EXISTS` + `CREATE TABLE IF NOT EXISTS` for each target table including PK, legacy BIGINT columns, and NOT NULL/DEFAULT constraints
+  - `src/pages/api/migv2/jobs/export-sql.ts` — new `GET /api/migv2/jobs/export-sql?id=` endpoint; loads the job, generates DDL SQL for all included tables with header comment block (job name, source/target meta, table count), appends excluded table list as comments, returns as `attachment; filename="<job-name>.sql"`
+  - `src/pages/migration.tsx` — added `FileCode` icon import; added `handleExportJobSql(jobId)` handler that fetches the endpoint and triggers browser download; added Export SQL button (emerald `FileCode` icon) per saved job card, between Load and Rename buttons
+  - Status: done
+
 ## 2026-05-30
 - **fix** — Saved job shows 0 tables / "No tables" — corruption guard + run-history restore
   - Root cause: `useEffect` at src/pages/migration.tsx clears `tableMaps` when `srcDb` changes and `pendingRestoreRef.current` is null; if user saves at that moment the job file is written with `tables: []`; the `assetdata` job (v10, 30/05/2026) had this happen
