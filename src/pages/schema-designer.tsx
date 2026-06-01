@@ -20,7 +20,6 @@ import {
   useReactFlow, ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useAuth } from '../lib/auth-context';
 import { useAlert } from '../lib/alert-context';
 import type { ConnectionRow } from './api/connections/index';
 import type { ExplorerConn } from '../lib/explorer-db';
@@ -90,10 +89,6 @@ const NEEDS_LENGTH = new Set(['VARCHAR', 'CHAR', 'NUMERIC', 'DECIMAL']);
 
 // ─── Pure Helpers ─────────────────────────────────────────────────────────────
 
-function getStoredToken() {
-  return typeof window !== 'undefined' ? (localStorage.getItem('auth_token') ?? '') : '';
-}
-const authH = () => ({ Authorization: `Bearer ${getStoredToken()}` });
 
 function sanitizeName(s: string): string {
   const c = String(s).toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
@@ -1267,7 +1262,7 @@ function ImportPanel({ connections, onMerge }: {
     setImportDbs([]);
     setImportDb('');
     try {
-      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn), { headers: authH() });
+      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn));
       setImportDbs(data.databases);
       if (data.databases.length) setImportDb(data.databases[0]);
     } catch { /* ignore */ } finally { setLoadingImportDbs(false); }
@@ -1291,7 +1286,7 @@ function ImportPanel({ connections, onMerge }: {
     setDbTables({});
     try {
       const explorerConn = connToExplorerConn(importConn, importDb);
-      const { data } = await axios.post<{ schemas: SchemaInfo[] }>('/api/schema-explorer/schemas', explorerConn, { headers: authH() });
+      const { data } = await axios.post<{ schemas: SchemaInfo[] }>('/api/schema-explorer/schemas', explorerConn);
       setDbSchemas(data.schemas);
     } catch { /* ignore */ } finally { setLoadingDbSchema(false); }
   }, [importConn, importDb]);
@@ -1300,7 +1295,7 @@ function ImportPanel({ connections, onMerge }: {
     if (!importConn || !importDb || dbTables[schema]) return;
     try {
       const explorerConn = connToExplorerConn(importConn, importDb);
-      const { data } = await axios.post<{ tables: TableInfo[] }>('/api/schema-explorer/tables', { conn: explorerConn, schemas: [schema] }, { headers: authH() });
+      const { data } = await axios.post<{ tables: TableInfo[] }>('/api/schema-explorer/tables', { conn: explorerConn, schemas: [schema] });
       setDbTables(p => ({ ...p, [schema]: data.tables }));
     } catch { /* ignore */ }
   };
@@ -1321,7 +1316,7 @@ function ImportPanel({ connections, onMerge }: {
     const imported: DesignerTable[] = [];
     for (const key of dbSelected) {
       try {
-        const { data } = await axios.post<TableColumnsResult>('/api/schema-explorer/columns', { conn: explorerConn, tableKey: key }, { headers: authH() });
+        const { data } = await axios.post<TableColumnsResult>('/api/schema-explorer/columns', { conn: explorerConn, tableKey: key });
         const [schema, name] = key.includes('.') ? key.split('.', 2) : ['public', key];
         imported.push({ id: crypto.randomUUID(), schema, name, columns: data.columns.map(colInfoToDesigner) });
       } catch { /* ignore */ }
@@ -2057,7 +2052,7 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
     setDatabases([]);
     setSelectedDb('');
     try {
-      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn), { headers: authH() });
+      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn));
       setDatabases(data.databases);
       if (data.databases.length) setSelectedDb(data.databases[0]);
     } catch { /* ignore */ } finally { setLoadingDbs(false); }
@@ -2075,7 +2070,7 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
       ? job.seed_sql.split(/;\s*(?=\n|$)/).map(s => s.trim()).filter(s => s.length > 0).map(s => s.endsWith(';') ? s : s + ';')
       : [];
     try {
-      const { data } = await axios.post<{ log: ExecLogLine[] }>('/api/schema-designer/execute', { conn: explorerConn, statements: [...ddlStmts, ...seedStmts] }, { headers: authH() });
+      const { data } = await axios.post<{ log: ExecLogLine[] }>('/api/schema-designer/execute', { conn: explorerConn, statements: [...ddlStmts, ...seedStmts] });
       setExecLog(data.log);
       const status = data.log.every(l => l.ok) ? 'success' : 'failed';
       await axios.post('/api/schema-generator/jobs', {
@@ -2087,7 +2082,7 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
         connection_label: selectedConn.label,
         status,
         log: data.log.map((l, i) => ({ step: i + 1, ok: l.ok, text: l.text })),
-      }, { headers: authH() });
+      });
       onJobDone();
       setDone(true);
     } catch (err) {
@@ -2190,7 +2185,6 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 function SchemaDesignerInner() {
-  const { authenticated, loading: authLoading } = useAuth();
   const { showWarning } = useAlert();
 
   // Connections (kept for ImportPanel + ExecuteJobModal)
@@ -2359,7 +2353,7 @@ function SchemaDesignerInner() {
     setImportDbSchemas([]);
     setImportDbTables({});
     try {
-      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn), { headers: authH() });
+      const { data } = await axios.post<{ databases: string[] }>('/api/schema-designer/databases', connToPayload(conn));
       setImportDbDbs(data.databases);
       if (data.databases.length) setImportDbDatabase(data.databases[0]);
     } catch { /* ignore */ } finally { setImportDbLoadingDbs(false); }
@@ -2378,7 +2372,7 @@ function SchemaDesignerInner() {
     setImportDbSelected(new Set());
     try {
       const ec = connToExplorerConn(importDbConn, importDbDatabase);
-      const { data } = await axios.post<{ schemas: SchemaInfo[] }>('/api/schema-explorer/schemas', ec, { headers: authH() });
+      const { data } = await axios.post<{ schemas: SchemaInfo[] }>('/api/schema-explorer/schemas', ec);
       setImportDbSchemas(data.schemas);
     } catch { /* ignore */ } finally { setImportDbLoadingSchemas(false); }
   }, [importDbConn, importDbDatabase]);
@@ -2387,7 +2381,7 @@ function SchemaDesignerInner() {
     if (!importDbConn || !importDbDatabase || importDbTables[schema]) return;
     try {
       const ec = connToExplorerConn(importDbConn, importDbDatabase);
-      const { data } = await axios.post<{ tables: TableInfo[] }>('/api/schema-explorer/tables', { conn: ec, schemas: [schema] }, { headers: authH() });
+      const { data } = await axios.post<{ tables: TableInfo[] }>('/api/schema-explorer/tables', { conn: ec, schemas: [schema] });
       setImportDbTables(p => ({ ...p, [schema]: data.tables }));
     } catch { /* ignore */ }
   };
@@ -2415,7 +2409,7 @@ function SchemaDesignerInner() {
     const imported: DesignerTable[] = [];
     for (const key of importDbSelected) {
       try {
-        const { data } = await axios.post<TableColumnsResult>('/api/schema-explorer/columns', { conn: ec, tableKey: key }, { headers: authH() });
+        const { data } = await axios.post<TableColumnsResult>('/api/schema-explorer/columns', { conn: ec, tableKey: key });
         const [schema, name] = key.includes('.') ? key.split('.', 2) : ['public', key];
         imported.push({ id: crypto.randomUUID(), schema, name, columns: data.columns.map(colInfoToDesigner) });
       } catch { /* ignore */ }
@@ -2442,11 +2436,10 @@ function SchemaDesignerInner() {
 
   // Load connections for ImportPanel + ExecuteJobModal
   useEffect(() => {
-    if (!authenticated) return;
-    axios.get<{ success: boolean; connections: ConnectionRow[] }>('/api/connections', { headers: authH() })
+    axios.get<{ success: boolean; connections: ConnectionRow[] }>('/api/connections')
       .then(r => setConnections(r.data.connections))
       .catch(() => { });
-  }, [authenticated]);
+  }, []);
 
   const handleAddSchema = (name: string) => {
     setDesignerSchemas(p => p.includes(name) ? p : [...p, name]);
@@ -2484,12 +2477,12 @@ function SchemaDesignerInner() {
   const loadJobs = useCallback(async () => {
     setLoadingJobs(true);
     try {
-      const { data } = await axios.get<{ jobs: SchemaJob[] }>('/api/schema-generator/jobs', { headers: authH() });
+      const { data } = await axios.get<{ jobs: SchemaJob[] }>('/api/schema-generator/jobs');
       setJobs(data.jobs ?? []);
     } catch { /* ignore */ } finally { setLoadingJobs(false); }
   }, []);
 
-  useEffect(() => { if (authenticated) void loadJobs(); }, [authenticated, loadJobs]);
+  useEffect(() => { void loadJobs(); }, [loadJobs]);
 
   const handleSaveClick = () => {
     if (designerMode === 'import' && tables.some(t => t.schema === 'public')) {
@@ -2516,7 +2509,7 @@ function SchemaDesignerInner() {
         seed_sql: seedSql,
         status: 'pending',
         log: null,
-      }, { headers: authH() });
+      });
       void loadJobs();
       setLoadedJob(prev => ({
         ...(prev ?? { id: Date.now(), created_at: new Date().toISOString() } as SchemaJob),
@@ -2532,7 +2525,7 @@ function SchemaDesignerInner() {
 
   const handleRenameGroup = async (oldName: string, newName: string) => {
     try {
-      await axios.patch('/api/schema-generator/jobs', { oldName, newName }, { headers: authH() });
+      await axios.patch('/api/schema-generator/jobs', { oldName, newName });
       void loadJobs();
     } catch { /* ignore */ }
   };
@@ -2544,7 +2537,7 @@ function SchemaDesignerInner() {
       confirmLabel: 'Delete Job',
       onConfirm: async () => {
         try {
-          await axios.delete(`/api/schema-generator/jobs?jobName=${encodeURIComponent(jobName)}`, { headers: authH() });
+          await axios.delete(`/api/schema-generator/jobs?jobName=${encodeURIComponent(jobName)}`);
           void loadJobs();
         } catch { /* ignore */ }
       },
@@ -2564,29 +2557,8 @@ function SchemaDesignerInner() {
     setLoadedJob(job);
   };
 
-  if (authLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-slate-950">
-        <Loader2 size={24} className="animate-spin text-blue-500" />
-      </div>
-    );
-  }
-
-  if (!authenticated) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-slate-950">
-        <div className="text-center space-y-3">
-          <p className="text-sm text-gray-500 dark:text-slate-400">Please log in to use Schema Designer.</p>
-          <Link href="/" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">
-            <ArrowLeft size={14} /> Go to Login
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-50 dark:bg-slate-950 overflow-hidden">
       <Head><title>Schema Designer — DB Tools</title></Head>
 
       {/* ── Header ── */}
@@ -2605,12 +2577,6 @@ function SchemaDesignerInner() {
           PostgreSQL
         </span>
 
-        {/* Breadcrumb */}
-        <nav className="ml-auto flex items-center gap-1 text-sm shrink-0">
-          <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
-          <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-          <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Schema Designer</span>
-        </nav>
       </header>
 
       {/* ── Toolbar ── */}

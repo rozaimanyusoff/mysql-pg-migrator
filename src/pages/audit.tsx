@@ -86,18 +86,11 @@ export default function AuditPage() {
         <title>Audit Logs</title>
       </Head>
       <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
-        <header className="sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center justify-between">
+        <header className="sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center">
           <div>
             <h1 className="font-bold text-gray-900 dark:text-slate-100">Global Audit Logs</h1>
             <p className="text-xs text-gray-500 dark:text-slate-400">Daily files in `/public/uploads/logs`</p>
           </div>
-          <button
-            type="button"
-            onClick={handleHomeNavigate}
-            className="text-sm bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-3 py-1.5 rounded-lg font-medium"
-          >
-            Back to Module Home
-          </button>
         </header>
 
         <main className="max-w-6xl mx-auto px-6 py-6 space-y-4">

@@ -10,12 +10,7 @@ import {
   BarChart2, Hash, Layers, Save, Trash2, Clock, Play, Terminal,
 } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { useAuth } from '../lib/auth-context';
 
-function getToken() {
-  return typeof window !== 'undefined' ? (localStorage.getItem('auth_token') ?? '') : '';
-}
-const authH = () => ({ Authorization: `Bearer ${getToken()}` });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -144,7 +139,7 @@ function UploadStep({ onParsed }: { onParsed: (sheets: SheetResult[]) => void })
       } else {
         content = await file.text();
       }
-      const { data } = await axios.post('/api/normalizer/parse', { filename: file.name, content }, { headers: authH() });
+      const { data } = await axios.post('/api/normalizer/parse', { filename: file.name, content });
       onParsed((data as { sheets: SheetResult[] }).sheets);
     } catch (err: unknown) {
       setError(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
@@ -652,7 +647,7 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
   const [execError, setExecError] = useState<string | null>(null);
 
   useEffect(() => {
-    axios.get<{ connections: ConnRow[] }>('/api/connections', { headers: authH() })
+    axios.get<{ connections: ConnRow[] }>('/api/connections')
       .then(r => {
         const pg = r.data.connections.filter(c => c.db_type === 'postgres');
         setPgConns(pg);
@@ -667,7 +662,7 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
       const resp = await axios.post(
         '/api/normalizer/export',
         { mode, sheet: { tableName: sheet.tableName, headers: sheet.headers, allRows: sheet.allRows }, confirmedLookups },
-        { headers: { ...authH(), 'Content-Type': 'application/json' }, responseType: 'blob' },
+        { headers: { 'Content-Type': 'application/json' }, responseType: 'blob' },
       );
       const ext = mode === 'sql' ? 'sql' : mode === 'csv' ? 'csv' : mode === 'drizzle' ? 'ts' : 'json';
       const name = mode === 'drizzle' ? `${sheet.tableName}_schema.ts` : `${sheet.tableName}_normalized.${ext}`;
@@ -694,7 +689,6 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
       const { data } = await axios.post<{ log: { sql: string; ok: boolean; text: string }[] }>(
         '/api/normalizer/execute',
         { conn: explorerConn, sheet: { tableName: sheet.tableName, headers: sheet.headers, allRows: sheet.allRows }, confirmedLookups },
-        { headers: authH() },
       );
       setExecLog(data.log);
     } catch (err: unknown) {
@@ -1043,8 +1037,6 @@ function SavedJobsPanel({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function NormalizerPage() {
-  const { authenticated, loading: authLoading } = useAuth();
-
   const [step, setStep] = useState<Step>(1);
   const [sheets, setSheets] = useState<SheetResult[]>([]);
   const [activeSheet, setActiveSheet] = useState('');
@@ -1085,7 +1077,7 @@ export default function NormalizerPage() {
   });
 
   useEffect(() => {
-    axios.get<{ connections: ConnRow[] }>('/api/connections', { headers: authH() })
+    axios.get<{ connections: ConnRow[] }>('/api/connections')
       .then(r => setConnections(r.data.connections))
       .catch(() => {});
   }, []);
@@ -1094,7 +1086,7 @@ export default function NormalizerPage() {
     setDbSchemas([]); setDbSchema(''); setDbTables([]); setDbTable('');
     try {
       const { data } = await axios.post<{ schemas: { schema: string }[] }>(
-        '/api/schema-explorer/schemas', connPayload(conn), { headers: authH() });
+        '/api/schema-explorer/schemas', connPayload(conn));
       const names = data.schemas.map(s => s.schema);
       setDbSchemas(names);
       if (names.includes('public')) setDbSchema('public');
@@ -1109,7 +1101,7 @@ export default function NormalizerPage() {
       const { data } = await axios.post<{ tables: { schema: string; name: string; rowCount: number }[] }>(
         '/api/schema-explorer/tables',
         { conn: connPayload(conn), schemas: [schema] },
-        { headers: authH() });
+      );
       setDbTables(data.tables.map(t => ({ name: t.name, rowCount: t.rowCount })));
     } catch { /* ignore */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1134,14 +1126,12 @@ export default function NormalizerPage() {
       const { data } = await axios.post<{ rows: Record<string, unknown>[] }>(
         '/api/schema-explorer/records',
         { conn: connPayload(selectedConn), tableKey: `${dbSchema}.${dbTable}`, limit: 5000 },
-        { headers: authH() },
       );
       const rows = data.rows;
       if (!rows.length) return;
       const { data: parsed } = await axios.post<{ sheets: SheetResult[] }>(
         '/api/normalizer/parse',
         { filename: `${dbTable}.json`, content: JSON.stringify(rows) },
-        { headers: authH() },
       );
       handleParsed(parsed.sheets);
     } catch (err) { console.error(err); }
@@ -1238,24 +1228,10 @@ export default function NormalizerPage() {
     setColsForDupe(new Set()); setShowDupes(false);
   };
 
-  if (authLoading) {
-    return <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex items-center justify-center"><Loader2 size={24} className="animate-spin text-blue-500" /></div>;
-  }
-  if (!authenticated) {
-    return (
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex items-center justify-center">
-        <div className="text-center space-y-2">
-          <p className="text-sm text-gray-600 dark:text-slate-300">Login required</p>
-          <Link href="/" className="text-blue-600 hover:underline text-sm">← Back to Module Home</Link>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <>
       <Head><title>Data Normalizer</title></Head>
-      <div className="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden">
+      <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-50 dark:bg-slate-950 overflow-hidden">
 
         {/* ── Navbar ───────────────────────────────────────────────────────── */}
         <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
@@ -1268,12 +1244,6 @@ export default function NormalizerPage() {
           </div>
           <div className="flex-1" />
           <GuidePopover />
-          <div className="h-7 w-px bg-gray-200 dark:bg-slate-700 ml-4" />
-          <nav className="flex items-center gap-1">
-            <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 text-sm">Home</Link>
-            <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-            <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold text-sm">Normalizer</span>
-          </nav>
         </header>
 
         {/* ── Sub-header: DB picker + step tabs + contextual actions ────────── */}

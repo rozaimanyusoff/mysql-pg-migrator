@@ -49,6 +49,11 @@ export interface TableMap {
   target: { schema: string; table: string };
   columns: ColumnMap[];
   truncateBeforeMigrate: boolean;
+  // Incremental sync
+  syncMode?: 'full' | 'incremental';
+  incrementalCol?: string | null;            // source column used as high-water mark
+  incrementalStrategy?: 'id' | 'timestamp'; // id = append-only insert; timestamp = upsert
+  lastSyncedValue?: string | null;          // high-water mark from last completed run
 }
 
 // ── Job ───────────────────────────────────────────────────────────────────────
@@ -103,6 +108,8 @@ export interface MigRunTableState {
   insertedPks: string[];    // first N inserted target PKs
   pkOverflow: boolean;      // true if > 5000 rows were inserted (list is partial)
   targetPkCol: string | null;
+  // incremental sync
+  newWatermark?: string | null; // max value of incrementalCol seen after this run
 }
 
 export interface MigRun {

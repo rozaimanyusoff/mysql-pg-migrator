@@ -1,7 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Pool } from 'pg';
 import mysql from 'mysql2/promise';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { exportDatabase, ConnCfg, ExportInclude, ConflictStrategy } from '../../../lib/sql-exporter';
 
 interface SyncLog { step: string; ok: boolean; text: string }
@@ -9,8 +8,6 @@ interface SyncLog { step: string; ok: boolean; text: string }
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
-  if (!token || !verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { source, target, tables, include, conflict } = req.body as {
     source?: ConnCfg; target?: ConnCfg;

@@ -21,17 +21,12 @@ import {
   AlignJustify, LayoutGrid, SortAsc, GitBranch, Minus, Hand, MousePointer2,
   AlertCircle, Wand2, CheckCircle2, Send,
 } from 'lucide-react';
-import { useAuth } from '../lib/auth-context';
 import type { ConnectionRow } from './api/connections/index';
 import type { SchemaInfo } from './api/schema-explorer/schemas';
 import type { TableInfo } from './api/schema-explorer/tables';
 import type { ColumnInfo, TableColumnsResult } from './api/schema-explorer/columns';
 import type { RecordsResult } from './api/schema-explorer/records';
 
-function getStoredToken(): string {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem('auth_token') ?? '';
-}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -655,8 +650,6 @@ function ERDInner({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function SchemaExplorer() {
-  useAuth(); // ensure auth context is mounted
-  const authHeader = useMemo(() => ({ Authorization: `Bearer ${getStoredToken()}` }), []);
   const router = useRouter();
 
   // Saved connections
@@ -672,10 +665,10 @@ export default function SchemaExplorer() {
   const [selectedDb, setSelectedDb] = useState('');
 
   useEffect(() => {
-    axios.get<{ connections: ConnectionRow[] }>('/api/connections', { headers: authHeader })
+    axios.get<{ connections: ConnectionRow[] }>('/api/connections')
       .then(r => setConnections(r.data.connections))
       .catch(() => {});
-  }, [authHeader]);
+  }, []);
 
   const selectedConn = useMemo(
     () => connections.find(c => c.id === selectedConnId) ?? null,
@@ -766,7 +759,7 @@ export default function SchemaExplorer() {
     setConnecting(true);
     setConnError('');
     try {
-      await axios.post('/api/schema-explorer/schemas', connPayload, { headers: authHeader });
+      await axios.post('/api/schema-explorer/schemas', connPayload);
       setConnected(true);
       loadSchemas();
     } catch (err) {
@@ -795,7 +788,7 @@ export default function SchemaExplorer() {
     setLoadingSchemas(true);
     try {
       const { data } = await axios.post<{ schemas: SchemaInfo[] }>(
-        '/api/schema-explorer/schemas', connPayload, { headers: authHeader }
+        '/api/schema-explorer/schemas', connPayload
       );
       setSchemas(data.schemas);
       data.schemas.forEach(s => void loadTables(s.schema));
@@ -812,8 +805,7 @@ export default function SchemaExplorer() {
     try {
       const { data } = await axios.post<TableColumnsResult>(
         '/api/schema-explorer/columns',
-        { conn: connPayload, tableKey },
-        { headers: authHeader }
+        { conn: connPayload, tableKey }
       );
       setColumnsCache(prev => ({ ...prev, [tableKey]: data }));
     } catch { /* ignore */ } finally {
@@ -829,8 +821,7 @@ export default function SchemaExplorer() {
     try {
       const { data } = await axios.post<{ tables: TableInfo[] }>(
         '/api/schema-explorer/tables',
-        { conn: connPayload, schemas: [schema] },
-        { headers: authHeader }
+        { conn: connPayload, schemas: [schema] }
       );
       setTables(prev => ({ ...prev, [schema]: data.tables }));
       // auto-add all tables to ERD and preload their columns
@@ -862,8 +853,7 @@ export default function SchemaExplorer() {
     try {
       const { data } = await axios.post<RecordsResult>(
         '/api/schema-explorer/records',
-        { conn: connPayload, tableKey: key, limit: RECORDS_LIMIT, offset },
-        { headers: authHeader }
+        { conn: connPayload, tableKey: key, limit: RECORDS_LIMIT, offset }
       );
       setRecords(data);
       setRecordsOffset(offset);
@@ -902,7 +892,7 @@ export default function SchemaExplorer() {
       const resp = await axios.post(
         '/api/schema-explorer/export',
         { conn: connPayload, tableKeys: keys, format: exportFormat },
-        { headers: authHeader, responseType: 'blob' }
+        { responseType: 'blob' }
       );
       const url = URL.createObjectURL(new Blob([resp.data as BlobPart]));
       const a = document.createElement('a');
@@ -1041,7 +1031,7 @@ export default function SchemaExplorer() {
         job_name: jobName,
         description: `Imported from FK Advisor — ${appliedCount} inferred FK relationship(s) applied`,
         schema_sql: ddl,
-      }, { headers: authHeader });
+      });
       void router.push('/schema-designer');
     } catch { /* ignore */ } finally {
       setSendingToDesigner(false);
@@ -1066,7 +1056,7 @@ export default function SchemaExplorer() {
   return (
     <>
       <Head><title>Schema Explorer</title></Head>
-      <div className="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden">
+      <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-50 dark:bg-slate-950 overflow-hidden">
 
         {/* ── Top bar ────────────────────────────────────────────────────── */}
         <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
@@ -1159,12 +1149,6 @@ export default function SchemaExplorer() {
             </div>
           )}
 
-          {/* Breadcrumb */}
-          <nav className="ml-auto flex items-center gap-1 text-sm shrink-0">
-            <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
-            <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-            <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Schema Explorer</span>
-          </nav>
         </header>
 
         {/* ── Body ───────────────────────────────────────────────────────── */}

@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { withPg, type ExplorerConn } from '../../../lib/explorer-db';
 import { sanitizeName } from '../../../lib/normalizer/profiler';
 import { logApiActivity } from '../../../lib/audit-api';
@@ -70,8 +69,6 @@ function buildDdlStatements(sheet: ExecSheet, lookups: ConfirmedLookup[]): strin
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { conn, sheet, confirmedLookups } = req.body as ExecBody;
   if (!conn || !sheet) return res.status(400).json({ error: 'conn and sheet required' });

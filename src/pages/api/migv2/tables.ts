@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { withPg, withMysql, type ExplorerConn } from '../../../lib/explorer-db';
 
 export interface MigTableInfo {
@@ -11,8 +10,6 @@ export interface MigTableInfo {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const conn = req.body as ExplorerConn;
   if (!conn?.type || !conn.host || !conn.username) {

@@ -48,18 +48,27 @@ async function withMysql<T>(conn: MigConn, fn: (c: mysql.Connection) => Promise<
 
 // ── Row reading ───────────────────────────────────────────────────────────────
 
-async function countRows(conn: MigConn, schema: string, table: string): Promise<number> {
+interface IncrementalFilter { col: string; gt: string; }
+
+async function countRows(
+  conn: MigConn, schema: string, table: string,
+  filter?: IncrementalFilter
+): Promise<number> {
   if (conn.type === 'postgresql') {
     return withPg(conn, async c => {
+      const where = filter ? `WHERE "${filter.col}" > $1` : '';
+      const params = filter ? [filter.gt] : [];
       const { rows } = await c.query<{ n: string }>(
-        `SELECT COUNT(*) AS n FROM "${schema}"."${table}"`
+        `SELECT COUNT(*) AS n FROM "${schema}"."${table}" ${where}`, params
       );
       return Number(rows[0].n);
     });
   }
   return withMysql(conn, async c => {
+    const where = filter ? `WHERE \`${filter.col}\` > ?` : '';
+    const params = filter ? [filter.gt] : [];
     const [rows] = await c.query<any[]>(
-      `SELECT COUNT(*) AS n FROM \`${schema}\`.\`${table}\``
+      `SELECT COUNT(*) AS n FROM \`${schema}\`.\`${table}\` ${where}`, params
     );
     return Number((rows as any[])[0].n);
   });
@@ -67,12 +76,20 @@ async function countRows(conn: MigConn, schema: string, table: string): Promise<
 
 async function readChunk(
   conn: MigConn, schema: string, table: string,
-  cols: string[], offset: number, limit: number
+  cols: string[], offset: number, limit: number,
+  filter?: IncrementalFilter
 ): Promise<Record<string, unknown>[]> {
   const colList = cols.map(c => conn.type === 'postgresql' ? `"${c}"` : `\`${c}\``).join(', ');
 
   if (conn.type === 'postgresql') {
     return withPg(conn, async c => {
+      if (filter) {
+        const { rows } = await c.query(
+          `SELECT ${colList} FROM "${schema}"."${table}" WHERE "${filter.col}" > $1 ORDER BY "${filter.col}" ASC LIMIT $2 OFFSET $3`,
+          [filter.gt, limit, offset]
+        );
+        return rows;
+      }
       const { rows } = await c.query(
         `SELECT ${colList} FROM "${schema}"."${table}" LIMIT $1 OFFSET $2`,
         [limit, offset]
@@ -81,6 +98,13 @@ async function readChunk(
     });
   }
   return withMysql(conn, async c => {
+    if (filter) {
+      const [rows] = await c.query(
+        `SELECT ${colList} FROM \`${schema}\`.\`${table}\` WHERE \`${filter.col}\` > ? ORDER BY \`${filter.col}\` ASC LIMIT ? OFFSET ?`,
+        [filter.gt, limit, offset]
+      );
+      return rows as Record<string, unknown>[];
+    }
     const [rows] = await c.query(
       `SELECT ${colList} FROM \`${schema}\`.\`${table}\` LIMIT ? OFFSET ?`,
       [limit, offset]
@@ -89,7 +113,50 @@ async function readChunk(
   });
 }
 
+async function getMaxValue(
+  conn: MigConn, schema: string, table: string, col: string
+): Promise<string | null> {
+  if (conn.type === 'postgresql') {
+    return withPg(conn, async c => {
+      const { rows } = await c.query(
+        `SELECT MAX("${col}") AS v FROM "${schema}"."${table}"`
+      );
+      return rows[0].v != null ? String(rows[0].v) : null;
+    });
+  }
+  return withMysql(conn, async c => {
+    const [rows] = await c.query<any[]>(
+      `SELECT MAX(\`${col}\`) AS v FROM \`${schema}\`.\`${table}\``
+    );
+    return (rows as any[])[0].v != null ? String((rows as any[])[0].v) : null;
+  });
+}
+
 // ── DDL generation for target table ──────────────────────────────────────────
+
+// Returns a safe DEFAULT literal for DDL, or null if the value is too complex / DB-specific.
+// Rejects column references, MySQL-specific expressions and parenthesised expressions
+// that PostgreSQL cannot use in a DEFAULT clause.
+function safeDdlDefault(raw: string | null | undefined, targetType: 'postgresql' | 'mysql'): string | null {
+  if (!raw) return null;
+  const v = raw.trim();
+  if (v.toUpperCase() === 'NULL') return 'NULL';
+  // Numeric literal
+  if (/^-?\d+(\.\d+)?$/.test(v)) return v;
+  // Quoted string literal
+  if (/^'[^']*'$/.test(v)) return v;
+  // Safe timestamp keywords
+  if (/^(CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|NOW\(\)|LOCALTIMESTAMP)$/i.test(v)) {
+    return targetType === 'postgresql' ? 'CURRENT_TIMESTAMP' : v;
+  }
+  // MySQL b'...' bit literal → skip for PG
+  if (v.startsWith("b'")) return null;
+  // MySQL parenthesised expression (generated column default, column reference, etc.)
+  if (v.startsWith('(')) return null;
+  // Anything else that looks like an identifier (column reference) → skip
+  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v)) return null;
+  return null;
+}
 
 export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mysql'): string {
   const { schema, table } = tableMap.target;
@@ -101,7 +168,7 @@ export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql'
   const colDefs = cols.map(c => {
     let type = c.targetType;
     const notNull = !c.nullable ? ' NOT NULL' : '';
-    const def = c.defaultValue ? ` DEFAULT ${c.defaultValue}` : '';
+    const def = safeDdlDefault(c.defaultValue, targetType) ? ` DEFAULT ${safeDdlDefault(c.defaultValue, targetType)}` : '';
     if (targetType === 'postgresql') {
       return `  "${c.targetCol}" ${type}${notNull}${def}`;
     } else {
@@ -194,11 +261,14 @@ function transformRow(
 
 async function insertRows(
   conn: MigConn, schema: string, table: string,
-  rows: Record<string, unknown>[], targetPkCol: string | null
+  rows: Record<string, unknown>[], targetPkCol: string | null,
+  upsert = false
 ): Promise<string[]> {
   if (!rows.length) return [];
   const cols = Object.keys(rows[0]);
   const insertedPks: string[] = [];
+  // Columns to update on conflict (exclude PK)
+  const updateCols = cols.filter(c => c !== targetPkCol);
 
   if (conn.type === 'postgresql') {
     await withPg(conn, async c => {
@@ -206,11 +276,15 @@ async function insertRows(
       for (const row of rows) {
         const values = cols.map(k => row[k]);
         const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+        let sql: string;
+        if (upsert && targetPkCol && updateCols.length > 0) {
+          const setClauses = updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+          sql = `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT ("${targetPkCol}") DO UPDATE SET ${setClauses}`;
+        } else {
+          sql = `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`;
+        }
         try {
-          await c.query(
-            `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
-            values
-          );
+          await c.query(sql, values);
           if (targetPkCol && row[targetPkCol] != null) {
             insertedPks.push(String(row[targetPkCol]));
           }
@@ -223,11 +297,15 @@ async function insertRows(
       for (const row of rows) {
         const values = cols.map(k => row[k]);
         const placeholders = values.map(() => '?').join(', ');
+        let sql: string;
+        if (upsert && updateCols.length > 0) {
+          const setClauses = updateCols.map(c => `\`${c}\` = VALUES(\`${c}\`)`).join(', ');
+          sql = `INSERT INTO \`${schema}\`.\`${table}\` (${colList}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${setClauses}`;
+        } else {
+          sql = `INSERT IGNORE INTO \`${schema}\`.\`${table}\` (${colList}) VALUES (${placeholders})`;
+        }
         try {
-          await c.query(
-            `INSERT IGNORE INTO \`${schema}\`.\`${table}\` (${colList}) VALUES (${placeholders})`,
-            values
-          );
+          await c.query(sql, values);
           if (targetPkCol && row[targetPkCol] != null) {
             insertedPks.push(String(row[targetPkCol]));
           }
@@ -284,11 +362,19 @@ export async function advanceRun(
     try {
       ts.status = 'running';
 
+      // Build incremental filter (only when syncMode=incremental and a prior watermark exists)
+      const isIncremental = tableMap.syncMode === 'incremental' && !!tableMap.incrementalCol;
+      const filter: IncrementalFilter | undefined =
+        isIncremental && tableMap.lastSyncedValue
+          ? { col: tableMap.incrementalCol!, gt: tableMap.lastSyncedValue }
+          : undefined;
+      const useUpsert = isIncremental && tableMap.incrementalStrategy === 'timestamp';
+
       // Count source rows (once)
       if (ts.rowsSource === 0 && ts.offset === 0) {
-        ts.rowsSource = await countRows(source, tableMap.source.schema, tableMap.source.table);
+        ts.rowsSource = await countRows(source, tableMap.source.schema, tableMap.source.table, filter);
         run.totalRows = run.tableStates.reduce((s, t) => s + t.rowsSource, 0);
-        log(`[${ts.sourceKey}] source rows: ${ts.rowsSource}`);
+        log(`[${ts.sourceKey}] source rows: ${ts.rowsSource}${isIncremental ? ` (incremental, since ${tableMap.lastSyncedValue ?? 'beginning'})` : ''}`);
       }
 
       // Truncate target if requested (first chunk only)
@@ -328,7 +414,7 @@ export async function advanceRun(
       // Read chunk
       const chunk = await readChunk(
         source, tableMap.source.schema, tableMap.source.table,
-        srcCols, ts.offset, CHUNK_SIZE
+        srcCols, ts.offset, CHUNK_SIZE, filter
       );
 
       if (!chunk.length) {
@@ -336,16 +422,22 @@ export async function advanceRun(
         ts.status = 'completed';
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
+        // Record watermark even when no new rows (source max may have advanced)
+        if (isIncremental && tableMap.incrementalCol) {
+          const wm = await getMaxValue(source, tableMap.source.schema, tableMap.source.table, tableMap.incrementalCol);
+          ts.newWatermark = wm;
+          if (wm) log(`[${ts.sourceKey}] watermark updated → ${wm} (no new rows)`);
+        }
         continue;
       }
 
       // Transform rows
       const transformed = chunk.map(row => transformRow(row, tableMap));
 
-      // Insert into target
+      // Insert into target (upsert when incremental by timestamp)
       const pks = await insertRows(
         target, tableMap.target.schema, tableMap.target.table,
-        transformed, ts.targetPkCol
+        transformed, ts.targetPkCol, useUpsert
       );
 
       // Accumulate rollback PKs (up to cap)
@@ -367,6 +459,12 @@ export async function advanceRun(
         ts.hasMore = false;
         ts.status = 'completed';
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
+        // Record new high-water mark for incremental sync
+        if (isIncremental && tableMap.incrementalCol) {
+          const wm = await getMaxValue(source, tableMap.source.schema, tableMap.source.table, tableMap.incrementalCol);
+          ts.newWatermark = wm;
+          if (wm) log(`[${ts.sourceKey}] watermark updated → ${wm}`);
+        }
       } else {
         ts.hasMore = true;
         log(`[${ts.sourceKey}] offset ${ts.offset} / ~${ts.rowsSource}`);
@@ -392,6 +490,58 @@ export async function advanceRun(
 }
 
 // ── Rollback ──────────────────────────────────────────────────────────────────
+
+// Rollback a single table by tableMap id. Run status is NOT changed — other tables are unaffected.
+export async function rollbackTable(
+  run: MigRun,
+  tableId: string,
+  target: MigConn
+): Promise<MigRun> {
+  function log(msg: string) {
+    run.logs.push(`[${new Date().toISOString()}] ROLLBACK: ${msg}`);
+  }
+
+  const ts = run.tableStates.find(t => t.id === tableId);
+  if (!ts) { log(`table ${tableId} not found in run`); return run; }
+  if (ts.status !== 'completed' && ts.status !== 'failed') {
+    log(`${ts.sourceKey}: cannot rollback — status is ${ts.status}`);
+    return run;
+  }
+
+  const tableMap = run.tables.find(t => t.id === tableId);
+  if (!tableMap) { log(`tableMap ${tableId} missing`); return run; }
+
+  const { schema, table } = tableMap.target;
+  try {
+    if (ts.pkOverflow || !ts.targetPkCol || !ts.insertedPks.length) {
+      if (target.type === 'postgresql') {
+        await withPg(target, c => c.query(`TRUNCATE "${schema}"."${table}" CASCADE`).then(() => undefined));
+      } else {
+        await withMysql(target, c => c.query(`TRUNCATE TABLE \`${schema}\`.\`${table}\``).then(() => undefined));
+      }
+      log(`${ts.targetKey}: truncated (${ts.pkOverflow ? 'pk list overflowed' : 'no pk tracked'})`);
+    } else {
+      const pkCol = ts.targetPkCol;
+      if (target.type === 'postgresql') {
+        const phs = ts.insertedPks.map((_, i) => `$${i + 1}`).join(', ');
+        await withPg(target, c =>
+          c.query(`DELETE FROM "${schema}"."${table}" WHERE "${pkCol}" IN (${phs})`, ts.insertedPks).then(() => undefined)
+        );
+      } else {
+        const phs = ts.insertedPks.map(() => '?').join(', ');
+        await withMysql(target, c =>
+          c.query(`DELETE FROM \`${schema}\`.\`${table}\` WHERE \`${pkCol}\` IN (${phs})`, ts.insertedPks).then(() => undefined)
+        );
+      }
+      log(`${ts.targetKey}: deleted ${ts.insertedPks.length} rows`);
+    }
+    ts.status = 'rolled_back';
+  } catch (err) {
+    log(`${ts.targetKey} rollback ERROR: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return run;
+}
 
 export async function rollbackRun(
   run: MigRun,

@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../../lib/auth-store';
 import { advanceRun } from '../../../../lib/migv2/runner';
 import { saveRun } from '../../../../lib/migv2/run-store';
 import type { MigConn, MigRun, MigRunTableState, TableMap } from '../../../../lib/migv2/types';
@@ -7,8 +6,6 @@ import { randomUUID } from 'crypto';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { source, target, tables, jobId, jobName } = req.body as {
     source: MigConn;

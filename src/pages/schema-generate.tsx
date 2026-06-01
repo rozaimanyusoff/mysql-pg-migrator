@@ -141,15 +141,13 @@ export default function SchemaGeneratePage() {
         <title>Schema Generate</title>
       </Head>
       <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
-        <header className="sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center justify-between">
+        <header className="sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center gap-4 justify-between">
           <div>
             <h1 className="font-bold text-gray-900 dark:text-slate-100">Schema Generate</h1>
             <p className="text-xs text-gray-500 dark:text-slate-400">Pre-flight validation, SQL generation, and execution.</p>
           </div>
           <ConnectionBadges />
           <nav className="flex items-center gap-1 text-sm">
-            <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
-            <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
             <Link href="/schema-config" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Schema Selection</Link>
             <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
             <Link href="/schema-config" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Schema Config</Link>

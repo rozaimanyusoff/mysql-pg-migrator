@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { getPool } from '../../../lib/db';
 import { logApiActivity } from '../../../lib/audit-api';
 
@@ -19,14 +18,8 @@ export interface SchemaJob {
   created_at: string;
 }
 
-function getUsername(req: NextApiRequest): string | null {
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
-  return token ? verifyAccessToken(token) : null;
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const username = getUsername(req);
-  if (!username) return res.status(401).json({ error: 'Unauthorized' });
+  const username = 'system';
 
   const pool = getPool();
 

@@ -1,23 +1,21 @@
 import Head from 'next/head';
 import Link from 'next/link';
 import React, { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/router';
 import axios from 'axios';
 import {
   Settings2, Database, Server, CheckCircle2, XCircle, Loader2, Save,
-  ChevronRight, User, KeyRound, Eye, EyeOff, Plus, Pencil, Trash2,
-  ToggleLeft, ToggleRight, X, LogOut, Mail, ScrollText, Send, RefreshCw,
+  ChevronRight, Eye, EyeOff, Plus, Pencil, Trash2,
+  ToggleLeft, ToggleRight, X, Mail, ScrollText, Send, RefreshCw,
   ChevronDown,
 } from 'lucide-react';
 import type { ConnectionRow } from './api/connections/index';
 import type { AuditLogEntry } from '../lib/audit-logger';
-import { useAuth } from '../lib/auth-context';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type DbType = 'mysql' | 'postgres';
 type TestStatus = 'idle' | 'testing' | 'ok' | 'error';
-type Tab = 'connections' | 'account' | 'email' | 'audit';
+type Tab = 'connections' | 'email' | 'audit';
 
 interface EmailForm {
   host: string; port: number; username: string; password: string;
@@ -89,16 +87,7 @@ function DbTypeBadge({ type }: { type: DbType }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const router = useRouter();
-  const { authenticated, username: authUsername, loading: authLoading, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('connections');
-
-  // Redirect to home if not authenticated (after initial load)
-  useEffect(() => {
-    if (!authLoading && !authenticated) {
-      void router.replace('/');
-    }
-  }, [authLoading, authenticated, router]);
 
   // ── Connection manager state ─────────────────────────────────────────────────
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
@@ -133,17 +122,6 @@ export default function SettingsPage() {
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [auditReadLoading, setAuditReadLoading] = useState(false);
 
-  // ── Account state ────────────────────────────────────────────────────────────
-  const [newUsername, setNewUsername] = useState('');
-  const [currentEmail, setCurrentEmail] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [currentPw, setCurrentPw] = useState('');
-  const [newPw, setNewPw] = useState('');
-  const [confirmPw, setConfirmPw] = useState('');
-  const [acctSaving, setAcctSaving] = useState(false);
-  const [acctSuccess, setAcctSuccess] = useState('');
-  const [acctError, setAcctError] = useState('');
-
   // ── Load connections ─────────────────────────────────────────────────────────
   const loadConnections = useCallback(async () => {
     setLoadingConns(true);
@@ -167,22 +145,6 @@ export default function SettingsPage() {
             from_email: cfg.from_email, from_name: cfg.from_name, secure: cfg.secure, enable_2fa: cfg.enable_2fa });
           setEmailHasPassword(Boolean(cfg.has_password));
         }
-      } catch { /* ignore */ }
-    })();
-  }, []);
-
-  // Load current user profile (email)
-  useEffect(() => {
-    void (async () => {
-      const token = localStorage.getItem('auth_token');
-      if (!token) return;
-      try {
-        const { data } = await axios.get('/api/auth/profile', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const d = data as { email: string | null };
-        setCurrentEmail(d.email ?? '');
-        setNewEmail(d.email ?? '');
       } catch { /* ignore */ }
     })();
   }, []);
@@ -331,27 +293,6 @@ export default function SettingsPage() {
     finally { setDeletingId(null); }
   };
 
-  const handleSaveAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAcctError(''); setAcctSuccess('');
-    if (newPw && newPw !== confirmPw) { setAcctError('New passwords do not match'); return; }
-    if (!currentPw) { setAcctError('Current password is required'); return; }
-    const token = localStorage.getItem('auth_token');
-    setAcctSaving(true);
-    try {
-      const payload: Record<string, string> = { token: token ?? '', currentPassword: currentPw };
-      if (newUsername && newUsername !== authUsername) payload.newUsername = newUsername;
-      if (newPw) payload.newPassword = newPw;
-      if (newEmail !== currentEmail) payload.email = newEmail;
-      await axios.post('/api/auth/update-account', payload);
-      setNewUsername(''); setCurrentPw(''); setNewPw(''); setConfirmPw('');
-      if (newEmail !== currentEmail) setCurrentEmail(newEmail);
-      setAcctSuccess('Account updated successfully');
-    } catch (err: unknown) {
-      setAcctError(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : 'Update failed');
-    } finally { setAcctSaving(false); }
-  };
-
   // ── Render ───────────────────────────────────────────────────────────────────
 
   const handleSaveEmail = async () => {
@@ -393,35 +334,16 @@ export default function SettingsPage() {
   const setEmail = <K extends keyof EmailForm>(k: K) => (v: EmailForm[K] | string) =>
     setEmailForm((p) => ({ ...p, [k]: k === 'port' ? (Number(v) || p.port) : v }));
 
-  // Don't render content while auth is resolving or if not authed (redirect in progress)
-  if (authLoading || !authenticated) return null;
-
   return (
     <>
       <Head><title>Settings — DB Maintenance Tools</title></Head>
       <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
 
-        <header className="sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Settings2 size={18} className="text-blue-600" />
-            <div>
-              <h1 className="font-bold text-gray-900 dark:text-slate-100">Settings</h1>
-              <p className="text-xs text-gray-500 dark:text-slate-400">Global configuration for DB Maintenance Tools.</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-              <User size={12} />{authUsername}
-            </span>
-            <nav className="flex items-center gap-1 text-sm">
-              <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
-              <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-              <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Settings</span>
-            </nav>
-            <button type="button" onClick={() => void logout()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
-              <LogOut size={13} /> Logout
-            </button>
+        <header className="sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center">
+          <Settings2 size={18} className="text-blue-600 shrink-0 mr-3" />
+          <div>
+            <h1 className="font-bold text-gray-900 dark:text-slate-100">Settings</h1>
+            <p className="text-xs text-gray-500 dark:text-slate-400">Global configuration for DB Maintenance Tools.</p>
           </div>
         </header>
 
@@ -432,7 +354,6 @@ export default function SettingsPage() {
             {([
               { key: 'connections' as Tab, label: 'DB Connection', Icon: Database },
               { key: 'email'       as Tab, label: 'Email',         Icon: Mail },
-              { key: 'account'     as Tab, label: 'Account',       Icon: User },
               { key: 'audit'       as Tab, label: 'Audit Logs',    Icon: ScrollText, onSelect: loadAuditFiles },
             ] as { key: Tab; label: string; Icon: React.ElementType; onSelect?: () => void }[]).map(({ key, label, Icon, onSelect }) => (
               <button key={key} type="button" onClick={() => { setActiveTab(key); onSelect?.(); }}
@@ -603,58 +524,6 @@ export default function SettingsPage() {
                 )}
               </div>
             </div>
-          )}
-
-          {/* ══ Account tab ══════════════════════════════════════════════════════ */}
-          {activeTab === 'account' && (
-            <section className="bg-white dark:bg-slate-900/70 border border-gray-200 dark:border-slate-700 rounded-xl overflow-hidden">
-              <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
-                <KeyRound size={16} className="text-blue-500" />
-                <h2 className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Update Account</h2>
-              </div>
-
-              <form onSubmit={(e) => void handleSaveAccount(e)} className="p-5 space-y-5">
-                <InputField label="Current Username" value={authUsername || '—'} readOnly />
-
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Change Username</p>
-                  <InputField label="New Username" value={newUsername} onChange={setNewUsername} placeholder={authUsername || 'Enter new username'} />
-                </div>
-
-                <div className="border-t border-gray-100 dark:border-slate-800" />
-
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Email Address</p>
-                  <InputField label="Email" type="email" value={newEmail} onChange={setNewEmail} placeholder="your@email.com" />
-                  {currentEmail && newEmail === currentEmail && (
-                    <p className="text-xs text-gray-400 dark:text-slate-500 flex items-center gap-1">
-                      <CheckCircle2 size={11} className="text-emerald-500" /> Current: {currentEmail}
-                    </p>
-                  )}
-                </div>
-
-                <div className="border-t border-gray-100 dark:border-slate-800" />
-
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Change Password</p>
-                  <PasswordField label="New Password" value={newPw} onChange={setNewPw} placeholder="Leave blank to keep current" autoComplete="new-password" />
-                  <PasswordField label="Confirm New Password" value={confirmPw} onChange={setConfirmPw} autoComplete="new-password" />
-                </div>
-
-                <div className="border-t border-gray-100 dark:border-slate-800" />
-
-                <PasswordField label="Current Password (required to save)" value={currentPw} onChange={setCurrentPw} autoComplete="current-password" />
-
-                {acctError   && <p className="text-sm text-rose-600 dark:text-rose-400 flex items-center gap-1.5"><XCircle size={14}/>{acctError}</p>}
-                {acctSuccess && <p className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5"><CheckCircle2 size={14}/>{acctSuccess}</p>}
-
-                <button type="submit" disabled={acctSaving || !currentPw}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                  {acctSaving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-                  {acctSaving ? 'Saving…' : 'Save Changes'}
-                </button>
-              </form>
-            </section>
           )}
 
           {/* ══ Email Config tab ══════════════════════════════════════════════ */}

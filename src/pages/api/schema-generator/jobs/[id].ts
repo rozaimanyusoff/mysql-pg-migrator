@@ -1,14 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../../lib/auth-store';
 import { getPool } from '../../../../lib/db';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
-  const username = token ? verifyAccessToken(token) : null;
-  if (!username) return res.status(401).json({ error: 'Unauthorized' });
-
+  const username = 'system';
   const id = Number(req.query.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
 

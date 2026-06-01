@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { withPg, withMysql } from '../../../lib/explorer-db';
 
 interface ConnPayload {
@@ -15,8 +14,6 @@ const SAFE_NAME = (s: string) => s.replace(/[^a-zA-Z0-9_]/g, '');
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { type, host, port, username, password, dbName } = req.body as ConnPayload & { dbName: string };
   if (!type || !host || !username || !dbName?.trim()) return res.status(400).json({ error: 'type, host, username, dbName required' });

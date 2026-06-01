@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../../lib/auth-store';
 import { loadJob, saveJob } from '../../../../lib/migv2/job-store';
 import { listRunsForJob } from '../../../../lib/migv2/run-store';
 import type { TableMap } from '../../../../lib/migv2/types';
@@ -8,8 +7,6 @@ import type { TableMap } from '../../../../lib/migv2/types';
 // Reconstructs a job's tables from its completed run history (most recent snapshot per source table).
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { id } = req.query as { id?: string };
   if (!id) return res.status(400).json({ error: 'id is required' });

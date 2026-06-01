@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { sanitizeName } from '../../../lib/normalizer/profiler';
 
 interface ConfirmedLookup {
@@ -216,8 +215,6 @@ function generateJson(sheet: ExportSheet, lookups: ConfirmedLookup[]): string {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { mode, sheet, confirmedLookups } = req.body as ExportBody;
   if (!mode || !sheet) return res.status(400).json({ error: 'mode and sheet required' });

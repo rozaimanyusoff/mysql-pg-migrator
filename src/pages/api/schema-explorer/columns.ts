@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { withPg, withMysql, type ExplorerConn } from '../../../lib/explorer-db';
 
 export interface ColumnInfo {
@@ -31,8 +30,6 @@ export interface TableColumnsResult {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { conn, tableKey } = req.body as { conn: ExplorerConn; tableKey: string };
   if (!conn || !tableKey) return res.status(400).json({ error: 'conn and tableKey required' });

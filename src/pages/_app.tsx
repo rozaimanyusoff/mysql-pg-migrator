@@ -5,7 +5,7 @@ import { Inter } from 'next/font/google';
 import axios from 'axios';
 import { Toaster } from 'sonner';
 import FooterBar from '../components/FooterBar';
-import { AuthProvider } from '../lib/auth-context';
+import Navbar from '../components/Navbar';
 import { AlertProvider } from '../lib/alert-context';
 import '../styles/globals.css';
 
@@ -35,14 +35,13 @@ export default function App({ Component, pageProps }: AppProps) {
   }, [router.events]);
 
   return (
-    <AuthProvider>
-      <AlertProvider>
-      <div className={`${inter.variable} font-sans min-h-screen pb-12`}>
+    <AlertProvider>
+      <div className={`${inter.variable} font-sans min-h-screen pt-12 pb-12`}>
+        <Navbar />
         <Component {...pageProps} />
         <Toaster position="top-right" richColors closeButton />
         <FooterBar />
       </div>
-      </AlertProvider>
-    </AuthProvider>
+    </AlertProvider>
   );
 }

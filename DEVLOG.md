@@ -2,6 +2,76 @@
 
 ---
 
+## 2026-06-02
+- **fix** — Pending Save accumulates across multiple runs; FK picker uses source tables
+  - `src/pages/migration.tsx` — added `accumulatedTableStates` + `accumulatedTableMaps` state; `completedMigratedStates` now derives from accumulated state — tables from all runs stay in Pending Save until saved/cleared; `advanceMigration` merges per run (latest entry wins per sourceKey); removed `savedMigratedSources` reset in `startMigration`; `handleSaveMigratedTables` reads from `accumulatedTableMaps`; rollback handlers remove from accumulator; page-load restore populates accumulator
+  - FK picker changed from target tables (requires target to exist before migration) to source tables — user can set `fkRef = source_schema.table` before any migration, enabling all tables to migrate in one single run; `fkRef` value format unchanged
+  - Status: done
+
+- **remove** — Authentication system fully removed
+  - Deleted: `src/lib/auth-store.ts`, `src/lib/auth-context.tsx`, `src/pages/api/auth/` (login, logout, verify, refresh, profile, update-account, verify-otp)
+  - All 34 API routes stripped of `verifyAccessToken` import and 401 check block
+  - `_app.tsx` — `AuthProvider` wrapper removed; `Navbar.tsx` — user/logout/settings block removed
+  - `index.tsx` — login modal, OTP form, blur gate and all related state removed
+  - All page files — auth header helpers (`authHeaders`, `authH`, `authHeader`) and their usages removed from axios/fetch calls
+  - Status: done
+
+## 2026-06-02
+- **remove** — Strip all authentication from the application (zero-auth)
+  - Deleted `src/lib/auth-store.ts`, `src/lib/auth-context.tsx`, and entire `src/pages/api/auth/` folder (login, logout, verify, refresh, profile, update-account, verify-otp)
+  - Removed `verifyAccessToken` import + token check from all 34 API routes: `create-database.ts`, `export-import/{export,history,import,sync,tables}.ts`, `migv2/{columns,create-db,export-md,preview,tables}.ts`, `migv2/jobs/{[id],export-sql,index,restore,table-refs}.ts`, `migv2/run/{advance,rollback-table,rollback,start,status}.ts`, `normalizer/{execute,export,parse}.ts`, `schema-designer/{create-db,databases,execute}.ts`, `schema-explorer/{columns,export,records,schemas,tables}.ts`, `schema-generator/{jobs,upload}.ts`, `schema-generator/jobs/[id].ts`; routes that used `username` from the token now default to `'system'`
+  - `src/pages/_app.tsx` — removed `AuthProvider` wrapper; `src/components/Navbar.tsx` — removed user info / logout block
+  - `src/pages/index.tsx` — removed login/OTP overlay, blur gate, all login state and handlers; `src/pages/migration.tsx` — removed `getToken`, `authHeaders`, `useAuth`; replaced all `{ headers: authHeaders() }` in axios calls
+  - `src/pages/settings.tsx` — removed `useAuth`, auth redirect guard, Account tab (username/password/email change form), profile-load effect; `src/pages/schema-designer.tsx`, `schema-explorer.tsx`, `export-import.tsx`, `normalizer.tsx`, `flow-designer.tsx` — removed all auth helper functions and `{ headers: authH() }` from axios calls
+  - Cleared `.next` cache; `npx tsc --noEmit` passes with zero errors
+  - Status: done
+
+- **revision** — Move Export MD to per-saved-job; remove global Export MD buttons
+  - `src/pages/migration.tsx` — removed Export MD button from main toolbar and run console header; removed `handleExportMd` (run-level) and old `handleExportJobMd` (in-memory state); rewrote `handleExportJobMd(jobId)` to load the saved job from API and generate MD from persisted job data (includes incremental sync config if set); added `FileText` Export MD button per saved job card alongside existing Export SQL (`FileCode`) button
+  - Status: done
+
+## 2026-06-01
+- **implement** — Per-table rollback replacing global rollback in Pending Save
+  - `src/lib/migv2/runner.ts` — added `rollbackTable(run, tableId, target)` — same DELETE/TRUNCATE logic as `rollbackRun` but for a single table only; run-level status is NOT changed so other tables are unaffected
+  - `src/pages/api/migv2/run/rollback-table.ts` — new `POST /api/migv2/run/rollback-table` endpoint accepting `{ runId, tableId, target }`
+  - `src/pages/migration.tsx` — added `rollingBackTableId` state + `handleRollbackTable(tableId)` handler; removed global Rollback button from Pending Save header; added per-row `RotateCcw` rollback button on each Pending Save entry (visible when run is completed/failed); added per-row rollback button in run console per-table progress list; global Rollback in run console header also now clears `migratedTableKeys` on success
+  - Status: done
+
+- **implement** — Incremental sync for live production DB migration
+  - `src/lib/migv2/types.ts` — added `syncMode`, `incrementalCol`, `incrementalStrategy`, `lastSyncedValue` (optional) to `TableMap`; added `newWatermark` to `MigRunTableState`
+  - `src/lib/migv2/runner.ts` — added `IncrementalFilter` type; `countRows` + `readChunk` accept optional filter (`WHERE col > value`) with `ORDER BY col ASC` for stable pagination; `insertRows` accepts `upsert` flag — PG uses `ON CONFLICT (pk) DO UPDATE SET ...`, MySQL uses `ON DUPLICATE KEY UPDATE ...`; `advanceRun` derives filter from `tableMap.syncMode/incrementalCol/lastSyncedValue`, queries `getMaxValue()` on source after table completes and stores result in `ts.newWatermark`
+  - `src/pages/api/migv2/run/advance.ts` — after each advance, if run has a `jobId`, write `ts.newWatermark` back to `job.tables[].lastSyncedValue` and save the job so the next run starts from the correct high-water mark
+  - `src/pages/migration.tsx` — column mapping header: added `⟳ Full / ⟳ Incremental` toggle button per table; when incremental: watermark column picker (from source columns), strategy selector (`by ID` = append-only insert, `by Timestamp` = upsert), current watermark display with reset (×) button
+  - Status: done
+
+
+- **implement** — Global fixed Navbar across all modules
+  - `src/components/Navbar.tsx` — new component; `fixed top-0 left-0 right-0 h-12 z-[60]`; shows app name (links to `/`), current module breadcrumb chip (derived from `useRouter().pathname`), user info (username, Settings link, Logout) via `useAuth()`
+  - `src/pages/_app.tsx` — import and render `<Navbar />`; added `pt-12` to global wrapper div so page content starts below the fixed bar
+  - `h-screen` pages (`migration`, `schema-designer`, `export-import`, `schema-explorer`, `normalizer`, `flow-designer` canvas) — changed to `h-[calc(100vh-48px)]` to account for navbar height
+  - `min-h-screen` pages (`settings`, `audit`, `schema-generate`, `docs`) — per-page `sticky` headers moved from `top-0 z-50` to `top-12 z-40` so they stick below the global navbar
+  - `flow-designer` projects view — per-page header changed to `sticky top-12 z-40`
+  - All module pages — removed inline `Home → Module` breadcrumb nav from per-page headers (handled by global Navbar); `docs.tsx` and `schema-generate.tsx` retain their multi-step breadcrumbs with the Home step removed
+  - `src/pages/index.tsx` — removed entire inline `<header>` (Navbar now handles app name + user info + settings); cleaned up unused imports (`Settings2`, `LogOut`, `User`, `logout`, `username`)
+  - Status: done
+
+
+- **fix** — Target tables panel not reloading after every migration run
+  - `src/pages/migration.tsx` — `reloadTgtTables()` was only called when overall run status was `completed`; individual table states can be `completed` even when the run ends as `failed`; moved `reloadSrcTables()` + `reloadTgtTables()` outside the `completed`-only guard so they fire on any run-end (completed or failed); also call `reloadTgtTables()` after rollback since rolled-back rows are deleted from target
+  - Status: done
+
+- **fix** — Restore Pending Save list after accidental page refresh
+  - `src/pages/migration.tsx` — on page load, fetch most recent finished run (`completed`/`failed`) from `/api/migv2/run/status`; if it has any completed tableStates, restore it as `currentRun` (run console + Pending Save section reappear); also read `localStorage.mig_saved_<runId>` to re-apply which tables were already saved in the previous session so they don't re-appear as unsaved; `handleSaveMigratedTables` now writes saved keys back to localStorage keyed by run ID; starting a new migration clears the old run's localStorage entry
+  - Status: done
+
+- **revision** — Rename "Migrated Tables" section to "Pending Save"; clear entries after save
+  - `src/pages/migration.tsx` — renamed section header/dialog title to "PENDING SAVE" / "Save to Job"; added `savedMigratedSources` Set state to track which source keys have been saved; `completedMigratedStates` now filters out saved entries so list clears incrementally after each save; `savedMigratedSources` resets on each new migration run start
+  - Status: done
+
+- **implement** — Migration module: Migrated Tables log section with multi-select save
+  - `src/pages/migration.tsx` — added "Migrated Tables" section below Saved Jobs in the right jobs panel; derived from `currentRun.tableStates` filtered to `status === 'completed'`; supports select-all and per-row checkbox toggle; "Save N" button opens a dialog to create a new job or append to an existing one; handler `handleSaveMigratedTables` fetches selected `TableMap` entries from `currentRun.tables`, merges into existing job (deduplicating by id) or posts a new job; dialog reuses the same list-picker pattern as the existing Save Job dialog
+  - Status: done
+
 ## 2026-05-31
 - **implement** — Export DDL SQL per saved job
   - `src/lib/migv2/runner.ts` — exported `buildCreateTableSQL` (was unexported private function); generates `CREATE SCHEMA IF NOT EXISTS` + `CREATE TABLE IF NOT EXISTS` for each target table including PK, legacy BIGINT columns, and NOT NULL/DEFAULT constraints

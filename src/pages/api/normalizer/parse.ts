@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import ExcelJS from 'exceljs';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { parseCsv } from '../../../lib/normalizer/csv-parser';
 import { buildSheetResult, type SheetResult } from '../../../lib/normalizer/profiler';
 
@@ -80,8 +79,6 @@ function parseJsonContent(text: string): SheetResult[] {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { filename, content } = req.body as { filename?: string; content?: string };
   if (!filename || typeof content !== 'string')

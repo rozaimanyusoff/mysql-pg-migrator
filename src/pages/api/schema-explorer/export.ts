@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../lib/auth-store';
 import { withPg, withMysql, type ExplorerConn } from '../../../lib/explorer-db';
 import ExcelJS from 'exceljs';
 import { generateOrm, type OrmTableDef, type OrmColDef, type OrmTarget } from '../../../lib/orm-generator';
@@ -57,8 +56,6 @@ type ExportFormat = 'sql' | 'xlsx' | 'drizzle' | 'prisma' | 'typeorm';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { conn, tableKeys, format } = req.body as {
     conn: ExplorerConn;

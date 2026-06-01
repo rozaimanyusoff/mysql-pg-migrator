@@ -34,9 +34,6 @@ interface TableEntry { schema: string; name: string; rowCount: number; }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function authHeader() {
-  return { Authorization: `Bearer ${localStorage.getItem('auth_token') ?? ''}` };
-}
 
 function connToCfg(conn: ConnectionRow, database?: string): ConnCfg {
   return {
@@ -92,7 +89,7 @@ function parseDryRun(sql: string): DryRunSummary {
 
 async function saveHistory(entry: Partial<HistoryEntry>) {
   try {
-    await axios.post('/api/export-import/history', entry, { headers: authHeader() });
+    await axios.post('/api/export-import/history', entry);
   } catch { /* non-critical */ }
 }
 
@@ -640,7 +637,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress }: {
       await axios.post('/api/create-database', {
         db_type: conn.db_type, host: conn.host, port: conn.port,
         user: conn.username, password: conn.password_enc ?? '', ssl: conn.ssl_enabled, dbName: newName.trim(),
-      }, { headers: authHeader() });
+      });
       await load(conn); onChange(newName.trim()); setShowNew(false); setNewName('');
     } catch (err: unknown) {
       setCreateErr(axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err));
@@ -741,7 +738,7 @@ function SchemaPanel({ conn, database, value, onChange }: {
     setLoading(true); setSchemas([]);
     try {
       const { data } = await axios.post('/api/schema-explorer/schemas',
-        connToExplorerConn(c, db), { headers: authHeader() });
+        connToExplorerConn(c, db));
       setSchemas((data as { schemas: { schema: string; tableCount: number }[] }).schemas);
     } catch { setSchemas([]); }
     finally { setLoading(false); }
@@ -804,7 +801,7 @@ function SavedJobsPanel({ tab, collapsed, onToggle, refreshKey }: {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await axios.get('/api/export-import/history', { headers: authHeader() });
+      const { data } = await axios.get('/api/export-import/history');
       setHistory((data as { history: HistoryEntry[] }).history);
     } catch { /* ignore */ }
     finally { setLoading(false); }
@@ -814,7 +811,7 @@ function SavedJobsPanel({ tab, collapsed, onToggle, refreshKey }: {
 
   const handleDelete = async (id: number) => {
     try {
-      await axios.delete(`/api/export-import/history?id=${id}`, { headers: authHeader() });
+      await axios.delete(`/api/export-import/history?id=${id}`);
       setHistory(prev => prev.filter(h => h.id !== id));
     } catch { /* ignore */ }
   };
@@ -981,8 +978,7 @@ export default function ExportImportPage() {
       try {
         const explorerConn = connToExplorerConn(conn, database);
         const { data } = await axios.post('/api/schema-explorer/tables',
-          { conn: explorerConn, schemas: schema ? [schema] : undefined },
-          { headers: authHeader() });
+          { conn: explorerConn, schemas: schema ? [schema] : undefined });
         setTableList((data as { tables: TableEntry[] }).tables);
       } catch { setTableList([]); }
       finally { setTablesLoading(false); }
@@ -1001,8 +997,7 @@ export default function ExportImportPage() {
     const tablesToExport = selectedTables === 'all' ? 'all' : selectedTables.map(t => t.split('.').pop() ?? t);
     try {
       const { data } = await axios.post('/api/export-import/export',
-        { cfg: connToCfg(conn, database), tables: tablesToExport, include, format, whereClause: whereClause.trim() || undefined },
-        { headers: authHeader() });
+        { cfg: connToCfg(conn, database), tables: tablesToExport, include, format, whereClause: whereClause.trim() || undefined });
 
       if (format === 'csv') {
         const csvData = data as { csvFiles: { table: string; csv: string }[]; tables: string[] };
@@ -1033,7 +1028,7 @@ export default function ExportImportPage() {
     setRunning(true); setLog([]); setRunStatus(null); setError(null);
     try {
       const { data } = await axios.post('/api/export-import/import',
-        { cfg: connToCfg(conn, database), sql: importSql }, { headers: authHeader() });
+        { cfg: connToCfg(conn, database), sql: importSql });
       const d = data as { success: boolean; log?: string[] };
       setLog((d.log ?? []).map(t => ({ step: 'import', ok: d.success, text: t })));
       setRunStatus(d.success ? 'success' : 'failed');
@@ -1061,8 +1056,7 @@ export default function ExportImportPage() {
       setSyncProgress({ current: i, total, label: table });
       try {
         const { data } = await axios.post('/api/export-import/sync',
-          { source: connToCfg(conn, database), target: connToCfg(tgtConn, database), tables: [table], include, conflict },
-          { headers: authHeader() });
+          { source: connToCfg(conn, database), target: connToCfg(tgtConn, database), tables: [table], include, conflict });
         const d = data as { success: boolean; log: LogLine[] };
         allLog.push(...d.log);
         if (!d.success) allOk = false;
@@ -1134,7 +1128,7 @@ export default function ExportImportPage() {
   return (
     <>
       <Head><title>Export & Import — DB Maintenance Tools</title></Head>
-      <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-950 overflow-hidden">
+      <div className="h-[calc(100vh-48px)] flex flex-col bg-gray-50 dark:bg-slate-950 overflow-hidden">
 
         {/* ── Header ── */}
         <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-5 py-3 flex items-center gap-4">
@@ -1145,11 +1139,6 @@ export default function ExportImportPage() {
               <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">Export, import and sync database tables across connections</p>
             </div>
           </div>
-          <nav className="ml-auto flex items-center gap-1 text-sm shrink-0">
-            <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
-            <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-            <span className="px-3 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold text-sm">Export & Import</span>
-          </nav>
         </header>
 
         {/* ── Toolbar ── */}

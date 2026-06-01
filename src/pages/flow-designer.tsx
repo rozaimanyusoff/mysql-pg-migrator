@@ -18,7 +18,6 @@ import {
   BaseEdge, getSmoothStepPath, type EdgeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useAuth } from '../lib/auth-context';
 import { useAlert } from '../lib/alert-context';
 import type {
   FtdProject, FtdEntity, FtdRelationship,
@@ -446,7 +445,6 @@ function FlowGuidePopover() {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function FlowDesignerPage() {
-  useAuth();
   const { showWarning } = useAlert();
 
   // ── Project selection ─────────────────────────────────────────────────────
@@ -795,7 +793,7 @@ export default function FlowDesignerPage() {
         <Head><title>Flow-to-Database Designer</title></Head>
         <div className="min-h-screen bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-slate-100">
           {/* Header — same pattern as other modules */}
-          <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
+          <header className="shrink-0 sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
             <div className="flex items-center gap-3 shrink-0">
               <Workflow size={18} className="text-blue-600" />
               <div>
@@ -805,12 +803,6 @@ export default function FlowDesignerPage() {
             </div>
             <div className="ml-auto flex items-center gap-3 shrink-0">
               <FlowGuidePopover />
-              <div className="h-5 w-px bg-gray-200 dark:bg-slate-700" />
-              <nav className="flex items-center gap-1 text-sm">
-                <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
-                <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-                <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Flow Designer</span>
-              </nav>
             </div>
           </header>
 
@@ -933,7 +925,7 @@ export default function FlowDesignerPage() {
         </div>
       )}
 
-      <div className="flex flex-col h-screen bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-slate-100 overflow-hidden">
+      <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-slate-100 overflow-hidden">
         {/* Header — same sticky pattern as other modules */}
         <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-4 py-3 flex items-center gap-3">
           <button onClick={() => setActive(null)}
@@ -964,15 +956,8 @@ export default function FlowDesignerPage() {
               </button>
             ))}
           </div>
-          {/* Guide + Breadcrumb */}
           <div className="ml-auto flex items-center gap-3 shrink-0">
             <FlowGuidePopover />
-            <div className="h-5 w-px bg-gray-200 dark:bg-slate-700" />
-            <nav className="flex items-center gap-1 text-sm">
-              <button onClick={() => setActive(null)} className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Projects</button>
-              <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-              <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold truncate max-w-[160px]">{activeProject.name}</span>
-            </nav>
           </div>
         </header>
 

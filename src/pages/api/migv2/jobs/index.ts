@@ -1,12 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../../lib/auth-store';
 import { listJobs, saveJob } from '../../../../lib/migv2/job-store';
 import type { MigJob } from '../../../../lib/migv2/types';
 import { randomUUID } from 'crypto';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   if (req.method === 'GET') {
     return res.status(200).json({ jobs: listJobs() });

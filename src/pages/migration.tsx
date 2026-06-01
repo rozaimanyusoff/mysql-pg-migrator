@@ -13,11 +13,10 @@ import {
 } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { Tooltip } from '../components/Tooltip';
-import { useAuth } from '../lib/auth-context';
 import { useAlert } from '../lib/alert-context';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { suggestTargetType, isPkLikeSerial } from '../lib/migv2/type-map';
-import type { MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigJobTableSummary, MigRun, IdConversion } from '../lib/migv2/types';
+import type { MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigJobTableSummary, MigRun, MigRunTableState, IdConversion } from '../lib/migv2/types';
 import type { MigTableInfo } from './api/migv2/tables';
 import type { MigColumnInfo } from './api/migv2/columns';
 import type { ConnectionRow } from './api/connections/index';
@@ -26,15 +25,6 @@ import type { ConnectionRow } from './api/connections/index';
 
 function newId(): string {
   return Math.random().toString(36).slice(2, 10);
-}
-
-function getToken(): string {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem('auth_token') ?? '';
-}
-
-function authHeaders() {
-  return { Authorization: `Bearer ${getToken()}` };
 }
 
 function connRowToMigConn(row: ConnectionRow, database: string): MigConn {
@@ -257,7 +247,6 @@ function MigrationGuidePopover() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function Migration() {
-  useAuth();
   const router = useRouter();
   const { showError, showWarning } = useAlert();
 
@@ -319,12 +308,22 @@ export default function Migration() {
   const [renamingJobId, setRenamingJobId] = useState<string | null>(null);
   const [renameJobVal, setRenameJobVal] = useState('');
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const [selectedMigratedKeys, setSelectedMigratedKeys] = useState<Set<string>>(new Set());
+  const [savedMigratedSources, setSavedMigratedSources] = useState<Set<string>>(new Set());
+  // Accumulate completed table states across multiple runs (session-only)
+  const [accumulatedTableStates, setAccumulatedTableStates] = useState<MigRunTableState[]>([]);
+  const [accumulatedTableMaps, setAccumulatedTableMaps] = useState<Map<string, TableMap>>(new Map());
+  const [showSaveMigratedDialog, setShowSaveMigratedDialog] = useState(false);
+  const [saveMigratedJobName, setSaveMigratedJobName] = useState('');
+  const [saveMigratedTargetJobId, setSaveMigratedTargetJobId] = useState<string | null>(null);
+  const [savingMigrated, setSavingMigrated] = useState(false);
 
   // ── Run ───────────────────────────────────────────────────────────────────────
   const [migratedTableKeys, setMigratedTableKeys] = useState<Set<string>>(new Set());
   const [currentRun, setCurrentRun] = useState<MigRun | null>(null);
   const [polling, setPolling] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
+  const [rollingBackTableId, setRollingBackTableId] = useState<string | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pendingRestoreRef = useRef<MigJob | null>(null);
   const pendingTgtRef = useRef<{ database: string; schema: string } | null>(null);
@@ -342,7 +341,7 @@ export default function Migration() {
 
   // ── Load connections ──────────────────────────────────────────────────────────
   useEffect(() => {
-    void axios.get<{ connections: ConnectionRow[] }>('/api/connections', { headers: authHeaders() })
+    void axios.get<{ connections: ConnectionRow[] }>('/api/connections')
       .then(r => setConnections(r.data.connections))
       .catch(() => {});
   }, []);
@@ -358,8 +357,7 @@ export default function Migration() {
     try {
       const { data } = await axios.post<{ databases: string[] }>(
         '/api/schema-designer/databases',
-        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' },
-        { headers: authHeaders() }
+        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' }
       );
       setSrcDbs(data.databases);
       const def = data.databases.includes(row.database_name) ? row.database_name : data.databases[0] ?? '';
@@ -383,7 +381,7 @@ export default function Migration() {
     setSrcConnecting(true); setSrcError(''); setSrcConnected(false);
     setSrcTables([]);
     if (!pendingRestoreRef.current) { setTableMaps([]); setColsCache({}); setSelectedMapId(null); setSrcSchema(''); }
-    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', conn, { headers: authHeaders() })
+    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', conn)
       .then(({ data }) => {
         setSrcTables(data.tables);
         setSrcConnected(true);
@@ -398,7 +396,7 @@ export default function Migration() {
           if (firstIncluded) {
             const key = `${firstIncluded.source.schema}.${firstIncluded.source.table}`;
             void axios.post<{ columns: MigColumnInfo[] }>(
-              '/api/migv2/columns', { conn, tableKey: key }, { headers: authHeaders() }
+              '/api/migv2/columns', { conn, tableKey: key }
             ).then(({ data: colData }) => setColsCache(prev => ({ ...prev, [key]: colData.columns })))
              .catch(() => {});
           }
@@ -420,8 +418,7 @@ export default function Migration() {
     try {
       const { data } = await axios.post<{ databases: string[] }>(
         '/api/schema-designer/databases',
-        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' },
-        { headers: authHeaders() }
+        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' }
       );
       setTgtDbs(data.databases);
       const def = data.databases.includes(row.database_name) ? row.database_name : data.databases[0] ?? '';
@@ -450,11 +447,10 @@ export default function Migration() {
         host: row.host, port: row.port,
         username: row.username, password: row.password_enc ?? '',
         newDatabase: tgtNewDbName.trim(),
-      }, { headers: authHeaders() });
+      });
       const { data } = await axios.post<{ databases: string[] }>(
         '/api/schema-designer/databases',
-        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' },
-        { headers: authHeaders() }
+        { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' }
       );
       setTgtDbs(data.databases);
       setTgtDb(tgtNewDbName.trim());
@@ -472,7 +468,7 @@ export default function Migration() {
     setTgtConn(conn);
     setTgtConnecting(true); setTgtError(''); setTgtConnected(false); setTgtSchemas([]); setTgtTables([]);
     setTgtNewSchemaMode(false); setTgtNewSchemaName('');
-    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', conn, { headers: authHeaders() })
+    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', conn)
       .then(({ data }) => {
         setTgtConnected(true);
         setTgtTables(data.tables);
@@ -495,7 +491,7 @@ export default function Migration() {
 
   const reloadSrcTables = useCallback(() => {
     if (!srcConnId || !srcDb) return;
-    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', srcConn, { headers: authHeaders() })
+    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', srcConn)
       .then(({ data }) => setSrcTables(data.tables))
       .catch(() => {});
   }, [srcConnId, srcDb, srcConn]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -504,7 +500,7 @@ export default function Migration() {
     if (!tgtConnId || !tgtDb) return;
     const row = connections.find(c => c.id === tgtConnId);
     if (!row) return;
-    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', tgtConn, { headers: authHeaders() })
+    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', tgtConn)
       .then(({ data }) => {
         setTgtTables(data.tables);
         if (row.db_type === 'postgres') {
@@ -552,7 +548,7 @@ export default function Migration() {
       let srcCols = colsCache[key];
       if (!srcCols) {
         const { data } = await axios.post<{ columns: MigColumnInfo[] }>(
-          '/api/migv2/columns', { conn: srcConn, tableKey: key }, { headers: authHeaders() }
+          '/api/migv2/columns', { conn: srcConn, tableKey: key }
         );
         srcCols = data.columns;
         setColsCache(prev => ({ ...prev, [key]: srcCols }));
@@ -640,18 +636,20 @@ export default function Migration() {
 
   const includedCount = tableMaps.filter(m => m.include).length;
   const canStart = srcConnected && tgtConnected && includedCount > 0 && !polling;
+  const completedMigratedStates = accumulatedTableStates
+    .filter(ts => !savedMigratedSources.has(ts.sourceKey));
 
   // ── Jobs ──────────────────────────────────────────────────────────────────────
   const loadJobs = async () => {
     try {
-      const { data } = await axios.get<{ jobs: MigJobSummary[] }>('/api/migv2/jobs', { headers: authHeaders() });
+      const { data } = await axios.get<{ jobs: MigJobSummary[] }>('/api/migv2/jobs');
       setJobs(data.jobs);
     } catch { /* ignore */ }
   };
   const loadTableRefs = async () => {
     try {
       const { data } = await axios.get<{ refs: { targetKey: string; sourceKey: string }[] }>(
-        '/api/migv2/jobs/table-refs', { headers: authHeaders() }
+        '/api/migv2/jobs/table-refs'
       );
       const map: Record<string, string> = {};
       for (const r of data.refs) map[r.targetKey] = r.sourceKey;
@@ -659,6 +657,75 @@ export default function Migration() {
     } catch { /* ignore */ }
   };
   useEffect(() => { void loadJobs(); void loadTableRefs(); }, []);
+
+  // On page load: restore the most recent finished run — but only if there are genuinely
+  // unsaved pending tables. If all tables were already saved/cleared in a prior session,
+  // skip restore entirely so stale strikethrough doesn't appear.
+  useEffect(() => {
+    void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status')
+      .then(({ data }) => {
+        const latest = data.runs.find(r => r.status === 'completed' || r.status === 'failed');
+        if (!latest) return;
+        const completedKeys = latest.tableStates
+          .filter(ts => ts.status === 'completed')
+          .map(ts => ts.sourceKey);
+        if (completedKeys.length === 0) return;
+        // Read which tables were already saved/cleared in a previous session
+        let savedKeys: Set<string> = new Set();
+        try {
+          const arr = JSON.parse(localStorage.getItem(`mig_saved_${latest.id}`) ?? '[]') as string[];
+          savedKeys = new Set(arr);
+        } catch { /* ignore */ }
+        // Only restore if there are unsaved pending tables
+        const unsaved = completedKeys.filter(k => !savedKeys.has(k));
+        if (unsaved.length === 0) return;
+        setCurrentRun(latest);
+        setMigratedTableKeys(new Set(completedKeys));
+        if (savedKeys.size > 0) setSavedMigratedSources(savedKeys);
+        // Populate accumulated state from restored run
+        const statesMap = new Map(latest.tableStates.filter(ts => ts.status === 'completed').map(ts => [ts.sourceKey, ts]));
+        setAccumulatedTableStates([...statesMap.values()]);
+        const tMaps = new Map<string, TableMap>();
+        for (const ts of statesMap.values()) {
+          const tm = latest.tables.find(t => t.id === ts.id);
+          if (tm) tMaps.set(ts.sourceKey, tm);
+        }
+        setAccumulatedTableMaps(tMaps);
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSaveMigratedTables = async () => {
+    if (!currentRun || selectedMigratedKeys.size === 0) return;
+    setSavingMigrated(true);
+    try {
+      const selectedTables = [...selectedMigratedKeys]
+        .map(k => accumulatedTableMaps.get(k))
+        .filter((t): t is TableMap => !!t);
+      if (saveMigratedTargetJobId) {
+        const { data: existing } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${saveMigratedTargetJobId}`);
+        const existingIds = new Set((existing.job.tables as TableMap[]).map(t => t.id));
+        const merged = [...existing.job.tables, ...selectedTables.filter(t => !existingIds.has(t.id))];
+        await axios.put(`/api/migv2/jobs/${saveMigratedTargetJobId}`, { tables: merged });
+      } else {
+        await axios.post('/api/migv2/jobs', { name: saveMigratedJobName.trim(), tables: selectedTables });
+      }
+      await loadJobs();
+      const newSaved = new Set([...savedMigratedSources, ...selectedMigratedKeys]);
+      setSavedMigratedSources(newSaved);
+      try {
+        localStorage.setItem(`mig_saved_${currentRun.id}`, JSON.stringify([...newSaved]));
+      } catch { /* ignore */ }
+      setShowSaveMigratedDialog(false);
+      setSaveMigratedJobName('');
+      setSaveMigratedTargetJobId(null);
+      setSelectedMigratedKeys(new Set());
+    } catch {
+      showError('Failed to save migrated tables to job');
+    } finally {
+      setSavingMigrated(false);
+    }
+  };
 
   const doSaveJob = async () => {
     setSavingJob(true);
@@ -671,7 +738,7 @@ export default function Migration() {
         targetMeta: { type: tgtConn.type, host: tgtConn.host, port: tgtConn.port, database: tgtConn.database, username: tgtConn.username },
         tables: tableMaps,
       };
-      const { data } = await axios.post<{ job: MigJob }>('/api/migv2/jobs', payload, { headers: authHeaders() });
+      const { data } = await axios.post<{ job: MigJob }>('/api/migv2/jobs', payload);
       setActiveJobId(data.job.id);
       setSaveAsTarget(null);
       setDirty(false); setShowSaveDialog(false);
@@ -697,7 +764,7 @@ export default function Migration() {
   const handleRestoreJobFromRuns = async (jobId: string) => {
     try {
       const { data } = await axios.post<{ job: MigJob; restored: number }>(
-        `/api/migv2/jobs/restore?id=${jobId}`, {}, { headers: authHeaders() }
+        `/api/migv2/jobs/restore?id=${jobId}`, {}
       );
       await loadJobs();
       if (activeJobId === jobId) setTableMaps(data.job.tables);
@@ -706,13 +773,13 @@ export default function Migration() {
 
   const handleLoadJob = async (id: string) => {
     try {
-      const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${id}`, { headers: authHeaders() });
+      const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${id}`);
       const job = data.job;
       setActiveJobId(id);
       setSaveJobName(job.name); setSaveJobDesc(job.description); setDirty(false);
 
       // Restore migrated table keys from persisted run history for this job
-      void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { headers: authHeaders() })
+      void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status')
         .then(({ data: runData }) => {
           const keys = new Set<string>();
           for (const run of runData.runs) {
@@ -763,60 +830,63 @@ export default function Migration() {
     } catch { /* ignore */ }
   };
 
-  const handleExportJobMd = () => {
-    if (tableMaps.length === 0) return;
-    const jobName = saveJobName || 'Migration Job';
-    const lines: string[] = [
-      `# ${jobName}`,
-      saveJobDesc ? `\n${saveJobDesc}` : '',
-      `\n_Generated: ${new Date().toISOString()}_`,
-      '',
-      '## Source',
-      `- **Type**: ${srcConn.type}`,
-      `- **Host**: ${srcConn.host}:${srcConn.port}`,
-      `- **Database**: ${srcConn.database}`,
-      `- **Username**: ${srcConn.username}`,
-      '',
-      '## Target',
-      `- **Type**: ${tgtConn.type}`,
-      `- **Host**: ${tgtConn.host}:${tgtConn.port}`,
-      `- **Database**: ${tgtConn.database}`,
-      `- **Username**: ${tgtConn.username}`,
-      '',
-      `## Table Mappings (${tableMaps.filter(m => m.include).length} of ${tableMaps.length} included)`,
-      '',
-    ];
-    tableMaps.forEach((map, i) => {
-      const status = map.include ? '✓' : '✗';
-      const tgtTable = map.target.table ? `${map.target.schema}.${map.target.table}` : '(unassigned)';
-      lines.push(`### ${i + 1}. \`${map.source.schema}.${map.source.table}\` → \`${tgtTable}\` [${status}]`);
-      if (map.truncateBeforeMigrate) lines.push('> ⚠ Truncate target before migrate');
-      lines.push('');
-      if (map.columns.length > 0) {
-        lines.push('| Source Column | Source Type | Target Column | Target Type | Conversion | Include |');
-        lines.push('|---|---|---|---|---|:---:|');
-        const srcKey = `${map.source.schema}.${map.source.table}`;
-        map.columns.forEach(col => {
-          const srcType = colsCache[srcKey]?.find(c => c.name === col.sourceCol)?.rawType ?? '—';
-          lines.push(`| ${col.sourceCol ?? '*(new)*'} | ${srcType} | ${col.targetCol || '—'} | ${col.targetType} | ${col.conversion} | ${col.include ? '✓' : '✗'} |`);
-        });
-      } else {
-        lines.push('_No column mapping configured_');
-      }
-      lines.push('');
-    });
-    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${jobName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportJobMd = async (jobId: string) => {
+    try {
+      const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${jobId}`);
+      const job = data.job;
+      const lines: string[] = [
+        `# ${job.name}`,
+        job.description ? `\n${job.description}` : '',
+        `\n_Generated: ${new Date().toISOString()}_`,
+        '',
+        '## Source',
+        `- **Type**: ${job.sourceMeta.type}`,
+        `- **Host**: ${job.sourceMeta.host}:${job.sourceMeta.port}`,
+        `- **Database**: ${job.sourceMeta.database}`,
+        `- **Username**: ${job.sourceMeta.username}`,
+        '',
+        '## Target',
+        `- **Type**: ${job.targetMeta.type}`,
+        `- **Host**: ${job.targetMeta.host}:${job.targetMeta.port}`,
+        `- **Database**: ${job.targetMeta.database}`,
+        `- **Username**: ${job.targetMeta.username}`,
+        '',
+        `## Table Mappings (${job.tables.filter(m => m.include).length} of ${job.tables.length} included)`,
+        '',
+      ];
+      job.tables.forEach((map, i) => {
+        const status = map.include ? '✓' : '✗';
+        const tgtTable = map.target.table ? `${map.target.schema}.${map.target.table}` : '(unassigned)';
+        lines.push(`### ${i + 1}. \`${map.source.schema}.${map.source.table}\` → \`${tgtTable}\` [${status}]`);
+        if (map.truncateBeforeMigrate) lines.push('> ⚠ Truncate target before migrate');
+        if (map.syncMode === 'incremental') {
+          lines.push(`> ⟳ Incremental — ${map.incrementalStrategy ?? 'id'} by \`${map.incrementalCol ?? '—'}\`${map.lastSyncedValue ? ` · last synced: ${map.lastSyncedValue}` : ''}`);
+        }
+        lines.push('');
+        if (map.columns.length > 0) {
+          lines.push('| Source Column | Target Column | Target Type | Conversion | Include |');
+          lines.push('|---|---|---|---|:---:|');
+          map.columns.forEach(col => {
+            lines.push(`| ${col.sourceCol ?? '*(new)*'} | ${col.targetCol || '—'} | ${col.targetType} | ${col.conversion} | ${col.include ? '✓' : '✗'} |`);
+          });
+        } else {
+          lines.push('_No column mapping configured_');
+        }
+        lines.push('');
+      });
+      const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${job.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { showError('Failed to export job MD'); }
   };
 
   const handleExportJobSql = async (jobId: string) => {
     try {
-      const res = await fetch(`/api/migv2/jobs/export-sql?id=${jobId}`, { headers: authHeaders() });
+      const res = await fetch(`/api/migv2/jobs/export-sql?id=${jobId}`);
       if (!res.ok) { showError('Export SQL failed', await res.text()); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -836,7 +906,7 @@ export default function Migration() {
       confirmLabel: 'Delete Job',
       onConfirm: async () => {
         try {
-          await axios.delete(`/api/migv2/jobs/${id}`, { headers: authHeaders() });
+          await axios.delete(`/api/migv2/jobs/${id}`);
           await loadJobs();
           if (activeJobId === id) { setActiveJobId(null); setSaveJobName(''); setSaveJobDesc(''); }
         } catch { /* ignore */ }
@@ -851,9 +921,9 @@ export default function Migration() {
       confirmLabel: 'Remove',
       onConfirm: async () => {
         try {
-          const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${jobId}`, { headers: authHeaders() });
+          const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${jobId}`);
           const updatedTables = data.job.tables.filter(t => t.id !== tableId);
-          await axios.put(`/api/migv2/jobs/${jobId}`, { tables: updatedTables }, { headers: authHeaders() });
+          await axios.put(`/api/migv2/jobs/${jobId}`, { tables: updatedTables });
           await loadJobs();
           if (activeJobId === jobId) setTableMaps(updatedTables);
         } catch { /* ignore */ }
@@ -864,13 +934,42 @@ export default function Migration() {
   const handleRenameJob = async (id: string, name: string) => {
     if (!name.trim()) return;
     try {
-      await axios.put(`/api/migv2/jobs/${id}`, { name: name.trim() }, { headers: authHeaders() });
+      await axios.put(`/api/migv2/jobs/${id}`, { name: name.trim() });
       await loadJobs();
       if (activeJobId === id) setSaveJobName(name.trim());
     } catch { /* ignore */ } finally { setRenamingJobId(null); }
   };
 
   // ── Run ───────────────────────────────────────────────────────────────────────
+
+  // Shared handler called whenever a run reaches a terminal state (completed/failed)
+  const onRunFinished = (run: MigRun) => {
+    setPolling(false);
+    const completedStates = run.tableStates.filter(ts => ts.status === 'completed');
+    const completedKeys = completedStates.map(ts => ts.sourceKey);
+    if (completedKeys.length > 0) {
+      setMigratedTableKeys(prev => new Set([...prev, ...completedKeys]));
+      setAccumulatedTableStates(prev => {
+        const map = new Map(prev.map(s => [s.sourceKey, s]));
+        for (const ts of completedStates) map.set(ts.sourceKey, ts);
+        return [...map.values()];
+      });
+      setAccumulatedTableMaps(prev => {
+        const next = new Map(prev);
+        for (const ts of completedStates) {
+          const tm = run.tables.find(t => t.id === ts.id);
+          if (tm) next.set(ts.sourceKey, tm);
+        }
+        return next;
+      });
+      const firstTargetSchema = completedStates[0].targetKey.split('.')[0];
+      if (firstTargetSchema) setTgtDefaultSchema(firstTargetSchema);
+    }
+    reloadSrcTables();
+    reloadTgtTables();
+    void loadTableRefs();
+  };
+
   const startMigration = async () => {
     const included = tableMaps.filter(t => t.include);
     if (!included.length) return;
@@ -879,10 +978,13 @@ export default function Migration() {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/start', {
         source: srcConn, target: tgtConn, tables: included,
         jobId: activeJobId, jobName: saveJobName || 'Migration',
-      }, { headers: authHeaders() });
+      });
       setCurrentRun(data.run);
-      if (data.run.status === 'running' || data.run.status === 'pending') scheduleAdvance(data.run.id);
-      else setPolling(false);
+      if (data.run.status === 'running' || data.run.status === 'pending') {
+        scheduleAdvance(data.run.id);
+      } else {
+        onRunFinished(data.run); // completed in a single start call (small table)
+      }
     } catch { setPolling(false); }
   };
 
@@ -891,20 +993,10 @@ export default function Migration() {
   const advanceMigration = async (runId: string) => {
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/advance',
-        { runId, source: srcConn, target: tgtConn }, { headers: authHeaders() });
+        { runId, source: srcConn, target: tgtConn });
       setCurrentRun(data.run);
       if (data.run.status === 'running') scheduleAdvance(runId);
-      else {
-        setPolling(false);
-        if (data.run.status === 'completed') {
-          const completedKeys = data.run.tableStates
-            .filter(ts => ts.status === 'completed')
-            .map(ts => ts.sourceKey);
-          setMigratedTableKeys(prev => new Set([...prev, ...completedKeys]));
-          reloadSrcTables();
-          reloadTgtTables();
-        }
-      }
+      else onRunFinished(data.run);
     } catch { setPolling(false); }
   };
 
@@ -913,22 +1005,35 @@ export default function Migration() {
     setRollingBack(true);
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/rollback',
-        { runId: currentRun.id, target: tgtConn }, { headers: authHeaders() });
+        { runId: currentRun.id, target: tgtConn });
       setCurrentRun(data.run);
+      reloadTgtTables();
+      setMigratedTableKeys(new Set());
+      // Remove rolled-back tables from accumulated state
+      const rolledBackKeys = new Set(currentRun.tableStates.map(ts => ts.sourceKey));
+      setAccumulatedTableStates(prev => prev.filter(ts => !rolledBackKeys.has(ts.sourceKey)));
+      setAccumulatedTableMaps(prev => { const n = new Map(prev); for (const k of rolledBackKeys) n.delete(k); return n; });
     } catch { /* ignore */ } finally { setRollingBack(false); }
   };
 
-  const handleExportMd = () => {
+  const handleRollbackTable = async (tableId: string) => {
     if (!currentRun) return;
-    void (async () => {
-      const res = await fetch(`/api/migv2/export-md?id=${currentRun.id}`, { headers: authHeaders() });
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `migration-${currentRun.id.slice(0, 8)}.md`;
-      a.click(); URL.revokeObjectURL(url);
-    })();
+    setRollingBackTableId(tableId);
+    try {
+      const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/rollback-table',
+        { runId: currentRun.id, tableId, target: tgtConn });
+      setCurrentRun(data.run);
+      reloadTgtTables();
+      // Remove only this table's key from migrated set
+      const ts = data.run.tableStates.find(t => t.id === tableId);
+      if (ts) {
+        setMigratedTableKeys(prev => { const n = new Set(prev); n.delete(ts.sourceKey); return n; });
+        setAccumulatedTableStates(prev => prev.filter(s => s.id !== tableId));
+        setAccumulatedTableMaps(prev => { const n = new Map(prev); n.delete(ts.sourceKey); return n; });
+      }
+    } catch { showError('Per-table rollback failed'); } finally { setRollingBackTableId(null); }
   };
+
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -942,8 +1047,7 @@ export default function Migration() {
     setSrcPreviewLoading(true); setSrcPreviewCols([]); setSrcPreviewRows([]);
     void axios.post<{ columns: string[]; rows: Record<string, unknown>[] }>(
       '/api/migv2/preview',
-      { conn: srcConn, tableKey: `${selectedMap.source.schema}.${selectedMap.source.table}` },
-      { headers: authHeaders() }
+      { conn: srcConn, tableKey: `${selectedMap.source.schema}.${selectedMap.source.table}` }
     ).then(({ data }) => { setSrcPreviewCols(data.columns); setSrcPreviewRows(data.rows); })
      .catch(() => {}).finally(() => setSrcPreviewLoading(false));
   }, [selectedMapId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -956,14 +1060,14 @@ export default function Migration() {
     // Fetch target columns if not cached
     if (!tgtColsCache[tgtKey]) {
       void axios.post<{ columns: MigColumnInfo[] }>(
-        '/api/migv2/columns', { conn: tgtConn, tableKey: tgtKey }, { headers: authHeaders() }
+        '/api/migv2/columns', { conn: tgtConn, tableKey: tgtKey }
       ).then(({ data }) => setTgtColsCache(prev => ({ ...prev, [tgtKey]: data.columns })))
        .catch(() => {});
     }
     // Fetch target preview
     setTgtPreviewLoading(true); setTgtPreviewCols([]); setTgtPreviewRows([]);
     void axios.post<{ columns: string[]; rows: Record<string, unknown>[] }>(
-      '/api/migv2/preview', { conn: tgtConn, tableKey: tgtKey }, { headers: authHeaders() }
+      '/api/migv2/preview', { conn: tgtConn, tableKey: tgtKey }
     ).then(({ data }) => { setTgtPreviewCols(data.columns); setTgtPreviewRows(data.rows); })
      .catch(() => {}).finally(() => setTgtPreviewLoading(false));
   }, [selectedMapId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -979,14 +1083,14 @@ export default function Migration() {
       // Fetch cols if not cached
       if (!tgtColsCache[key]) {
         void axios.post<{ columns: MigColumnInfo[] }>(
-          '/api/migv2/columns', { conn: tgtConn, tableKey: key }, { headers: authHeaders() }
+          '/api/migv2/columns', { conn: tgtConn, tableKey: key }
         ).then(({ data }) => setTgtColsCache(prev => ({ ...prev, [key]: data.columns })))
          .catch(() => {});
       }
       // Refresh preview
       setTgtPreviewLoading(true); setTgtPreviewCols([]); setTgtPreviewRows([]);
       void axios.post<{ columns: string[]; rows: Record<string, unknown>[] }>(
-        '/api/migv2/preview', { conn: tgtConn, tableKey: key }, { headers: authHeaders() }
+        '/api/migv2/preview', { conn: tgtConn, tableKey: key }
       ).then(({ data }) => { setTgtPreviewCols(data.columns); setTgtPreviewRows(data.rows); })
        .catch(() => {}).finally(() => setTgtPreviewLoading(false));
     }
@@ -996,7 +1100,7 @@ export default function Migration() {
   return (
     <>
       <Head><title>Migration</title></Head>
-      <div className="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden">
+      <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-50 dark:bg-slate-950 overflow-hidden">
 
         {/* Header */}
         <header className="shrink-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
@@ -1020,22 +1124,11 @@ export default function Migration() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
               <Save size={12} /> Save Job
             </button>
-            <button onClick={handleExportJobMd} disabled={tableMaps.length === 0}
-              title="Export mapping configuration as Markdown"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-40 transition-colors">
-              <FileText size={12} /> Export MD
-            </button>
             <button onClick={() => void startMigration()} disabled={!canStart}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-500 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 transition-colors">
               {polling ? <><Loader2 size={12} className="animate-spin" /> Running…</> : <><Play size={12} /> Migrate</>}
             </button>
-            <div className="h-8 w-px bg-gray-200 dark:bg-slate-700" />
-            <nav className="flex items-center gap-1 text-sm">
-              <Link href="/" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Home</Link>
-              <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
-              <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Migration</span>
-            </nav>
-          </div>
+            </div>
         </header>
 
         {/* Body */}
@@ -1123,7 +1216,7 @@ export default function Migration() {
                         const included = isTableIncluded(t.schema, t.name);
                         const mapEntry = tableMaps.find(m => m.source.schema === t.schema && m.source.table === t.name);
                         const isSelected = mapEntry?.id === selectedMapId;
-                        const isMigrated = !!activeJobId && migratedTableKeys.has(`${t.schema}.${t.name}`);
+                        const isMigrated = migratedTableKeys.has(`${t.schema}.${t.name}`);
                         return (
                           <div key={`${t.schema}.${t.name}`}
                             className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-50 dark:border-slate-800/40 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
@@ -1132,9 +1225,10 @@ export default function Migration() {
                               else void toggleTable(t.schema, t.name);
                             }}>
                             <input type="checkbox" checked={included}
+                              disabled={isMigrated && included}
                               onChange={e => { e.stopPropagation(); void toggleTable(t.schema, t.name); }}
                               onClick={e => e.stopPropagation()}
-                              className="shrink-0 accent-blue-500" />
+                              className="shrink-0 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed" />
                             <Table2 size={10} className={`shrink-0 ${isMigrated ? 'text-emerald-400 dark:text-emerald-600' : 'text-gray-400'}`} />
                             <span className={`text-[11px] font-mono flex-1 truncate ${isMigrated ? 'line-through text-gray-400 dark:text-slate-600' : isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-slate-300'}`}>
                               <span className="text-[9px] font-normal">{t.schema}.</span>{t.name}
@@ -1356,18 +1450,73 @@ export default function Migration() {
                   <Layers size={10} className="text-violet-400 shrink-0" />
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex-1">Column Mapping</span>
                   {selectedMap?.target.table && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate max-w-[260px]">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate max-w-[200px]">
                         {selectedMap.source.schema}.{selectedMap.source.table}
                         <span className="text-gray-300 dark:text-slate-600 mx-1">→</span>
                         {selectedMap.target.schema}.{selectedMap.target.table}
                       </span>
+                      <div className="h-3 w-px bg-gray-200 dark:bg-slate-700" />
                       <label className="inline-flex items-center gap-1 text-[10px] text-gray-500 dark:text-slate-400">
                         <input type="checkbox" checked={selectedMap.truncateBeforeMigrate}
                           onChange={e => updateTableMap(selectedMap.id, { truncateBeforeMigrate: e.target.checked })}
                           className="accent-rose-500" />
                         Truncate
                       </label>
+                      <div className="h-3 w-px bg-gray-200 dark:bg-slate-700" />
+                      {/* Sync mode toggle */}
+                      <button
+                        onClick={() => updateTableMap(selectedMap.id, {
+                          syncMode: (selectedMap.syncMode ?? 'full') === 'incremental' ? 'full' : 'incremental',
+                          incrementalCol: null, incrementalStrategy: 'id', lastSyncedValue: null,
+                        })}
+                        className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                          (selectedMap.syncMode ?? 'full') === 'incremental'
+                            ? 'bg-violet-100 dark:bg-violet-950/40 border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 font-medium'
+                            : 'border-gray-200 dark:border-slate-600 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300'
+                        }`}
+                      >
+                        {(selectedMap.syncMode ?? 'full') === 'incremental' ? '⟳ Incremental' : '⟳ Full'}
+                      </button>
+                      {/* Incremental config — only shown when incremental mode is on */}
+                      {(selectedMap.syncMode ?? 'full') === 'incremental' && (
+                        <>
+                          <select
+                            value={selectedMap.incrementalCol ?? ''}
+                            onChange={e => updateTableMap(selectedMap.id, { incrementalCol: e.target.value || null })}
+                            className="px-1.5 py-0.5 text-[10px] rounded border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 max-w-[120px]"
+                          >
+                            <option value="">— watermark col —</option>
+                            {srcColsForSelected.map(c => (
+                              <option key={c.name} value={c.name}>{c.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={selectedMap.incrementalStrategy ?? 'id'}
+                            onChange={e => updateTableMap(selectedMap.id, { incrementalStrategy: e.target.value as 'id' | 'timestamp' })}
+                            className="px-1.5 py-0.5 text-[10px] rounded border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300"
+                          >
+                            <option value="id">by ID</option>
+                            <option value="timestamp">by Timestamp</option>
+                          </select>
+                          {selectedMap.lastSyncedValue ? (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] text-violet-600 dark:text-violet-400 font-mono">
+                              ↑ {selectedMap.lastSyncedValue.length > 20
+                                ? selectedMap.lastSyncedValue.slice(0, 20) + '…'
+                                : selectedMap.lastSyncedValue}
+                              <button
+                                onClick={() => updateTableMap(selectedMap.id, { lastSyncedValue: null })}
+                                title="Reset watermark — next run will re-sync all rows"
+                                className="text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors ml-0.5"
+                              >
+                                <X size={9} />
+                              </button>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-gray-300 dark:text-slate-600 italic">no watermark</span>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1604,8 +1753,8 @@ export default function Migration() {
                                                 className="w-full px-2.5 py-1 text-left text-[10px] text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800 italic">
                                                 — clear —
                                               </button>
-                                              {(tgtSchemas.length > 0 ? tgtSchemas : [...new Set(tgtTables.map(t => t.schema))]).map(schema => {
-                                                const tables = tgtTables.filter(t => t.schema === schema);
+                                              {[...new Set(srcTables.map(t => t.schema))].sort().map(schema => {
+                                                const tables = srcTables.filter(t => t.schema === schema);
                                                 if (!tables.length) return null;
                                                 return (
                                                   <div key={schema}>
@@ -1613,28 +1762,19 @@ export default function Migration() {
                                                       {schema}
                                                     </div>
                                                     {tables.map(t => {
-                                                      const targetKey = `${t.schema}.${t.name}`;
-                                                      const mapEntry = tableMaps.find(m => m.target.schema === t.schema && m.target.table === t.name);
-                                                      const sourceRef =
-                                                        tgtToSrcRef[targetKey] ??
-                                                        (mapEntry ? `${mapEntry.source.schema}.${mapEntry.source.table}` : targetKey);
-                                                      const resolved = !!tgtToSrcRef[targetKey] || !!mapEntry;
+                                                      const srcKey = `${t.schema}.${t.name}`;
                                                       return (
-                                                        <button key={`${t.schema}.${t.name}`}
+                                                        <button key={srcKey}
                                                           onClick={() => {
                                                             updateColumn(selectedMap.id, idx, {
-                                                              fkRef: sourceRef,
+                                                              fkRef: srcKey,
                                                               ...(tgtConn.type === 'postgresql' ? { targetType: 'UUID' } : {}),
                                                             });
                                                             setFkPickerIdx(null);
                                                           }}
                                                           className="w-full px-2.5 py-1.5 text-left hover:bg-blue-50 dark:hover:bg-blue-950/30 border-b border-gray-50 dark:border-slate-800/50 last:border-0">
                                                           <div className="text-[10px] font-mono font-medium text-gray-700 dark:text-slate-200">{t.name}</div>
-                                                          <div className="text-[9px] font-mono mt-0.5">
-                                                            {resolved
-                                                              ? <span className="text-emerald-600 dark:text-emerald-500">↩ src: {sourceRef}</span>
-                                                              : <span className="text-amber-500 dark:text-amber-400">↩ {sourceRef} (unresolved)</span>}
-                                                          </div>
+                                                          <div className="text-[9px] text-gray-400 dark:text-slate-500 mt-0.5">{t.rowCount.toLocaleString()} rows</div>
                                                         </button>
                                                       );
                                                     })}
@@ -1851,9 +1991,14 @@ export default function Migration() {
                         Load
                       </button>
                       <button onClick={() => void handleExportJobSql(job.id)}
-                        title="Export DDL SQL for all tables"
+                        title="Export DDL SQL"
                         className="p-1 rounded text-gray-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
                         <FileCode size={11} />
+                      </button>
+                      <button onClick={() => void handleExportJobMd(job.id)}
+                        title="Export Markdown"
+                        className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
+                        <FileText size={11} />
                       </button>
                       <button onClick={() => { setRenamingJobId(job.id); setRenameJobVal(job.name); }}
                         className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
@@ -1866,6 +2011,93 @@ export default function Migration() {
                     </div>
                   </div>
                 ))}
+
+                {/* ── Pending Save Log ────────────────────────── */}
+                {completedMigratedStates.length > 0 && (
+                  <>
+                    <div className="flex items-center gap-1.5 pt-2 pb-0.5">
+                      <div className="flex-1 h-px bg-gray-100 dark:bg-slate-700" />
+                      <span className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 shrink-0 uppercase tracking-wide">Pending Save</span>
+                      <button
+                        onClick={() => {
+                          const allKeys = new Set([...savedMigratedSources, ...completedMigratedStates.map(ts => ts.sourceKey)]);
+                          setSavedMigratedSources(allKeys);
+                          if (currentRun) {
+                            try { localStorage.setItem(`mig_saved_${currentRun.id}`, JSON.stringify([...allKeys])); } catch { /* ignore */ }
+                          }
+                        }}
+                        title="Clear all — mark all as saved without saving to a job"
+                        className="shrink-0 p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-gray-500 dark:hover:text-slate-400 transition-colors"
+                      >
+                        <X size={9} />
+                      </button>
+                      <div className="flex-1 h-px bg-gray-100 dark:bg-slate-700" />
+                    </div>
+                    <div className="flex items-center gap-1 px-0.5 py-0.5">
+                      <button
+                        onClick={() => {
+                          if (selectedMigratedKeys.size === completedMigratedStates.length) {
+                            setSelectedMigratedKeys(new Set());
+                          } else {
+                            setSelectedMigratedKeys(new Set(completedMigratedStates.map(ts => ts.sourceKey)));
+                          }
+                        }}
+                        className="flex items-center gap-1 text-[10px] text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+                      >
+                        <div className={`w-3 h-3 rounded border flex items-center justify-center transition-colors ${selectedMigratedKeys.size === completedMigratedStates.length ? 'bg-blue-500 border-blue-500' : 'border-gray-300 dark:border-slate-600'}`}>
+                          {selectedMigratedKeys.size === completedMigratedStates.length && <Check size={8} className="text-white" />}
+                        </div>
+                        All
+                      </button>
+                      <span className="text-[10px] text-gray-400 dark:text-slate-500 flex-1 ml-1">{completedMigratedStates.length} table{completedMigratedStates.length !== 1 ? 's' : ''}</span>
+                      {selectedMigratedKeys.size > 0 && (
+                        <button
+                          onClick={() => setShowSaveMigratedDialog(true)}
+                          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-950/60 transition-colors"
+                        >
+                          <Save size={9} /> Save {selectedMigratedKeys.size}
+                        </button>
+                      )}
+                    </div>
+                    <div className="space-y-0.5">
+                      {completedMigratedStates.map(ts => {
+                        const isSelected = selectedMigratedKeys.has(ts.sourceKey);
+                        const isRollingBackThis = rollingBackTableId === ts.id;
+                        const canRollback = currentRun && (currentRun.status === 'completed' || currentRun.status === 'failed');
+                        return (
+                          <div
+                            key={ts.id}
+                            onClick={() => setSelectedMigratedKeys(prev => {
+                              const next = new Set(prev);
+                              if (next.has(ts.sourceKey)) next.delete(ts.sourceKey); else next.add(ts.sourceKey);
+                              return next;
+                            })}
+                            className={`flex items-center gap-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900' : 'border border-transparent hover:bg-gray-50 dark:hover:bg-slate-800/50'}`}
+                          >
+                            <div className={`w-3 h-3 rounded border shrink-0 flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-300 dark:border-slate-600'}`}>
+                              {isSelected && <Check size={8} className="text-white" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] text-gray-700 dark:text-slate-300 truncate font-mono">{ts.sourceKey}</p>
+                              <p className="text-[9px] text-gray-400 dark:text-slate-500">{ts.rowsMigrated.toLocaleString()} rows</p>
+                            </div>
+                            {canRollback && (
+                              <button
+                                onClick={e => { e.stopPropagation(); void handleRollbackTable(ts.id); }}
+                                disabled={!!rollingBackTableId}
+                                title={`Rollback ${ts.sourceKey}`}
+                                className="shrink-0 p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-40 transition-colors"
+                              >
+                                {isRollingBackThis ? <Loader2 size={9} className="animate-spin" /> : <RotateCcw size={9} />}
+                              </button>
+                            )}
+                            <CheckCircle2 size={10} className="text-emerald-500 shrink-0" />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <div className="flex-1 flex items-center justify-center">
@@ -1894,10 +2126,6 @@ export default function Migration() {
                   {rollingBack ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />} Rollback
                 </button>
               )}
-              <button onClick={handleExportMd}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 transition-colors">
-                <FileText size={11} /> Export MD
-              </button>
               <button onClick={() => setCurrentRun(null)}
                 className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
                 <X size={13} />
@@ -1908,11 +2136,23 @@ export default function Migration() {
               <div className="shrink-0 w-56 border-r border-gray-100 dark:border-slate-800 overflow-auto panel-scroll p-2 space-y-2">
                 {currentRun.tableStates.map(ts => {
                   const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(ts.rowsMigrated / ts.rowsSource * 100)) : 0;
+                  const isRollingBackThis = rollingBackTableId === ts.id;
+                  const canRollbackThis = (ts.status === 'completed' || ts.status === 'failed') && !polling;
                   return (
                     <div key={ts.id}>
                       <div className="flex items-center gap-1 mb-0.5">
                         <span className="text-[10px] font-mono text-gray-700 dark:text-slate-300 flex-1 truncate">{ts.sourceKey}</span>
                         <StatusBadge status={ts.status} />
+                        {canRollbackThis && (
+                          <button
+                            onClick={() => void handleRollbackTable(ts.id)}
+                            disabled={!!rollingBackTableId}
+                            title={`Rollback ${ts.sourceKey}`}
+                            className="shrink-0 p-0.5 rounded text-gray-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-40 transition-colors"
+                          >
+                            {isRollingBackThis ? <Loader2 size={9} className="animate-spin" /> : <RotateCcw size={9} />}
+                          </button>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5">
                         <div className="flex-1 h-1 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden">
@@ -1939,6 +2179,61 @@ export default function Migration() {
           </div>
         )}
       </div>
+
+      {/* Save Pending Tables dialog */}
+      {showSaveMigratedDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 p-6 w-full max-w-sm shadow-xl">
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-1">Save to Job</h3>
+            <p className="text-xs text-gray-400 dark:text-slate-500 mb-4">{selectedMigratedKeys.size} table{selectedMigratedKeys.size !== 1 ? 's' : ''} selected</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">New job name</label>
+                <input
+                  value={saveMigratedJobName}
+                  onChange={e => { setSaveMigratedJobName(e.target.value); setSaveMigratedTargetJobId(null); }}
+                  placeholder="e.g. Dev → Staging"
+                  disabled={!!saveMigratedTargetJobId}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40"
+                />
+              </div>
+              {jobs.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Or add to existing job</label>
+                  <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-gray-200 dark:border-slate-600 p-1.5 bg-gray-50 dark:bg-slate-900/50">
+                    {jobs.map(j => (
+                      <button key={j.id} type="button"
+                        onClick={() => setSaveMigratedTargetJobId(prev => prev === j.id ? null : j.id)}
+                        className={`w-full text-left px-2 py-1.5 rounded-md text-[11px] transition-colors ${saveMigratedTargetJobId === j.id ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium' : 'hover:bg-white dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300'}`}>
+                        <span className="font-medium">{j.name}</span>
+                        <span className="ml-1.5 text-gray-400 dark:text-slate-500">{j.tableCount} tables · v{j.version}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {saveMigratedTargetJobId && (
+                    <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-1">
+                      Selected tables will be appended to this job (duplicates skipped).
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => { setShowSaveMigratedDialog(false); setSaveMigratedJobName(''); setSaveMigratedTargetJobId(null); }}
+                className="flex-1 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleSaveMigratedTables()}
+                disabled={savingMigrated || (!saveMigratedTargetJobId && !saveMigratedJobName.trim())}
+                className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                {savingMigrated ? 'Saving…' : saveMigratedTargetJobId ? 'Add to Job' : 'Create Job'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* FK picker backdrop */}
       {fkPickerIdx !== null && (

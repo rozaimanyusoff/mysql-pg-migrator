@@ -1,11 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { verifyAccessToken } from '../../../../lib/auth-store';
 import { loadJob, saveJob, deleteJob } from '../../../../lib/migv2/job-store';
 import type { MigJob } from '../../../../lib/migv2/types';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  if (!verifyAccessToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const { id } = req.query as { id: string };
 
