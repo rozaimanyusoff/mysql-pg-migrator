@@ -8,11 +8,11 @@ import {
 } from 'lucide-react';
 
 const modules = [
+  { key: 'migration',    title: 'Migration',           desc: 'Map and migrate data across any two databases (MySQL ↔ PostgreSQL), with serial→UUID conversion, rollback, and job management.', href: '/migration', available: true, Icon: Database },
   { key: 'schema-studio', title: 'Schema Studio',   desc: 'Inspect, design and refactor PostgreSQL schemas visually. Scan live DB, get PK/FK/constraint suggestions, interactive ERD with drag-to-create FK.', href: '/schema-studio', available: true, Icon: Columns },
   { key: 'export-import',title: 'Export & Import',     desc: 'Export local data and import to production environment safely.',                 href: '/export-import',available: true,  Icon: UploadCloud },
   { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '/normalizer',   available: true,  Icon: Wand2 },
   { key: 'schema-explorer', title: 'Schema Explorer', desc: 'Browse any database, inspect columns, visualise ERD, and export migration SQL or XLSX.', href: '/schema-explorer', available: true, Icon: Network },
-  { key: 'migration',    title: 'Migration',           desc: 'Map and migrate data across any two databases (MySQL ↔ PostgreSQL), with serial→UUID conversion, rollback, and job management.', href: '/migration', available: true, Icon: Database },
   { key: 'flow-designer', title: 'Flow-to-Database Designer', desc: 'Design your database starting from a business process flow. Get entities, relationships, ERD, PostgreSQL DDL, and Drizzle ORM schema.', href: '/flow-designer', available: true, Icon: Workflow },
 ];
 
