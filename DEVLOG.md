@@ -1211,3 +1211,16 @@
   - Left panel in Refactor mode shows connection + DB + schema picker with amber styling; status shows table count after load
   - CLAUDE.md updated with commands section and full module map
   - Status: done
+
+- **revision** — Schema Studio: UX overhaul — remove Create/Import modes, bottom exec console, table list in saved jobs
+  - Removed Create / Import mode toggle from left panel; module now only shows the refactor connection picker (Load PG Schema)
+  - `activeParsedTable` locked to `null`; `ColumnEditorPanel` always uses live `tables` state and `handleUpdateTable`
+  - Empty state message updated to guide user to load a PG schema
+  - Toolbar: removed Execute modal button; added inline "Apply Changes" button (amber) that only appears when `refactorLoaded && alterStmts.length > 0`; table count + change count badges added
+  - Bottom execution console: `execConsoleLog`, `execConsoleOpen`, `execLogEndRef` state; `applyAlterDDL()` now writes to bottom console and auto-opens it; console shows ok/fail per statement with auto-scroll, close button
+  - `extractTablesFromSql()` helper: regex-extracts table names from ALTER/CREATE SQL; used in `JobGroupCard` expanded section to show table list before run history
+  - `handleSaveJob`: refactor mode saves `alterText` (ALTER SQL) as `schema_sql` + `target_database` / `connection_label` from refactor connection; non-refactor saves generated DDL
+  - `handleLoadJob`: detects ALTER SQL by checking if sql starts with ALTER — skips `parseSqlToTables` in that case
+  - `handleSaveClick`: removed import-mode schema-assign check
+  - Files: `src/pages/schema-studio.tsx`
+  - Status: done

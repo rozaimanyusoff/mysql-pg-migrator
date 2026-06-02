@@ -447,6 +447,13 @@ function timeAgo(iso: string): string {
   return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
 }
 
+// Extract table names from ALTER/CREATE SQL for display in saved job cards
+function extractTablesFromSql(sql: string | null): string[] {
+  if (!sql) return [];
+  const matches = [...sql.matchAll(/(?:ALTER|CREATE|DROP)\s+TABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:"[^"]*"\.)?"?([^"\s(;]+)"?/gi)];
+  return [...new Set(matches.map(m => m[1]).filter(Boolean))];
+}
+
 function groupJobs(jobs: SchemaJob[]): JobGroup[] {
   const map = new Map<string, SchemaJob[]>();
   for (const j of jobs) {
@@ -611,8 +618,25 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive }: {
       </div>
       {/* Expanded: run list */}
       {expanded && (
-        <div className="mb-1.5 border border-gray-100 dark:border-slate-700 rounded overflow-hidden space-y-px">
-          {group.runs.map(run => <JobRunCard key={run.id} job={run} />)}
+        <div className="mb-1.5 space-y-1">
+          {/* Tables refactored in this job */}
+          {(() => {
+            const tbls = extractTablesFromSql(latest.schema_sql);
+            return tbls.length > 0 ? (
+              <div className="border border-gray-100 dark:border-slate-700 rounded overflow-hidden">
+                {tbls.map(t => (
+                  <div key={t} className="flex items-center gap-1.5 px-2 py-1 border-b border-gray-50 dark:border-slate-800 last:border-0">
+                    <Table2 size={9} className="text-blue-400 shrink-0" />
+                    <span className="text-[10px] font-mono text-gray-600 dark:text-slate-300 truncate">{t}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null;
+          })()}
+          {/* Run history */}
+          <div className="border border-gray-100 dark:border-slate-700 rounded overflow-hidden space-y-px">
+            {group.runs.map(run => <JobRunCard key={run.id} job={run} />)}
+          </div>
         </div>
       )}
       {/* Row 4: actions */}
@@ -2468,6 +2492,10 @@ function SchemaDesignerInner() {
   const [alterLog, setAlterLog] = useState<ExecLogLine[]>([]);
   const [alterApplying, setAlterApplying] = useState(false);
   const [alterCopied, setAlterCopied] = useState(false);
+  // Bottom execution console
+  const [execConsoleLog, setExecConsoleLog] = useState<ExecLogLine[]>([]);
+  const [execConsoleOpen, setExecConsoleOpen] = useState(false);
+  const execLogEndRef = useRef<HTMLDivElement>(null);
   const refactorConn = connections.find(c => c.id === refactorConnId) ?? null;
   const alterStmts = useMemo(
     () => (designerMode === 'refactor' && originalTables.length > 0)
@@ -2580,12 +2608,16 @@ function SchemaDesignerInner() {
     if (!refactorConn || !alterStmts.length) return;
     setAlterApplying(true);
     setAlterLog([]);
+    setExecConsoleLog([]);
+    setExecConsoleOpen(true);
     try {
       const { data } = await axios.post<{ log: ExecLogLine[] }>(
         '/api/schema-designer/execute',
         { conn: connToExplorerConn(refactorConn, refactorDatabase), statements: alterStmts }
       );
       setAlterLog(data.log);
+      setExecConsoleLog(data.log);
+      setTimeout(() => execLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
       // Refresh: reload the schema so originalTables updates to the new state
       if (data.log.every(l => l.ok)) {
         await loadRefactorSchema();
@@ -2766,9 +2798,7 @@ function SchemaDesignerInner() {
   };
 
   const selectedTable = tables.find(t => t.id === selectedTableId) ?? null;
-  const activeParsedTable = designerMode === 'import'
-    ? (importParsed.find(t => t.id === selectedParsedId) ?? null)
-    : null;
+  const activeParsedTable = null; // import mode removed
   const activeEditTable = activeParsedTable ?? selectedTable;
   const activeEditTableDdl = activeEditTable
     ? generateDDL([activeEditTable], 'postgresql').join('\n\n')
@@ -2867,11 +2897,7 @@ function SchemaDesignerInner() {
   useEffect(() => { void loadJobs(); }, [loadJobs]);
 
   const handleSaveClick = () => {
-    if (designerMode === 'import' && tables.some(t => t.schema === 'public')) {
-      setShowSchemaAssign(true);
-    } else {
-      setShowSaveModal(true);
-    }
+    setShowSaveModal(true);
   };
 
   const handleSchemaAssigned = (schema: string) => {
@@ -2882,13 +2908,20 @@ function SchemaDesignerInner() {
   };
 
   const handleSaveJob = async (name: string, desc: string) => {
-    const schemaSql = generateDDL(tables, 'postgresql').join('\n\n');
+    // In refactor mode: save ALTER SQL + connection meta; otherwise save generated DDL
+    const schemaSql = refactorLoaded && alterStmts.length > 0
+      ? alterText
+      : generateDDL(tables).join('\n\n');
+    const targetDb = refactorLoaded ? refactorDatabase : '';
+    const connLabel = refactorLoaded ? (refactorConn?.label ?? '') : '';
     try {
       await axios.post('/api/schema-generator/jobs', {
         job_name: name,
         description: desc,
         schema_sql: schemaSql,
         seed_sql: seedSql,
+        target_database: targetDb || null,
+        connection_label: connLabel || null,
         status: 'pending',
         log: null,
       });
@@ -2899,9 +2932,12 @@ function SchemaDesignerInner() {
         description: desc,
         schema_sql: schemaSql,
         seed_sql: seedSql,
+        target_database: targetDb || null,
+        connection_label: connLabel || null,
         status: 'pending',
         log: null,
       }));
+      setIsDirty(false);
     } catch { /* ignore */ } finally { setShowSaveModal(false); }
   };
 
@@ -2927,16 +2963,21 @@ function SchemaDesignerInner() {
   };
 
   const handleLoadJob = (job: SchemaJob) => {
-    const parsed = job.schema_sql ? parseSqlToTables(job.schema_sql) : [];
-    const schemas = [...new Set(parsed.map(t => t.schema || 'public'))];
-    setTables(parsed);
-    setDesignerSchemas(schemas.length ? schemas : []);
-    setSelectedTableId(parsed.length ? parsed[0].id : null);
-    setImportParsed([]);
+    // Jobs saved in refactor mode have ALTER SQL — show it but don't parse as tables
+    // Jobs saved with DDL have CREATE TABLE — parse back to tables
+    const parsedTables = job.schema_sql && !job.schema_sql.trim().startsWith('ALTER')
+      ? parseSqlToTables(job.schema_sql)
+      : [];
+    const schemas = [...new Set(parsedTables.map(t => t.schema || 'public'))];
+    if (parsedTables.length > 0) {
+      setTables(parsedTables);
+      setDesignerSchemas(schemas.length ? schemas : []);
+      setSelectedTableId(parsedTables[0].id);
+    }
     setSelectedParsedId(null);
-    setDesignerMode('create');
     setSeedSql(job.seed_sql ?? '');
     setLoadedJob(job);
+    setIsDirty(false);
   };
 
   return (
@@ -2964,13 +3005,16 @@ function SchemaDesignerInner() {
       {/* ── Toolbar ── */}
       <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-1.5">
         <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 dark:text-slate-300">
-          <Table2 size={13} className="text-blue-500" /> Designer
+          <Columns size={13} className="text-blue-500" /> Schema Studio
           {tables.length > 0 && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">{tables.length}</span>
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">{tables.length} tables</span>
+          )}
+          {refactorLoaded && alterStmts.length > 0 && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400">{alterStmts.length} changes</span>
           )}
         </div>
         <div className="ml-auto pr-1 flex items-center gap-2">
-          {(tables.length > 0 || importParsed.length > 0) && (
+          {tables.length > 0 && (
             <>
               <button
                 onClick={handleSaveClick}
@@ -2979,7 +3023,7 @@ function SchemaDesignerInner() {
                     ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
                     : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
               >
-                <Save size={12} /> {isDirty && loadedJob ? 'Save Changes' : 'Save'}
+                <Save size={12} /> {isDirty && loadedJob ? 'Save Changes' : 'Save Job'}
               </button>
               <button
                 onClick={() => setShowErdPreview(true)}
@@ -2987,12 +3031,13 @@ function SchemaDesignerInner() {
               >
                 <Network size={12} /> ERD Preview
               </button>
-              {loadedJob && (
+              {refactorLoaded && alterStmts.length > 0 && (
                 <button
-                  onClick={() => { setExecModalJob(loadedJob); setShowExecModal(true); }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                  onClick={() => void applyAlterDDL()}
+                  disabled={alterApplying}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
                 >
-                  <Play size={12} /> Execute
+                  {alterApplying ? <><Loader2 size={12} className="animate-spin" /> Applying…</> : <><Play size={12} /> Apply Changes</>}
                 </button>
               )}
             </>
@@ -3007,53 +3052,11 @@ function SchemaDesignerInner() {
         {/* Designer */}
         <div className="flex h-full overflow-hidden">
 
-            {/* ── Left: Schema & Table tree ── */}
+            {/* ── Left: Connection picker + Table tree ── */}
             <div className="w-56 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
 
-              {/* Mode toggle + action buttons */}
-              <div className="shrink-0 border-b border-gray-200 dark:border-slate-800 p-2 space-y-2">
-                <div className="flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
-                  <button
-                    onClick={() => { setDesignerMode('create'); setSelectedParsedId(null); }}
-                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium transition-colors ${designerMode === 'create' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
-                  >
-                    <Plus size={11} /> Create
-                  </button>
-                  <button
-                    onClick={() => setDesignerMode('import')}
-                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium border-l border-gray-200 dark:border-slate-700 transition-colors ${designerMode === 'import' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
-                  >
-                    <Upload size={11} /> Import
-                  </button>
-                  <button
-                    onClick={() => { setDesignerMode('refactor'); setSelectedParsedId(null); }}
-                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium border-l border-gray-200 dark:border-slate-700 transition-colors ${designerMode === 'refactor' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
-                  >
-                    <Pencil size={11} /> Refactor
-                  </button>
-                </div>
-                {designerMode === 'create' && (
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={() => setShowNewSchema(true)}
-                      className="flex-1 inline-flex items-center justify-center gap-1 py-1 text-[11px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
-                    >
-                      <Layers size={10} /> Schema
-                    </button>
-                    <button
-                      onClick={() => { setNewTableDefaultSchema(undefined); setShowNewTable(true); }}
-                      disabled={designerSchemas.length === 0}
-                      title={designerSchemas.length === 0 ? 'Create a schema first' : 'Add table'}
-                      className="flex-1 inline-flex items-center justify-center gap-1 py-1 text-[11px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <Table2 size={10} /> Table
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Refactor — connection + DB + schema picker */}
-              {designerMode === 'refactor' && (
+              {/* Connection + DB + schema picker (always shown) */}
+              {(
                 <div className="shrink-0 border-b border-amber-200 dark:border-amber-800/40 bg-amber-50/40 dark:bg-amber-900/10 p-2 space-y-1.5">
                   <select
                     value={refactorConnId ?? ''}
@@ -3115,41 +3118,6 @@ function SchemaDesignerInner() {
                 </div>
               )}
 
-              {/* Pending import — shown immediately below toggle */}
-              {designerMode === 'import' && importParsed.length > 0 && (
-                <div className="shrink-0 border-b border-dashed border-gray-300 dark:border-slate-700 bg-emerald-50/30 dark:bg-emerald-900/10">
-                  <div className="flex items-center justify-between px-3 py-2">
-                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">
-                      Parsed · {importParsed.length}
-                    </span>
-                    <button
-                      onClick={handleApplyImport}
-                      className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
-                    >
-                      Merge
-                    </button>
-                  </div>
-                  <div className="sidebar-scroll overflow-y-auto">
-                    {importParsed.map(t => (
-                      <div
-                        key={t.id}
-                        onClick={() => setSelectedParsedId(t.id)}
-                        className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors
-                          ${selectedParsedId === t.id
-                            ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
-                            : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
-                      >
-                        <Table2 size={11} className={`shrink-0 ${selectedParsedId === t.id ? 'text-emerald-500' : 'text-emerald-500 dark:text-emerald-700'}`} />
-                        <span className="flex-1 text-[11px] font-medium truncate">
-                          {t.schema !== 'public' ? `${t.schema}.` : ''}{t.name}
-                        </span>
-                        <span className="text-[10px] text-gray-400 dark:text-slate-600">{t.columns.length}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {/* Tree */}
               <div className="flex-1 overflow-hidden flex flex-col min-h-0">
                 <TableTreePanel
@@ -3159,7 +3127,7 @@ function SchemaDesignerInner() {
                   onSelect={setSelectedTableId}
                   onDelete={handleDeleteTable}
                   onAddTableFor={handleAddTableFor}
-                  allowAddTable={designerMode === 'create' || designerMode === 'refactor'}
+                  allowAddTable={refactorLoaded}
                 />
               </div>
             </div>
@@ -3461,21 +3429,16 @@ function SchemaDesignerInner() {
                 {activeEditTable ? (
                   <ColumnEditorPanel
                     table={activeEditTable}
-                    tables={activeParsedTable ? [...tables, ...importParsed] : tables}
-                    onUpdate={activeParsedTable ? handleUpdateParsedTable : handleUpdateTable}
-                    onDeleteTable={() => activeParsedTable
-                      ? handleDeleteParsedTable(activeParsedTable.id)
-                      : handleDeleteTable(activeEditTable.id)
-                    }
+                    tables={tables}
+                    onUpdate={handleUpdateTable}
+                    onDeleteTable={() => handleDeleteTable(activeEditTable.id)}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
                     <Columns size={32} className="text-gray-200 dark:text-slate-700" />
                     <p className="text-sm text-gray-400 dark:text-slate-500">
-                      {designerMode === 'import'
-                        ? (importParsed.length > 0
-                          ? 'Select a parsed table to review and edit its columns.'
-                          : 'Paste or upload SQL / CSV / XLSX to import tables.')
+                      {!refactorLoaded
+                        ? 'Load a PostgreSQL schema from the left panel to start refactoring.'
                         : designerSchemas.length === 0
                           ? 'Create a schema in the left panel first.'
                           : tables.length === 0
@@ -3670,6 +3633,43 @@ function SchemaDesignerInner() {
 
         </div>
       </div>
+
+      {/* ── Execution Console (bottom panel) ── */}
+      {execConsoleOpen && (
+        <div className="shrink-0 border-t border-gray-200 dark:border-slate-700 bg-slate-950 flex flex-col" style={{ height: 200 }}>
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800 shrink-0">
+            <Play size={11} className="text-emerald-400 shrink-0" />
+            <span className="text-[11px] font-semibold text-slate-300 flex-1">Execution Console</span>
+            {execConsoleLog.length > 0 && (
+              <>
+                <span className="text-[10px] text-emerald-400">{execConsoleLog.filter(l => l.ok).length} ok</span>
+                {execConsoleLog.some(l => !l.ok) && (
+                  <span className="text-[10px] text-rose-400">{execConsoleLog.filter(l => !l.ok).length} failed</span>
+                )}
+              </>
+            )}
+            {alterApplying && <Loader2 size={10} className="animate-spin text-amber-400 shrink-0" />}
+            <button
+              onClick={() => { setExecConsoleLog([]); setExecConsoleOpen(false); }}
+              className="p-0.5 rounded text-slate-600 hover:text-slate-400 transition-colors"
+            >
+              <X size={11} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto panel-scroll p-3 space-y-0.5 font-mono">
+            {execConsoleLog.length === 0 && alterApplying && (
+              <p className="text-[10px] text-slate-500 animate-pulse">Running statements…</p>
+            )}
+            {execConsoleLog.map((line, i) => (
+              <div key={i} className={`flex items-start gap-2 text-[10px] leading-relaxed ${line.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {line.ok ? <CheckCircle2 size={9} className="mt-0.5 shrink-0" /> : <XCircle size={9} className="mt-0.5 shrink-0" />}
+                <span className="break-all">{line.text}</span>
+              </div>
+            ))}
+            <div ref={execLogEndRef} />
+          </div>
+        </div>
+      )}
 
       {/* Dialogs */}
       {showNewTable && (
