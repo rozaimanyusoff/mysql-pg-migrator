@@ -1162,4 +1162,20 @@
 
 - **implement** — DEVLOG.md created; CLAUDE.md instruction added
   - All past implementation history recorded by date
+
+## 2026-06-02
+
+- **fix** — Migration: saved jobs now support tables from multiple source databases (follow-up: saving no longer replaces other-DB tables)
+  - Root cause: `TableMap.source` only stored `{ schema, table }` with no database context; the runner used a single global `source.database` for all tables; saved jobs stored one `sourceMeta.database`, losing per-table DB provenance on load
+  - Added `sourceDatabase?: string` to `TableMap` (also `MigJobTableSummary`) — stamped with the active `srcDb` whenever a table is checked into the mapping
+  - Runner (`src/lib/migv2/runner.ts`): `advanceRun` now builds a per-table `tableSource` conn by overriding `database` from `tableMap.sourceDatabase` when it differs from the global source conn; applies to `countRows`, `readChunk`, and `getMaxValue` calls
+  - UI (`src/pages/migration.tsx`): `doSaveJob` derives `sourceMeta.database` from the first included table's `sourceDatabase` instead of `srcConn.database`; `toggleTable` stamps `sourceDatabase: srcDb` on new map entries
+  - DB badge shown in column mapping header and saved-job table list so the source DB is visible at a glance
+  - `src/lib/migv2/job-store.ts`: `listJobs` includes `sourceDatabase` in the summary projection
+  - Follow-up fix: removed `setTableMaps([])` and `setColsCache({})` from the `srcDb` change effect — switching DB within the same connection no longer wipes existing table mappings (other-DB tables are preserved); these resets now only happen on `srcConnId` change (different server)
+  - Added `srcConnForMap` helper: preview fetches use per-map source DB, not the global `srcConn.database`
+  - Follow-up fix: Pending Save list now excludes tables already present in any saved job — `savedJobSourceKeys` memo built from `jobs[].tables[].source`, filtered out of `completedMigratedStates` alongside `savedMigratedSources`
+  - Follow-up fix: `doSaveJob` now merges instead of replacing — when updating an existing job, existing tables added via pending-save (different session IDs) are preserved; session `tableMaps` entries replace only their matching IDs; prevents "Save Job" from wiping pending-save tables
+  - Follow-up fix: `doSaveJob` now clears pending-save entries after saving — computes `savedSourceKeys` from merged tables and adds matching `accumulatedTableStates` to `savedMigratedSources` (with localStorage sync), so the pending list clears immediately
+  - Follow-up fix: `handleSaveMigratedTables` syncs `tableMaps` when saving to the active job — new pending-save tables are merged into the session's `tableMaps` so subsequent "Save Job" clicks see the full table list and won't overwrite them
   - Status: done

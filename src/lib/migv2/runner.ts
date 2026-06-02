@@ -370,9 +370,14 @@ export async function advanceRun(
           : undefined;
       const useUpsert = isIncremental && tableMap.incrementalStrategy === 'timestamp';
 
+      // Per-table source conn: override database from tableMap.sourceDatabase if set
+      const tableSource: MigConn = tableMap.sourceDatabase && tableMap.sourceDatabase !== source.database
+        ? { ...source, database: tableMap.sourceDatabase }
+        : source;
+
       // Count source rows (once)
       if (ts.rowsSource === 0 && ts.offset === 0) {
-        ts.rowsSource = await countRows(source, tableMap.source.schema, tableMap.source.table, filter);
+        ts.rowsSource = await countRows(tableSource, tableMap.source.schema, tableMap.source.table, filter);
         run.totalRows = run.tableStates.reduce((s, t) => s + t.rowsSource, 0);
         log(`[${ts.sourceKey}] source rows: ${ts.rowsSource}${isIncremental ? ` (incremental, since ${tableMap.lastSyncedValue ?? 'beginning'})` : ''}`);
       }
@@ -413,7 +418,7 @@ export async function advanceRun(
 
       // Read chunk
       const chunk = await readChunk(
-        source, tableMap.source.schema, tableMap.source.table,
+        tableSource, tableMap.source.schema, tableMap.source.table,
         srcCols, ts.offset, CHUNK_SIZE, filter
       );
 
@@ -424,7 +429,7 @@ export async function advanceRun(
         run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
         // Record watermark even when no new rows (source max may have advanced)
         if (isIncremental && tableMap.incrementalCol) {
-          const wm = await getMaxValue(source, tableMap.source.schema, tableMap.source.table, tableMap.incrementalCol);
+          const wm = await getMaxValue(tableSource, tableMap.source.schema, tableMap.source.table, tableMap.incrementalCol);
           ts.newWatermark = wm;
           if (wm) log(`[${ts.sourceKey}] watermark updated → ${wm} (no new rows)`);
         }
@@ -461,7 +466,7 @@ export async function advanceRun(
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         // Record new high-water mark for incremental sync
         if (isIncremental && tableMap.incrementalCol) {
-          const wm = await getMaxValue(source, tableMap.source.schema, tableMap.source.table, tableMap.incrementalCol);
+          const wm = await getMaxValue(tableSource, tableMap.source.schema, tableMap.source.table, tableMap.incrementalCol);
           ts.newWatermark = wm;
           if (wm) log(`[${ts.sourceKey}] watermark updated → ${wm}`);
         }

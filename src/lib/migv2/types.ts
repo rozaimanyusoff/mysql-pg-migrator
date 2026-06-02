@@ -46,6 +46,7 @@ export interface TableMap {
   id: string;           // stable local id (uuid)
   include: boolean;
   source: { schema: string; table: string };
+  sourceDatabase?: string; // which source DB this table was added from (multi-DB support)
   target: { schema: string; table: string };
   columns: ColumnMap[];
   truncateBeforeMigrate: boolean;
@@ -75,6 +76,7 @@ export interface MigJobTableSummary {
   id: string;
   include: boolean;
   source: { schema: string; table: string };
+  sourceDatabase?: string;
   target: { schema: string; table: string };
 }
 
