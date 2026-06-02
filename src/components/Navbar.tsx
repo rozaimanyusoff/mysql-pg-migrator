@@ -4,7 +4,7 @@ import { ChevronRight } from 'lucide-react';
 
 const MODULE_LABELS: Record<string, string> = {
   '/migration': 'Migration',
-  '/schema-designer': 'Schema Designer',
+  '/schema-studio': 'Schema Studio',
   '/schema-generator': 'Schema Generator',
   '/export-import': 'Export & Import',
   '/schema-explorer': 'Schema Explorer',

@@ -1180,6 +1180,17 @@
   - Follow-up fix: `handleSaveMigratedTables` syncs `tableMaps` when saving to the active job — new pending-save tables are merged into the session's `tableMaps` so subsequent "Save Job" clicks see the full table list and won't overwrite them
   - Status: done
 
+- **implement** — Schema Studio: full module revision of Schema Designer
+  - Route renamed `/schema-designer` → `/schema-studio`; old route redirects; navbar, index, db-setup, schema-explorer updated; page title updated
+  - **PostgreSQL only**: `DbType` reduced to `'postgresql'`; `connToPayload` hardcoded; MySQL DDL branches (`AUTO_INCREMENT`, `ENGINE=InnoDB`, `CHANGE`, `MODIFY COLUMN`, `RENAME TABLE`) removed from `generateDDL` and `generateAlterDDL`; connection pickers filter to `db_type === 'postgres'`
+  - **ERD hover highlight**: `DesignerErdCrowsFoot` turns amber + thicker stroke on hover; `DesignerErdTableNode` header turns amber and border glows; `ErdPreviewInner` handles `onEdgeMouseEnter/Leave` by setting `highlighted` on matching edges + nodes via `setEdges`/`setNodes`
+  - **Interactive FK creation**: per-column source handles added to `DesignerErdTableNode` (appear on column row hover); `ErdPreviewInner` `onConnect` fires `onFkCreate(sourceTable, colId, targetTable)`; main component `handleFkCreate` updates `tableMaps` — sets `fkRef = targetTable.targetPk` on the dragged column
+  - **Scan + Suggest**: new API `src/pages/api/schema-studio/analyze.ts` — scans schema and returns `SchemaSuggestion[]` for missing PK, potential FK by naming convention (`*_id` → target table), nullable PK, `VARCHAR` → `TEXT`, `TIMESTAMP` → `TIMESTAMPTZ`; suggestions panel in right panel with dismiss-per-suggestion; "Scan Suggestions" button appears after schema is loaded
+  - **Right panel tabs** (Refactor mode): Jobs / Suggest / ALTER — tab bar replaces single panel; badge counts per tab
+  - **Global saved jobs**: `loadJobs` now fetches both schema-generator jobs and migration jobs in parallel; migration jobs shown as read-only reference section in saved jobs panel
+  - Files: `src/pages/schema-studio.tsx` (new), `src/pages/schema-designer.tsx` (redirect), `src/pages/api/schema-studio/analyze.ts` (new), navbar, index, db-setup, schema-explorer updated
+  - Status: done
+
 - **revision** — Schema Designer: saved jobs panel redesigned to match Migration module style
   - `JobGroupCard` rewritten: compact card (border-highlight for active job), inline rename input, status badge on name row, runs count + timeAgo + target_db meta, expand-to-show-runs, action row with Load / Rename / Delete buttons and `active` pill
   - `isActive` prop added to `JobGroupCard` — highlighted when `loadedJob.job_name === group.job_name`

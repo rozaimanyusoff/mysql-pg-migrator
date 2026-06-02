@@ -1032,7 +1032,7 @@ export default function SchemaExplorer() {
         description: `Imported from FK Advisor — ${appliedCount} inferred FK relationship(s) applied`,
         schema_sql: ddl,
       });
-      void router.push('/schema-designer');
+      void router.push('/schema-studio');
     } catch { /* ignore */ } finally {
       setSendingToDesigner(false);
     }

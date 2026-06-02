@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 
 const modules = [
-  { key: 'schema-designer', title: 'Schema Designer',   desc: 'Design schemas and tables visually, import from SQL/XLSX/CSV or a live DB, and execute DDL against PostgreSQL or MySQL.', href: '/schema-designer', available: true, Icon: Columns },
+  { key: 'schema-studio', title: 'Schema Studio',   desc: 'Inspect, design and refactor PostgreSQL schemas visually. Scan live DB, get PK/FK/constraint suggestions, interactive ERD with drag-to-create FK.', href: '/schema-studio', available: true, Icon: Columns },
   { key: 'export-import',title: 'Export & Import',     desc: 'Export local data and import to production environment safely.',                 href: '/export-import',available: true,  Icon: UploadCloud },
   { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '/normalizer',   available: true,  Icon: Wand2 },
   { key: 'schema-explorer', title: 'Schema Explorer', desc: 'Browse any database, inspect columns, visualise ERD, and export migration SQL or XLSX.', href: '/schema-explorer', available: true, Icon: Network },
