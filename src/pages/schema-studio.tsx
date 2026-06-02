@@ -2617,9 +2617,9 @@ function SchemaDesignerInner() {
       setAlterLog(data.log);
       setExecConsoleLog(data.log);
       setTimeout(() => execLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
-      // Refresh: reload the schema so originalTables updates to the new state
       if (data.log.every(l => l.ok)) {
         await loadRefactorSchema();
+        void rescanSuggestions(); // auto-rescan after successful apply
       }
     } catch { showError('Apply failed'); } finally { setAlterApplying(false); }
   };
@@ -2860,14 +2860,29 @@ function SchemaDesignerInner() {
       setExecConsoleLog(data.log);
       setTimeout(() => execLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
       if (data.log.every(l => l.ok)) {
-        // Dismiss the suggestion and reload schema to reflect the change
         setDismissedSuggestions(prev => new Set([...prev, s.id]));
         await loadRefactorSchema();
+        void rescanSuggestions(); // auto-rescan after applying suggestion
       }
     } catch { showError('Apply failed'); } finally { setApplyingSuggestionId(null); }
   };
 
-  // Scan live DB for schema suggestions
+  // Silent rescan (no tab switch, no reset of dismissed set) — used after apply
+  const rescanSuggestions = async () => {
+    if (!refactorConnId || !refactorDatabase) return;
+    const row = connections.find(c => c.id === refactorConnId);
+    if (!row) return;
+    try {
+      const { data } = await axios.post<{ suggestions: import('./api/schema-studio/analyze').SchemaSuggestion[] }>(
+        '/api/schema-studio/analyze',
+        { conn: connToExplorerConn(row, refactorDatabase), schema: refactorSchema }
+      );
+      setSuggestions(data.suggestions);
+      setDismissedSuggestions(new Set()); // fresh dismissed state for new scan results
+    } catch { /* silent */ }
+  };
+
+  // Manual scan — resets state, switches to Suggest tab
   const handleScanSuggestions = async () => {
     if (!refactorConnId || !refactorDatabase) return;
     const row = connections.find(c => c.id === refactorConnId);
@@ -3490,8 +3505,8 @@ function SchemaDesignerInner() {
 
               {/* Panel content — only when open */}
               {rightPanelOpen && designerMode === 'refactor' && rightPanelTab === 'suggest' ? (
-                /* ── Refactor: Suggestions panel ── */
-                <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
+                /* ── Refactor: Suggestions panel (grouped by table) ── */
+                <div className="flex-1 overflow-auto panel-scroll p-2 space-y-3">
                   {activeSuggestions.length === 0 ? (
                     <div className="py-8 text-center">
                       <CheckCircle2 size={22} className="mx-auto text-emerald-300 dark:text-emerald-700 mb-2" />
@@ -3499,56 +3514,66 @@ function SchemaDesignerInner() {
                         {suggestions.length === 0 ? 'Load a schema then click Scan Suggestions.' : 'All suggestions dismissed.'}
                       </p>
                     </div>
-                  ) : activeSuggestions.map(s => {
-                    const isApplying = applyingSuggestionId === s.id;
-                    const kindCls = s.kind === 'missing_pk' || s.kind === 'nullable_pk'
-                      ? { border: 'border-rose-200 dark:border-rose-800/50 bg-rose-50/50 dark:bg-rose-950/10', badge: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400' }
-                      : s.kind === 'potential_fk'
-                      ? { border: 'border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/10', badge: 'bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400' }
-                      : { border: 'border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/10', badge: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400' };
-                    return (
-                      <div key={s.id} className={`rounded-lg border p-2 text-[11px] space-y-1.5 ${kindCls.border}`}>
-                        {/* Header: kind badge + dismiss */}
-                        <div className="flex items-center gap-1">
-                          <span className={`shrink-0 text-[9px] font-bold uppercase px-1 py-0.5 rounded ${kindCls.badge}`}>
-                            {s.kind.replace(/_/g, ' ')}
-                          </span>
-                          {s.table && <span className="text-[10px] font-mono text-gray-500 dark:text-slate-400 truncate flex-1">{s.table}</span>}
-                          <button
-                            onClick={() => setDismissedSuggestions(prev => new Set([...prev, s.id]))}
-                            title="Ignore"
-                            className="p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-gray-500 dark:hover:text-slate-400 transition-colors shrink-0"
-                          ><X size={9} /></button>
+                  ) : (() => {
+                    // Group by table
+                    const byTable = new Map<string, typeof activeSuggestions>();
+                    for (const s of activeSuggestions) {
+                      const tbl = s.table ?? '—';
+                      byTable.set(tbl, [...(byTable.get(tbl) ?? []), s]);
+                    }
+                    return [...byTable.entries()].map(([tbl, items]) => (
+                      <div key={tbl} className="space-y-1">
+                        {/* Table header */}
+                        <div className="flex items-center gap-1.5">
+                          <Table2 size={10} className="text-blue-400 shrink-0" />
+                          <span className="text-[10px] font-semibold font-mono text-gray-700 dark:text-slate-300 flex-1 truncate">{tbl}</span>
+                          <span className="text-[9px] px-1 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400">{items.length}</span>
                         </div>
-                        {/* Message */}
-                        <p className="text-gray-700 dark:text-slate-300 leading-snug">{s.message}</p>
-                        {/* SQL preview */}
-                        {s.alterSql && (
-                          <div className="bg-slate-900 dark:bg-slate-950 rounded px-2 py-1.5">
-                            <code className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap break-all">{s.alterSql}</code>
-                          </div>
-                        )}
-                        {/* Actions */}
-                        <div className="flex items-center gap-1 pt-0.5">
-                          {s.alterSql && (
-                            <button
-                              onClick={() => void handleApplySuggestion(s)}
-                              disabled={!!applyingSuggestionId}
-                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
-                            >
-                              {isApplying ? <><Loader2 size={9} className="animate-spin" /> Applying…</> : <><Check size={9} /> Apply</>}
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setDismissedSuggestions(prev => new Set([...prev, s.id]))}
-                            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            Ignore
-                          </button>
-                        </div>
+                        {/* Suggestions for this table */}
+                        {items.map(s => {
+                          const isApplying = applyingSuggestionId === s.id;
+                          const kindCls = s.kind === 'missing_pk' || s.kind === 'nullable_pk'
+                            ? { border: 'border-rose-200 dark:border-rose-800/50 bg-rose-50/50 dark:bg-rose-950/10', badge: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400' }
+                            : s.kind === 'potential_fk'
+                            ? { border: 'border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/10', badge: 'bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400' }
+                            : { border: 'border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/10', badge: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400' };
+                          return (
+                            <div key={s.id} className={`rounded-lg border p-2 text-[11px] space-y-1.5 ml-3 ${kindCls.border}`}>
+                              <div className="flex items-center gap-1">
+                                <span className={`shrink-0 text-[9px] font-bold uppercase px-1 py-0.5 rounded ${kindCls.badge}`}>
+                                  {s.kind.replace(/_/g, ' ')}
+                                </span>
+                                {s.column && <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate flex-1">.{s.column}</span>}
+                              </div>
+                              <p className="text-gray-700 dark:text-slate-300 leading-snug">{s.message}</p>
+                              {s.alterSql && (
+                                <div className="bg-slate-900 dark:bg-slate-950 rounded px-2 py-1.5">
+                                  <code className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap break-all">{s.alterSql}</code>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1 pt-0.5">
+                                {s.alterSql && (
+                                  <button
+                                    onClick={() => void handleApplySuggestion(s)}
+                                    disabled={!!applyingSuggestionId}
+                                    className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
+                                  >
+                                    {isApplying ? <><Loader2 size={9} className="animate-spin" /> Applying…</> : <><Check size={9} /> Apply</>}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setDismissedSuggestions(prev => new Set([...prev, s.id]))}
+                                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
+                                >
+                                  Ignore
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    ));
+                  })()}
                 </div>
               ) : rightPanelOpen && designerMode === 'refactor' && rightPanelTab !== 'alter' ? (
                 /* ── Refactor + Jobs tab: show saved jobs ── */
