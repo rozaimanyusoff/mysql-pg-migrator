@@ -2844,6 +2844,29 @@ function SchemaDesignerInner() {
     setTables(p => p.map(t => t.id === updated.id ? updated : t));
   };
 
+  // Apply a single suggestion's ALTER SQL directly to the live DB
+  const [applyingSuggestionId, setApplyingSuggestionId] = useState<string | null>(null);
+
+  const handleApplySuggestion = async (s: import('./api/schema-studio/analyze').SchemaSuggestion) => {
+    if (!s.alterSql || !refactorConn || !refactorDatabase) return;
+    setApplyingSuggestionId(s.id);
+    setExecConsoleOpen(true);
+    setExecConsoleLog([]);
+    try {
+      const { data } = await axios.post<{ log: ExecLogLine[] }>(
+        '/api/schema-designer/execute',
+        { conn: connToExplorerConn(refactorConn, refactorDatabase), statements: [s.alterSql] }
+      );
+      setExecConsoleLog(data.log);
+      setTimeout(() => execLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+      if (data.log.every(l => l.ok)) {
+        // Dismiss the suggestion and reload schema to reflect the change
+        setDismissedSuggestions(prev => new Set([...prev, s.id]));
+        await loadRefactorSchema();
+      }
+    } catch { showError('Apply failed'); } finally { setApplyingSuggestionId(null); }
+  };
+
   // Scan live DB for schema suggestions
   const handleScanSuggestions = async () => {
     if (!refactorConnId || !refactorDatabase) return;
@@ -3476,21 +3499,56 @@ function SchemaDesignerInner() {
                         {suggestions.length === 0 ? 'Load a schema then click Scan Suggestions.' : 'All suggestions dismissed.'}
                       </p>
                     </div>
-                  ) : activeSuggestions.map(s => (
-                    <div key={s.id} className={`rounded-lg border p-2 text-[11px] space-y-1 ${s.kind === 'missing_pk' || s.kind === 'nullable_pk' ? 'border-rose-200 dark:border-rose-800/50 bg-rose-50/50 dark:bg-rose-950/10' : s.kind === 'potential_fk' ? 'border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/10' : 'border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/10'}`}>
-                      <div className="flex items-start gap-1">
-                        <span className={`shrink-0 text-[9px] font-bold uppercase px-1 py-0.5 rounded ${s.kind === 'missing_pk' || s.kind === 'nullable_pk' ? 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400' : s.kind === 'potential_fk' ? 'bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400' : 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400'}`}>{s.kind.replace(/_/g, ' ')}</span>
-                        <button onClick={() => setDismissedSuggestions(prev => new Set([...prev, s.id]))} title="Dismiss" className="ml-auto p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-gray-500 transition-colors shrink-0"><X size={9} /></button>
-                      </div>
-                      <p className="text-gray-700 dark:text-slate-300 leading-snug">{s.message}</p>
-                      <p className="text-gray-400 dark:text-slate-500 italic">{s.suggestedFix}</p>
-                      {s.alterSql && (
-                        <div className="mt-1 bg-slate-900 dark:bg-slate-950 rounded px-2 py-1.5">
-                          <code className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap break-all">{s.alterSql}</code>
+                  ) : activeSuggestions.map(s => {
+                    const isApplying = applyingSuggestionId === s.id;
+                    const kindCls = s.kind === 'missing_pk' || s.kind === 'nullable_pk'
+                      ? { border: 'border-rose-200 dark:border-rose-800/50 bg-rose-50/50 dark:bg-rose-950/10', badge: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400' }
+                      : s.kind === 'potential_fk'
+                      ? { border: 'border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/10', badge: 'bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400' }
+                      : { border: 'border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/10', badge: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400' };
+                    return (
+                      <div key={s.id} className={`rounded-lg border p-2 text-[11px] space-y-1.5 ${kindCls.border}`}>
+                        {/* Header: kind badge + dismiss */}
+                        <div className="flex items-center gap-1">
+                          <span className={`shrink-0 text-[9px] font-bold uppercase px-1 py-0.5 rounded ${kindCls.badge}`}>
+                            {s.kind.replace(/_/g, ' ')}
+                          </span>
+                          {s.table && <span className="text-[10px] font-mono text-gray-500 dark:text-slate-400 truncate flex-1">{s.table}</span>}
+                          <button
+                            onClick={() => setDismissedSuggestions(prev => new Set([...prev, s.id]))}
+                            title="Ignore"
+                            className="p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-gray-500 dark:hover:text-slate-400 transition-colors shrink-0"
+                          ><X size={9} /></button>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        {/* Message */}
+                        <p className="text-gray-700 dark:text-slate-300 leading-snug">{s.message}</p>
+                        {/* SQL preview */}
+                        {s.alterSql && (
+                          <div className="bg-slate-900 dark:bg-slate-950 rounded px-2 py-1.5">
+                            <code className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap break-all">{s.alterSql}</code>
+                          </div>
+                        )}
+                        {/* Actions */}
+                        <div className="flex items-center gap-1 pt-0.5">
+                          {s.alterSql && (
+                            <button
+                              onClick={() => void handleApplySuggestion(s)}
+                              disabled={!!applyingSuggestionId}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
+                            >
+                              {isApplying ? <><Loader2 size={9} className="animate-spin" /> Applying…</> : <><Check size={9} /> Apply</>}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setDismissedSuggestions(prev => new Set([...prev, s.id]))}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
+                          >
+                            Ignore
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : rightPanelOpen && designerMode === 'refactor' && rightPanelTab !== 'alter' ? (
                 /* ── Refactor + Jobs tab: show saved jobs ── */
