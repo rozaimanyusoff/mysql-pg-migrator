@@ -183,6 +183,20 @@ const MIGRATION_GUIDE_SECTIONS = [
       'After a completed run the target table list refreshes automatically and migrated source tables are marked with strikethrough.',
     ],
   },
+  {
+    title: 'Incremental sync & zero-downtime cutover',
+    icon: '⑧',
+    color: 'text-cyan-600 dark:text-cyan-400',
+    body: [
+      'Incremental sync lets you keep the target in sync with the source while your app is still running on the old DB — so the final cutover window is seconds, not hours.',
+      'Enable it per-table: click the ⟳ Full toggle on any table row to switch to ⟳ Incremental. Pick a watermark column (e.g. id or updated_at) and a strategy — "by ID" for append-only tables, "by Timestamp" for tables with an updated_at column (uses UPSERT instead of INSERT).',
+      'Phase 1 — Full migration: run a normal full migration to copy all existing rows to the target. Save the job once done.',
+      'Phase 2 — Delta syncs: with Incremental mode on, every subsequent run only fetches rows WHERE watermark_col > last_synced_value. The watermark advances automatically after each run. Repeat this as often as needed while the source DB is live.',
+      'Phase 3 — Cutover: stop writes to the source (put app in maintenance mode or pause writes), run one final incremental sync to capture the last few rows, verify row counts match, then switch the app connection to PostgreSQL.',
+      'Reset watermark — click the ✕ next to the watermark value to force a full re-sync on the next run. Use this if rows were updated retroactively and the timestamp strategy may have missed them.',
+      'Strategy choice — use "by ID" when rows are only ever inserted (never updated). Use "by Timestamp" when rows can be updated after insert; this will UPSERT on conflict using the target PK.',
+    ],
+  },
 ] as const;
 
 function MigrationGuidePopover() {
