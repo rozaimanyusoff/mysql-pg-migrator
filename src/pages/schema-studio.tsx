@@ -2442,7 +2442,6 @@ function SchemaDesignerInner() {
   const [jobs, setJobs] = useState<SchemaJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
   // Migration jobs (global reference — read-only in this module)
-  const [migJobs, setMigJobs] = useState<import('../lib/migv2/types').MigJobSummary[]>([]);
 
   // Right panel (collapsible) — tabs: 'jobs' | 'suggest'
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -2885,12 +2884,8 @@ function SchemaDesignerInner() {
   const loadJobs = useCallback(async () => {
     setLoadingJobs(true);
     try {
-      const [schemaRes, migRes] = await Promise.allSettled([
-        axios.get<{ jobs: SchemaJob[] }>('/api/schema-generator/jobs'),
-        axios.get<{ jobs: import('../lib/migv2/types').MigJobSummary[] }>('/api/migv2/jobs'),
-      ]);
-      if (schemaRes.status === 'fulfilled') setJobs(schemaRes.value.data.jobs ?? []);
-      if (migRes.status === 'fulfilled') setMigJobs(migRes.value.data.jobs ?? []);
+      const { data } = await axios.get<{ jobs: SchemaJob[] }>('/api/schema-generator/jobs');
+      setJobs(data.jobs ?? []);
     } catch { /* ignore */ } finally { setLoadingJobs(false); }
   }, []);
 
@@ -3589,26 +3584,6 @@ function SchemaDesignerInner() {
                       isActive={loadedJob?.job_name === g.job_name}
                     />
                   ))}
-                  {/* Migration jobs — read-only reference */}
-                  {migJobs.length > 0 && (
-                    <>
-                      <div className="flex items-center gap-1.5 pt-1 pb-0.5">
-                        <div className="flex-1 h-px bg-gray-100 dark:bg-slate-800" />
-                        <span className="text-[9px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide shrink-0">Migration Jobs</span>
-                        <div className="flex-1 h-px bg-gray-100 dark:bg-slate-800" />
-                      </div>
-                      {migJobs.map(j => (
-                        <div key={j.id} className="rounded-lg border border-gray-200 dark:border-slate-700 p-2 bg-white dark:bg-slate-800/50">
-                          <div className="flex items-start gap-1 mb-0.5">
-                            <p className="text-[11px] font-medium text-gray-700 dark:text-slate-300 flex-1 truncate">{j.name}</p>
-                            <span className="text-[10px] text-gray-400 shrink-0">v{j.version}</span>
-                          </div>
-                          {j.description && <p className="text-[10px] text-gray-400 dark:text-slate-500 truncate mb-0.5">{j.description}</p>}
-                          <p className="text-[10px] text-gray-400">{j.tableCount} tables · {new Date(j.updatedAt).toLocaleDateString()}</p>
-                        </div>
-                      ))}
-                    </>
-                  )}
                 </div>
               )}
             </div>
