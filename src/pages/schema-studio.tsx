@@ -2443,9 +2443,9 @@ function SchemaDesignerInner() {
   const [loadingJobs, setLoadingJobs] = useState(false);
   // Migration jobs (global reference — read-only in this module)
 
-  // Right panel (collapsible) — tabs: 'jobs' | 'suggest'
+  // Right panel (collapsible) — tabs: 'jobs' | 'suggest' | 'alter'
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [rightPanelTab, setRightPanelTab] = useState<'jobs' | 'suggest'>('jobs');
+  const [rightPanelTab, setRightPanelTab] = useState<'jobs' | 'suggest' | 'alter'>('jobs');
 
   // Scan suggestions
   const [suggestions, setSuggestions] = useState<import('./api/schema-studio/analyze').SchemaSuggestion[]>([]);
@@ -2454,7 +2454,7 @@ function SchemaDesignerInner() {
   const activeSuggestions = suggestions.filter(s => !dismissedSuggestions.has(s.id));
 
   // Left panel mode toggle
-  const [designerMode, setDesignerMode] = useState<'create' | 'import' | 'refactor'>('create');
+  const [designerMode, setDesignerMode] = useState<'create' | 'import' | 'refactor'>('refactor');
   const [importSource, setImportSource] = useState<'paste' | 'sql-file' | 'csv' | 'xlsx' | 'db'>('paste');
   const [importSql, setImportSql] = useState('');
   const [importCsvName, setImportCsvName] = useState('');
@@ -2497,10 +2497,10 @@ function SchemaDesignerInner() {
   const execLogEndRef = useRef<HTMLDivElement>(null);
   const refactorConn = connections.find(c => c.id === refactorConnId) ?? null;
   const alterStmts = useMemo(
-    () => (designerMode === 'refactor' && originalTables.length > 0)
-      ? generateAlterDDL(originalTables, tables, 'postgresql')
+    () => originalTables.length > 0
+      ? generateAlterDDL(originalTables, tables)
       : [],
-    [designerMode, originalTables, tables, refactorConn]
+    [originalTables, tables]
   );
   const alterText = alterStmts.join('\n');
 
@@ -2791,7 +2791,7 @@ function SchemaDesignerInner() {
       const schemas = [...new Set(imported.map(t => t.schema))];
       setDesignerSchemas(p => [...new Set([...p, ...schemas])]);
       setImportDbSelected(new Set());
-      setDesignerMode('create');
+      setDesignerMode('refactor');
     }
     setImportDbImporting(false);
   };
@@ -3443,8 +3443,8 @@ function SchemaDesignerInner() {
                       <Info size={9} /> Suggest
                       {activeSuggestions.length > 0 && <span className="ml-0.5 px-1 rounded-full bg-violet-500 text-white text-[9px]">{activeSuggestions.length}</span>}
                     </button>
-                    <button onClick={() => setRightPanelTab('alter'  as 'jobs')}
-                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${rightPanelTab === ('alter' as 'jobs') ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300' : 'text-gray-400 hover:text-amber-600 dark:hover:text-amber-400'}`}>
+                    <button onClick={() => setRightPanelTab('alter')}
+                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${rightPanelTab === 'alter' ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300' : 'text-gray-400 hover:text-amber-600 dark:hover:text-amber-400'}`}>
                       <Pencil size={9} /> ALTER
                       {alterStmts.length > 0 && <span className="ml-0.5 px-1 rounded-full bg-amber-500 text-white text-[9px]">{alterStmts.length}</span>}
                     </button>
@@ -3492,7 +3492,7 @@ function SchemaDesignerInner() {
                     </div>
                   ))}
                 </div>
-              ) : rightPanelOpen && designerMode === 'refactor' && rightPanelTab !== ('alter' as 'jobs') ? (
+              ) : rightPanelOpen && designerMode === 'refactor' && rightPanelTab !== 'alter' ? (
                 /* ── Refactor + Jobs tab: show saved jobs ── */
                 <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
                   {groupedJobs.length === 0 && !loadingJobs ? (
