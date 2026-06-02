@@ -2984,24 +2984,6 @@ function SchemaDesignerInner() {
     <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-50 dark:bg-slate-950 overflow-hidden">
       <Head><title>Schema Studio — DB Tools</title></Head>
 
-      {/* ── Header ── */}
-      <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
-
-        {/* Title */}
-        <div className="flex items-center gap-3 shrink-0">
-          <Columns size={18} className="text-blue-600" />
-          <div>
-            <h1 className="font-bold text-sm text-gray-900 dark:text-slate-100">Schema Designer</h1>
-            <p className="text-xs text-gray-500 dark:text-slate-400">Design tables, import from SQL / XLSX / CSV, and execute DDL</p>
-          </div>
-        </div>
-
-        <span className="shrink-0 inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium border bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-100 dark:border-blue-900">
-          PostgreSQL
-        </span>
-
-      </header>
-
       {/* ── Toolbar ── */}
       <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-1.5">
         <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 dark:text-slate-300">
