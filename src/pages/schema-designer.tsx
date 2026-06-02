@@ -46,6 +46,10 @@ interface DesignerColumn {
   defaultValue: string;
   comment: string;
   fkRef: string; // "referencedTable.referencedColumn"
+  // Refactor mode: original DB name (pre-rename snapshot); constraint names for DROP
+  _originalName?: string;
+  _fkConstraintName?: string;
+  _uniqueConstraintName?: string;
 }
 
 interface DesignerTable {
@@ -53,6 +57,8 @@ interface DesignerTable {
   schema: string;
   name: string;
   columns: DesignerColumn[];
+  // Refactor mode: original DB name (pre-rename snapshot)
+  _originalName?: string;
 }
 
 interface ExecLogLine {
@@ -299,6 +305,147 @@ function generateDDL(tables: DesignerTable[], dbType: DbType): string[] {
       for (const c of t.columns) if (c.comment) stmts.push(`COMMENT ON COLUMN ${tq}.${qi(c.name, dbType)} IS '${c.comment.replace(/'/g, "''")}';`);
     }
   }
+  return stmts;
+}
+
+// ─── ALTER DDL diff (Refactor mode) ──────────────────────────────────────────
+
+function generateAlterDDL(original: DesignerTable[], current: DesignerTable[], dbType: DbType): string[] {
+  const stmts: string[] = [];
+  const origById = new Map(original.map(t => [t.id, t]));
+  const curById  = new Map(current.map(t => [t.id, t]));
+
+  // Drop tables removed in current
+  for (const orig of original) {
+    if (!curById.has(orig.id)) {
+      const oName = orig._originalName ?? orig.name;
+      stmts.push(`DROP TABLE IF EXISTS ${qi(orig.schema || 'public', dbType)}.${qi(oName, dbType)};`);
+    }
+  }
+
+  // Alter existing + create new tables
+  for (const cur of current) {
+    const orig = origById.get(cur.id);
+    const schema = cur.schema || 'public';
+    const sq = qi(schema, dbType);
+
+    if (!orig) {
+      // New table — emit full CREATE TABLE
+      const ddl = generateDDL([cur], dbType);
+      stmts.push(...ddl);
+      continue;
+    }
+
+    const origTableName = orig._originalName ?? orig.name;
+    let curTableName = cur.name; // may have been renamed
+
+    // Rename table
+    if (origTableName !== cur.name) {
+      if (dbType === 'postgresql') {
+        stmts.push(`ALTER TABLE ${sq}.${qi(origTableName, dbType)} RENAME TO ${qi(cur.name, dbType)};`);
+      } else {
+        stmts.push(`RENAME TABLE ${qi(origTableName, dbType)} TO ${qi(cur.name, dbType)};`);
+      }
+      curTableName = cur.name;
+    }
+
+    const tq = `${sq}.${qi(curTableName, dbType)}`;
+    const origColById = new Map(orig.columns.map(c => [c.id, c]));
+    const curColById  = new Map(cur.columns.map(c => [c.id, c]));
+
+    // Drop removed columns
+    for (const oc of orig.columns) {
+      if (!curColById.has(oc.id)) {
+        stmts.push(`ALTER TABLE ${tq} DROP COLUMN IF EXISTS ${qi(oc._originalName ?? oc.name, dbType)};`);
+      }
+    }
+
+    for (const cc of cur.columns) {
+      const oc = origColById.get(cc.id);
+
+      if (!oc) {
+        // New column
+        const type = resolveType(cc, dbType);
+        const notNull = (!cc.nullable || cc.isPk) ? ' NOT NULL' : '';
+        const def = cc.defaultValue ? ` DEFAULT ${/^(NOW|CURRENT_TIMESTAMP|NULL|TRUE|FALSE|\d+)\b/i.test(cc.defaultValue) || cc.defaultValue.includes('()') ? cc.defaultValue : `'${cc.defaultValue}'`}` : '';
+        stmts.push(`ALTER TABLE ${tq} ADD COLUMN ${qi(cc.name, dbType)} ${type}${notNull}${def};`);
+        if (cc.isUnique && !cc.isPk) stmts.push(`ALTER TABLE ${tq} ADD UNIQUE (${qi(cc.name, dbType)});`);
+        if (cc.fkRef) {
+          const [rt, rc] = cc.fkRef.split('.');
+          if (rt && rc) stmts.push(`ALTER TABLE ${tq} ADD FOREIGN KEY (${qi(cc.name, dbType)}) REFERENCES ${qi(rt, dbType)}(${qi(rc, dbType)});`);
+        }
+        continue;
+      }
+
+      const ocName = oc._originalName ?? oc.name;
+
+      // Rename column
+      if (ocName !== cc.name) {
+        if (dbType === 'postgresql') {
+          stmts.push(`ALTER TABLE ${tq} RENAME COLUMN ${qi(ocName, dbType)} TO ${qi(cc.name, dbType)};`);
+        } else {
+          stmts.push(`ALTER TABLE ${tq} CHANGE ${qi(ocName, dbType)} ${qi(cc.name, dbType)} ${resolveType(cc, dbType)};`);
+        }
+      }
+
+      // Type change (PG only — MySQL uses MODIFY which needs full col spec)
+      const origType = resolveType(oc, dbType);
+      const curType  = resolveType(cc, dbType);
+      if (origType !== curType) {
+        if (dbType === 'postgresql') {
+          stmts.push(`ALTER TABLE ${tq} ALTER COLUMN ${qi(cc.name, dbType)} TYPE ${curType} USING ${qi(cc.name, dbType)}::${curType};`);
+        } else if (ocName === cc.name) {
+          // MySQL MODIFY handles type + nullability + default in one statement
+          const notNull = (!cc.nullable || cc.isPk) ? ' NOT NULL' : '';
+          const def = cc.defaultValue ? ` DEFAULT ${/^(NOW|CURRENT_TIMESTAMP|NULL|TRUE|FALSE|\d+)\b/i.test(cc.defaultValue) || cc.defaultValue.includes('()') ? cc.defaultValue : `'${cc.defaultValue}'`}` : '';
+          stmts.push(`ALTER TABLE ${tq} MODIFY COLUMN ${qi(cc.name, dbType)} ${curType}${notNull}${def};`);
+        }
+      }
+
+      // NOT NULL toggle (PG only — MySQL handled via MODIFY above)
+      if (dbType === 'postgresql' && oc.nullable !== cc.nullable && origType === curType) {
+        stmts.push(`ALTER TABLE ${tq} ALTER COLUMN ${qi(cc.name, dbType)} ${cc.nullable ? 'DROP NOT NULL' : 'SET NOT NULL'};`);
+      }
+
+      // Default change
+      if (oc.defaultValue !== cc.defaultValue) {
+        if (cc.defaultValue) {
+          const dv = /^(NOW|CURRENT_TIMESTAMP|NULL|TRUE|FALSE|\d+)\b/i.test(cc.defaultValue) || cc.defaultValue.includes('()') ? cc.defaultValue : `'${cc.defaultValue}'`;
+          stmts.push(`ALTER TABLE ${tq} ALTER COLUMN ${qi(cc.name, dbType)} SET DEFAULT ${dv};`);
+        } else {
+          stmts.push(`ALTER TABLE ${tq} ALTER COLUMN ${qi(cc.name, dbType)} DROP DEFAULT;`);
+        }
+      }
+
+      // UNIQUE: drop if removed
+      if (oc.isUnique && !cc.isUnique && !cc.isPk) {
+        if (oc._uniqueConstraintName) {
+          stmts.push(`ALTER TABLE ${tq} DROP CONSTRAINT ${qi(oc._uniqueConstraintName, dbType)};`);
+        } else if (dbType === 'mysql') {
+          stmts.push(`ALTER TABLE ${tq} DROP INDEX ${qi(cc.name, dbType)};`);
+        }
+      }
+      // UNIQUE: add if new
+      if (!oc.isUnique && cc.isUnique && !cc.isPk) {
+        stmts.push(`ALTER TABLE ${tq} ADD UNIQUE (${qi(cc.name, dbType)});`);
+      }
+
+      // FK: drop if removed or changed
+      if (oc.fkRef && oc.fkRef !== cc.fkRef) {
+        if (oc._fkConstraintName) {
+          stmts.push(`ALTER TABLE ${tq} DROP CONSTRAINT ${qi(oc._fkConstraintName, dbType)};`);
+        } else if (dbType === 'mysql') {
+          stmts.push(`-- DROP FOREIGN KEY on ${cc.name}: constraint name unknown, check INFORMATION_SCHEMA`);
+        }
+      }
+      // FK: add if new or changed
+      if (cc.fkRef && cc.fkRef !== oc.fkRef) {
+        const [rt, rc] = cc.fkRef.split('.');
+        if (rt && rc) stmts.push(`ALTER TABLE ${tq} ADD FOREIGN KEY (${qi(cc.name, dbType)}) REFERENCES ${qi(rt, dbType)}(${qi(rc, dbType)});`);
+      }
+    }
+  }
+
   return stmts;
 }
 
@@ -2185,7 +2332,7 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 function SchemaDesignerInner() {
-  const { showWarning } = useAlert();
+  const { showWarning, showError } = useAlert();
 
   // Connections (kept for ImportPanel + ExecuteJobModal)
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
@@ -2228,7 +2375,7 @@ function SchemaDesignerInner() {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
 
   // Left panel mode toggle
-  const [designerMode, setDesignerMode] = useState<'create' | 'import'>('create');
+  const [designerMode, setDesignerMode] = useState<'create' | 'import' | 'refactor'>('create');
   const [importSource, setImportSource] = useState<'paste' | 'sql-file' | 'csv' | 'xlsx' | 'db'>('paste');
   const [importSql, setImportSql] = useState('');
   const [importCsvName, setImportCsvName] = useState('');
@@ -2251,6 +2398,144 @@ function SchemaDesignerInner() {
   const [importDbLoadingSchemas, setImportDbLoadingSchemas] = useState(false);
   const [importDbImporting, setImportDbImporting] = useState(false);
   const importDbConn = connections.find(c => c.id === importDbConnId) ?? null;
+
+  // ── Refactor mode state ───────────────────────────────────────────────────────
+  const [originalTables, setOriginalTables] = useState<DesignerTable[]>([]);
+  const [refactorConnId, setRefactorConnId] = useState<number | null>(null);
+  const [refactorDbs, setRefactorDbs] = useState<string[]>([]);
+  const [refactorDatabase, setRefactorDatabase] = useState('');
+  const [refactorSchema, setRefactorSchema] = useState('public');
+  const [refactorSchemas, setRefactorSchemas] = useState<string[]>([]);
+  const [refactorLoading, setRefactorLoading] = useState(false);
+  const [refactorLoadingDbs, setRefactorLoadingDbs] = useState(false);
+  const [refactorLoaded, setRefactorLoaded] = useState(false);
+  const [alterLog, setAlterLog] = useState<ExecLogLine[]>([]);
+  const [alterApplying, setAlterApplying] = useState(false);
+  const [alterCopied, setAlterCopied] = useState(false);
+  const refactorConn = connections.find(c => c.id === refactorConnId) ?? null;
+  const alterStmts = useMemo(
+    () => (designerMode === 'refactor' && originalTables.length > 0)
+      ? generateAlterDDL(originalTables, tables, (refactorConn?.db_type === 'postgres' ? 'postgresql' : 'mysql'))
+      : [],
+    [designerMode, originalTables, tables, refactorConn]
+  );
+  const alterText = alterStmts.join('\n');
+
+  // Load databases for refactor connection
+  useEffect(() => {
+    if (!refactorConnId) { setRefactorDbs([]); setRefactorDatabase(''); setRefactorSchemas([]); return; }
+    const row = connections.find(c => c.id === refactorConnId);
+    if (!row) return;
+    setRefactorLoadingDbs(true);
+    void axios.post<{ databases: string[] }>(
+      '/api/schema-designer/databases',
+      { type: row.db_type === 'postgres' ? 'postgresql' : 'mysql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' }
+    ).then(({ data }) => {
+      setRefactorDbs(data.databases);
+      setRefactorDatabase(data.databases.includes(row.database_name) ? row.database_name : data.databases[0] ?? '');
+    }).catch(() => {}).finally(() => setRefactorLoadingDbs(false));
+  }, [refactorConnId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load schemas when refactor database changes
+  useEffect(() => {
+    if (!refactorConnId || !refactorDatabase) { setRefactorSchemas([]); return; }
+    const row = connections.find(c => c.id === refactorConnId);
+    if (!row || row.db_type !== 'postgres') return;
+    void axios.post<{ schemas: SchemaInfo[] }>(
+      '/api/schema-explorer/schemas',
+      connToExplorerConn(row, refactorDatabase)
+    ).then(({ data }) => {
+      const names = data.schemas.map((s: SchemaInfo) => s.schema);
+      setRefactorSchemas(names);
+      if (!names.includes(refactorSchema)) setRefactorSchema(names[0] ?? 'public');
+    }).catch(() => {});
+  }, [refactorConnId, refactorDatabase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadRefactorSchema = async () => {
+    if (!refactorConnId || !refactorDatabase) return;
+    const row = connections.find(c => c.id === refactorConnId);
+    if (!row) return;
+    const dbType: DbType = row.db_type === 'postgres' ? 'postgresql' : 'mysql';
+    const explorerConn = connToExplorerConn(row, refactorDatabase);
+    setRefactorLoading(true);
+    setRefactorLoaded(false);
+    setAlterLog([]);
+    try {
+      // 1. Fetch tables in the chosen schema
+      const { data: tablesData } = await axios.post<{ tables: TableInfo[] }>(
+        '/api/schema-explorer/tables', { conn: explorerConn, schema: refactorSchema }
+      );
+      // 2. For each table, fetch columns + constraint names in parallel
+      const loaded: DesignerTable[] = await Promise.all(
+        tablesData.tables.map(async (ti) => {
+          const tableKey = `${refactorSchema}.${ti.name}`;
+          const [colsRes, constraintsRes] = await Promise.all([
+            axios.post<{ columns: ColumnInfo[] }>('/api/schema-explorer/columns', { conn: explorerConn, tableKey }),
+            axios.post<import('./api/schema-designer/constraints').ColumnConstraints>(
+              '/api/schema-designer/constraints', { conn: explorerConn, schema: refactorSchema, table: ti.name }
+            ).catch(() => ({ data: { fkConstraints: [], uniqueConstraints: [], checkConstraints: [] } })),
+          ]);
+          const fkMap = new Map(constraintsRes.data.fkConstraints.map(f => [f.colName, f.constraintName]));
+          const uqMap = new Map(constraintsRes.data.uniqueConstraints.map(u => [u.colName, u.constraintName]));
+          const cols: DesignerColumn[] = colsRes.data.columns.map(c => {
+            const rawType = c.fullType.toUpperCase().replace(/\bCHARACTER VARYING\b/, 'VARCHAR').replace(/\bINTEGER\b/, 'INTEGER');
+            const typeMatch = rawType.match(/^([A-Z0-9_ ]+?)(?:\((\d+(?:,\d+)?)\))?$/);
+            return {
+              id: crypto.randomUUID(),
+              name: c.name,
+              _originalName: c.name,
+              type: typeMatch?.[1]?.trim() ?? rawType,
+              length: typeMatch?.[2] ?? (c.maxLength ? String(c.maxLength) : ''),
+              nullable: c.nullable,
+              isPk: c.isPk,
+              isUnique: c.isUnique,
+              isAutoIncrement: /serial|auto_increment/i.test(c.dataType) || /^nextval\(/i.test(c.defaultValue ?? ''),
+              defaultValue: c.defaultValue ?? '',
+              comment: c.comment ?? '',
+              fkRef: c.fkRef ? c.fkRef.split('.').slice(1).join('.') : '', // "schema.table.col" → "table.col"
+              _fkConstraintName: fkMap.get(c.name),
+              _uniqueConstraintName: uqMap.get(c.name),
+            };
+          });
+          const dt: DesignerTable = {
+            id: crypto.randomUUID(),
+            schema: refactorSchema,
+            name: ti.name,
+            _originalName: ti.name,
+            columns: cols,
+          };
+          return dt;
+        })
+      );
+      // 3. Deep clone for immutable original snapshot
+      const snapshot: DesignerTable[] = JSON.parse(JSON.stringify(loaded));
+      setOriginalTables(snapshot);
+      setTables(loaded);
+      setSelectedTableId(loaded[0]?.id ?? null);
+      setRefactorLoaded(true);
+    } catch (err) {
+      showError('Failed to load schema', err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefactorLoading(false);
+    }
+  };
+
+  const applyAlterDDL = async () => {
+    if (!refactorConn || !alterStmts.length) return;
+    setAlterApplying(true);
+    setAlterLog([]);
+    try {
+      const { data } = await axios.post<{ log: ExecLogLine[] }>(
+        '/api/schema-designer/execute',
+        { conn: connToExplorerConn(refactorConn, refactorDatabase), statements: alterStmts }
+      );
+      setAlterLog(data.log);
+      // Refresh: reload the schema so originalTables updates to the new state
+      if (data.log.every(l => l.ok)) {
+        await loadRefactorSchema();
+      }
+    } catch { showError('Apply failed'); } finally { setAlterApplying(false); }
+  };
 
   // DDL preview in middle panel
   const [ddlCopied, setDdlCopied] = useState(false);
@@ -2643,6 +2928,12 @@ function SchemaDesignerInner() {
                   >
                     <Upload size={11} /> Import
                   </button>
+                  <button
+                    onClick={() => { setDesignerMode('refactor'); setSelectedParsedId(null); }}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium border-l border-gray-200 dark:border-slate-700 transition-colors ${designerMode === 'refactor' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                  >
+                    <Pencil size={11} /> Refactor
+                  </button>
                 </div>
                 {designerMode === 'create' && (
                   <div className="flex gap-1.5">
@@ -2663,6 +2954,66 @@ function SchemaDesignerInner() {
                   </div>
                 )}
               </div>
+
+              {/* Refactor — connection + DB + schema picker */}
+              {designerMode === 'refactor' && (
+                <div className="shrink-0 border-b border-amber-200 dark:border-amber-800/40 bg-amber-50/40 dark:bg-amber-900/10 p-2 space-y-1.5">
+                  <select
+                    value={refactorConnId ?? ''}
+                    onChange={e => setRefactorConnId(e.target.value ? Number(e.target.value) : null)}
+                    className="w-full px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-amber-400 cursor-pointer"
+                  >
+                    <option value="">— select connection —</option>
+                    {(['postgres', 'mysql'] as const).map(type => {
+                      const group = connections.filter(c => c.db_type === type);
+                      if (!group.length) return null;
+                      return (
+                        <optgroup key={type} label={type === 'postgres' ? 'PostgreSQL' : 'MySQL'}>
+                          {group.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                        </optgroup>
+                      );
+                    })}
+                  </select>
+                  {refactorConnId && (
+                    <div className="flex gap-1">
+                      {refactorLoadingDbs
+                        ? <Loader2 size={11} className="animate-spin text-gray-400 self-center" />
+                        : (
+                          <select
+                            value={refactorDatabase}
+                            onChange={e => setRefactorDatabase(e.target.value)}
+                            className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-amber-400 cursor-pointer font-mono"
+                          >
+                            {!refactorDatabase && <option value="">— db —</option>}
+                            {refactorDbs.map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                        )
+                      }
+                      {refactorConn?.db_type === 'postgres' && refactorSchemas.length > 0 && (
+                        <select
+                          value={refactorSchema}
+                          onChange={e => setRefactorSchema(e.target.value)}
+                          className="w-20 shrink-0 px-2 py-1 text-[11px] rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 focus:outline-none cursor-pointer font-mono"
+                        >
+                          {refactorSchemas.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => void loadRefactorSchema()}
+                    disabled={!refactorConnId || !refactorDatabase || refactorLoading}
+                    className="w-full flex items-center justify-center gap-1 py-1 text-[11px] font-medium rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {refactorLoading ? <><Loader2 size={10} className="animate-spin" /> Loading…</> : <><RefreshCw size={10} /> Load Schema</>}
+                  </button>
+                  {refactorLoaded && (
+                    <p className="text-[9px] text-amber-600 dark:text-amber-500 text-center">
+                      {tables.length} table{tables.length !== 1 ? 's' : ''} loaded · edit then Apply
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Pending import — shown immediately below toggle */}
               {designerMode === 'import' && importParsed.length > 0 && (
@@ -2708,7 +3059,7 @@ function SchemaDesignerInner() {
                   onSelect={setSelectedTableId}
                   onDelete={handleDeleteTable}
                   onAddTableFor={handleAddTableFor}
-                  allowAddTable={designerMode === 'create'}
+                  allowAddTable={designerMode === 'create' || designerMode === 'refactor'}
                 />
               </div>
             </div>
@@ -3051,7 +3402,69 @@ function SchemaDesignerInner() {
               </button>
 
               {/* Panel content */}
-              {rightPanelOpen && (
+              {rightPanelOpen && designerMode === 'refactor' ? (
+                /* ── Refactor: ALTER SQL diff panel ── */
+                <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-slate-900 min-w-0">
+                  <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800 bg-amber-50/40 dark:bg-amber-900/10">
+                    <Pencil size={12} className="text-amber-500 shrink-0" />
+                    <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 flex-1">ALTER SQL</span>
+                    {alterStmts.length > 0 && (
+                      <>
+                        <button
+                          onClick={async () => { await navigator.clipboard.writeText(alterText); setAlterCopied(true); setTimeout(() => setAlterCopied(false), 1500); }}
+                          title="Copy ALTER SQL"
+                          className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+                        >
+                          {alterCopied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+                        </button>
+                        <button
+                          onClick={() => void applyAlterDDL()}
+                          disabled={alterApplying || !refactorConnId || !refactorDatabase}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-40 transition-colors"
+                        >
+                          {alterApplying ? <><Loader2 size={9} className="animate-spin" /> Applying…</> : <><Play size={9} /> Apply</>}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex-1 overflow-auto p-3 space-y-2">
+                    {!refactorLoaded ? (
+                      <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-3">
+                        <Pencil size={22} className="text-amber-200 dark:text-amber-800" />
+                        <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                          Load a schema from a live DB, then edit tables and columns to generate ALTER statements.
+                        </p>
+                      </div>
+                    ) : alterStmts.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-3">
+                        <CheckCircle2 size={22} className="text-emerald-400" />
+                        <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">No changes</p>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500">Schema matches the loaded snapshot.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="bg-slate-900 dark:bg-slate-950 rounded-lg overflow-hidden">
+                          <pre className="text-[11px] font-mono text-slate-300 leading-relaxed p-3 whitespace-pre-wrap">{alterText}</pre>
+                        </div>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500">{alterStmts.length} statement{alterStmts.length !== 1 ? 's' : ''}</p>
+                      </>
+                    )}
+                    {/* Apply log */}
+                    {alterLog.length > 0 && (
+                      <div className="border-t border-gray-100 dark:border-slate-800 pt-2 space-y-1">
+                        <p className="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Apply Log</p>
+                        {alterLog.map((l, i) => (
+                          <div key={i} className={`flex items-start gap-1.5 text-[10px] font-mono ${l.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                            {l.ok ? <Check size={9} className="shrink-0 mt-0.5" /> : <X size={9} className="shrink-0 mt-0.5" />}
+                            <span className="break-all">{l.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : rightPanelOpen && (
+                /* ── Create/Import: Saved Jobs panel ── */
                 <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-slate-900 min-w-0">
                   <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-slate-800">
                     <Clock size={13} className="text-gray-400 dark:text-slate-500" />

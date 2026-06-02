@@ -1179,3 +1179,15 @@
   - Follow-up fix: `doSaveJob` now clears pending-save entries after saving — computes `savedSourceKeys` from merged tables and adds matching `accumulatedTableStates` to `savedMigratedSources` (with localStorage sync), so the pending list clears immediately
   - Follow-up fix: `handleSaveMigratedTables` syncs `tableMaps` when saving to the active job — new pending-save tables are merged into the session's `tableMaps` so subsequent "Save Job" clicks see the full table list and won't overwrite them
   - Status: done
+
+- **implement** — Schema Designer: Refactor mode (ALTER TABLE diff against live DB)
+  - New third mode "Refactor" added alongside Create and Import in `src/pages/schema-designer.tsx`
+  - `DesignerColumn` gains `_originalName`, `_fkConstraintName`, `_uniqueConstraintName`; `DesignerTable` gains `_originalName` — all stamped when loading from live DB, never changed, used by diff
+  - New `generateAlterDDL(original, current, dbType)` pure function: compares original snapshot vs current state and emits `ALTER TABLE` statements for table rename, column rename, type change, NOT NULL toggle, default change, add/drop UNIQUE, add/drop FK, add/drop column, drop/create table
+  - New API `src/pages/api/schema-designer/constraints.ts`: fetches FK and UNIQUE constraint names (PG + MySQL) needed for `DROP CONSTRAINT` statements
+  - `loadRefactorSchema()`: loads tables + columns + constraints from live DB, builds `DesignerTable[]` with all `_original*` fields, deep-clones into `originalTables` (immutable) + `tables` (editable)
+  - `applyAlterDDL()`: sends `alterStmts` to existing `/api/schema-designer/execute`, shows inline apply log, reloads schema on success to refresh snapshot
+  - Right panel in Refactor mode shows ALTER SQL diff, copy button, Apply button, and apply log; falls back to "No changes" badge when schema matches snapshot
+  - Left panel in Refactor mode shows connection + DB + schema picker with amber styling; status shows table count after load
+  - CLAUDE.md updated with commands section and full module map
+  - Status: done
