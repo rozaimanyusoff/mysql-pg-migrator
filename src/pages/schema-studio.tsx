@@ -10,7 +10,7 @@ import {
   XCircle, Loader2, X, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Download,
   Columns, Sprout, Save, Clock,
   FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info, HelpCircle, BookOpen,
-  Network, Pencil,
+  Network, Pencil, Zap, AlertTriangle,
 } from 'lucide-react';
 import {
   ReactFlow, Background, Controls,
@@ -2846,6 +2846,29 @@ function SchemaDesignerInner() {
 
   // Apply a single suggestion's ALTER SQL directly to the live DB
   const [applyingSuggestionId, setApplyingSuggestionId] = useState<string | null>(null);
+  const [applyingAll, setApplyingAll] = useState(false);
+
+  const handleApplyAllSuggestions = async () => {
+    const applicable = activeSuggestions.filter(s => s.alterSql);
+    if (!applicable.length || !refactorConn || !refactorDatabase) return;
+    setApplyingAll(true);
+    setExecConsoleOpen(true);
+    setExecConsoleLog([]);
+    try {
+      const stmts = applicable.map(s => s.alterSql!);
+      const { data } = await axios.post<{ log: ExecLogLine[] }>(
+        '/api/schema-designer/execute',
+        { conn: connToExplorerConn(refactorConn, refactorDatabase), statements: stmts }
+      );
+      setExecConsoleLog(data.log);
+      setTimeout(() => execLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+      if (data.log.every(l => l.ok)) {
+        setDismissedSuggestions(prev => new Set([...prev, ...applicable.map(s => s.id)]));
+        await loadRefactorSchema();
+        void rescanSuggestions();
+      }
+    } catch { showError('Apply all failed'); } finally { setApplyingAll(false); }
+  };
 
   const handleApplySuggestion = async (s: import('./api/schema-studio/analyze').SchemaSuggestion) => {
     if (!s.alterSql || !refactorConn || !refactorDatabase) return;
@@ -3507,6 +3530,19 @@ function SchemaDesignerInner() {
               {rightPanelOpen && designerMode === 'refactor' && rightPanelTab === 'suggest' ? (
                 /* ── Refactor: Suggestions panel (grouped by table) ── */
                 <div className="flex-1 overflow-auto panel-scroll p-2 space-y-3">
+                  {/* Apply All header */}
+                  {activeSuggestions.filter(s => s.alterSql).length > 0 && (
+                    <div className="flex items-center gap-1.5 pb-1 border-b border-gray-100 dark:border-slate-800">
+                      <span className="text-[10px] text-gray-500 dark:text-slate-400 flex-1">{activeSuggestions.length} suggestion{activeSuggestions.length !== 1 ? 's' : ''}</span>
+                      <button
+                        onClick={() => void handleApplyAllSuggestions()}
+                        disabled={applyingAll || !!applyingSuggestionId}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
+                      >
+                        {applyingAll ? <><Loader2 size={9} className="animate-spin" /> Applying…</> : <><Check size={9} /> Apply All</>}
+                      </button>
+                    </div>
+                  )}
                   {activeSuggestions.length === 0 ? (
                     <div className="py-8 text-center">
                       <CheckCircle2 size={22} className="mx-auto text-emerald-300 dark:text-emerald-700 mb-2" />
@@ -3532,16 +3568,23 @@ function SchemaDesignerInner() {
                         {/* Suggestions for this table */}
                         {items.map(s => {
                           const isApplying = applyingSuggestionId === s.id;
-                          const kindCls = s.kind === 'missing_pk' || s.kind === 'nullable_pk'
-                            ? { border: 'border-rose-200 dark:border-rose-800/50 bg-rose-50/50 dark:bg-rose-950/10', badge: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400' }
-                            : s.kind === 'potential_fk'
-                            ? { border: 'border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/10', badge: 'bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400' }
-                            : { border: 'border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/10', badge: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400' };
+                          type KindMeta = { Icon: React.ElementType; label: string; border: string; badge: string; icon: string };
+                          const KIND_META: Record<string, KindMeta> = {
+                            missing_pk:      { Icon: KeyRound,      label: 'Missing PK',      border: 'border-rose-200 dark:border-rose-800/50 bg-rose-50/50 dark:bg-rose-950/10',     badge: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400',     icon: 'text-rose-500' },
+                            nullable_pk:     { Icon: AlertTriangle, label: 'Nullable PK',     border: 'border-rose-200 dark:border-rose-800/50 bg-rose-50/50 dark:bg-rose-950/10',     badge: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400',     icon: 'text-rose-500' },
+                            potential_fk:    { Icon: Link2,         label: 'Potential FK',    border: 'border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/10',     badge: 'bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400',     icon: 'text-blue-500' },
+                            missing_index:   { Icon: Zap,           label: 'Missing Index',   border: 'border-orange-200 dark:border-orange-800/50 bg-orange-50/50 dark:bg-orange-950/10', badge: 'bg-orange-100 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400', icon: 'text-orange-500' },
+                            orphan_fk_data:  { Icon: AlertTriangle, label: 'Orphan Data',     border: 'border-rose-200 dark:border-rose-800/50 bg-rose-50/50 dark:bg-rose-950/10',     badge: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400',     icon: 'text-rose-500' },
+                            missing_unique:  { Icon: Fingerprint,   label: 'Missing Unique',  border: 'border-violet-200 dark:border-violet-800/50 bg-violet-50/50 dark:bg-violet-950/10', badge: 'bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400', icon: 'text-violet-500' },
+                            wide_varchar:    { Icon: Hash,          label: 'Wide VARCHAR',    border: 'border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/10', badge: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',   icon: 'text-amber-500' },
+                            suboptimal_type: { Icon: RefreshCw,     label: 'Suboptimal Type', border: 'border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/10', badge: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',   icon: 'text-amber-500' },
+                          };
+                          const km = KIND_META[s.kind] ?? KIND_META.suboptimal_type;
                           return (
-                            <div key={s.id} className={`rounded-lg border p-2 text-[11px] space-y-1.5 ml-3 ${kindCls.border}`}>
+                            <div key={s.id} className={`rounded-lg border p-2 text-[11px] space-y-1.5 ml-3 ${km.border}`}>
                               <div className="flex items-center gap-1">
-                                <span className={`shrink-0 text-[9px] font-bold uppercase px-1 py-0.5 rounded ${kindCls.badge}`}>
-                                  {s.kind.replace(/_/g, ' ')}
+                                <span className={`shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-0.5 rounded ${km.badge}`}>
+                                  <km.Icon size={9} /> {km.label}
                                 </span>
                                 {s.column && <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate flex-1">.{s.column}</span>}
                               </div>
