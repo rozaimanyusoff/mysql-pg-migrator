@@ -572,7 +572,13 @@ function JobRunCard({ job }: { job: SchemaJob }) {
   );
 }
 
-function JobGroupCard({ group, onLoad, onRename, onDelete }: { group: JobGroup; onLoad: (j: SchemaJob) => void; onRename?: (oldName: string, newName: string) => void; onDelete?: (jobName: string) => void }) {
+function JobGroupCard({ group, onLoad, onRename, onDelete, isActive }: {
+  group: JobGroup;
+  onLoad: (j: SchemaJob) => void;
+  onRename?: (oldName: string, newName: string) => void;
+  onDelete?: (jobName: string) => void;
+  isActive?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState('');
@@ -585,66 +591,91 @@ function JobGroupCard({ group, onLoad, onRename, onDelete }: { group: JobGroup; 
     setRenaming(false);
   };
 
+  const statusLabel = allSuccess ? 'success' : hasFailure ? 'failed' : latest.status;
+  const statusCls = allSuccess
+    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+    : hasFailure
+    ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400'
+    : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300';
+
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/60">
-      <div className="w-full flex items-center gap-2.5 px-3 py-3">
+    <div className={`rounded-lg border p-2 transition-colors ${isActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'}`}>
+      {/* Row 1: name + run count */}
+      <div className="flex items-start gap-1 mb-0.5">
         {renaming ? (
-          <div className="flex-1 flex items-center gap-1 min-w-0">
-            <input
-              autoFocus
-              value={renameVal}
-              onChange={e => setRenameVal(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(false); }}
-              className="flex-1 text-xs font-semibold bg-white dark:bg-slate-700 border border-blue-400 rounded px-1.5 py-0.5 text-gray-900 dark:text-slate-100 outline-none min-w-0"
-            />
-            <button onClick={commitRename} className="p-0.5 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors shrink-0"><Check size={12} /></button>
-            <button onClick={() => setRenaming(false)} className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors shrink-0"><X size={12} /></button>
+          <input
+            autoFocus
+            value={renameVal}
+            onChange={e => setRenameVal(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(false); }}
+            className="flex-1 text-[11px] font-medium bg-white dark:bg-slate-700 border border-blue-400 rounded px-1 py-0.5 text-gray-800 dark:text-slate-200 outline-none"
+          />
+        ) : (
+          <p className="text-[11px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">{group.job_name}</p>
+        )}
+        {renaming ? (
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button onClick={commitRename} className="p-0.5 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"><Check size={11} /></button>
+            <button onClick={() => setRenaming(false)} className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"><X size={11} /></button>
           </div>
         ) : (
-          <button onClick={() => setExpanded(v => !v)} className="flex-1 flex items-center gap-2 text-left hover:opacity-80 transition-opacity min-w-0">
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-gray-900 dark:text-slate-100 truncate">{group.job_name}</p>
-              <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{group.runs.length} run{group.runs.length !== 1 ? 's' : ''} · latest {timeAgo(latest.created_at)}</p>
-            </div>
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${allSuccess ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : hasFailure ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'}`}>{allSuccess ? 'success' : hasFailure ? 'has failures' : latest.status}</span>
-          </button>
+          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${statusCls}`}>{statusLabel}</span>
         )}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {!renaming && (
-            <>
-              <button
-                onClick={() => { setRenameVal(group.job_name); setRenaming(true); }}
-                title="Rename job"
-                className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
-              >
-                <Pencil size={11} />
-              </button>
-              <button
-                onClick={() => onDelete?.(group.job_name)}
-                title="Delete job"
-                className="p-1 rounded text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
-              >
-                <Trash2 size={11} />
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => onLoad(latest)}
-            title="Load latest schema into designer"
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-950/60 transition-colors"
-          >
-            <FolderOpen size={10} /> Load
-          </button>
-          <button onClick={() => setExpanded(v => !v)} className="p-1 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
-            {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-          </button>
-        </div>
       </div>
+      {/* Row 2: description */}
+      {latest.description && (
+        <p className="text-[10px] text-gray-400 dark:text-slate-500 truncate mb-0.5">{latest.description}</p>
+      )}
+      {/* Row 3: runs count + date + expand */}
+      <div className="flex items-center gap-1 mb-1.5">
+        <p className="text-[10px] text-gray-400 dark:text-slate-500 flex-1">
+          {group.runs.length} run{group.runs.length !== 1 ? 's' : ''} · {timeAgo(latest.created_at)}
+          {latest.target_database && <span className="ml-1 font-mono">· {latest.target_database}</span>}
+        </p>
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+        >
+          {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+        </button>
+      </div>
+      {/* Expanded: run list */}
       {expanded && (
-        <div className="border-t border-gray-100 dark:border-slate-800 px-3 pb-3 pt-2 space-y-1.5">
+        <div className="mb-1.5 border border-gray-100 dark:border-slate-700 rounded overflow-hidden space-y-px">
           {group.runs.map(run => <JobRunCard key={run.id} job={run} />)}
         </div>
       )}
+      {/* Row 4: actions */}
+      <div className="flex items-center gap-1">
+        {isActive && (
+          <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>
+        )}
+        <button
+          onClick={() => onLoad(latest)}
+          title="Load latest schema into designer"
+          className="ml-auto px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors"
+        >
+          Load
+        </button>
+        {onRename && (
+          <button
+            onClick={() => { setRenameVal(group.job_name); setRenaming(true); }}
+            title="Rename job"
+            className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
+          >
+            <Pencil size={11} />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            onClick={() => onDelete(group.job_name)}
+            title="Delete job"
+            className="p-1 rounded text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+          >
+            <Trash2 size={11} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1840,21 +1871,15 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
           </button>
         </div>
 
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
           {groupedJobs.length === 0 && !loadingJobs ? (
-            <div className="flex flex-col items-center justify-center h-full gap-3 px-6">
-              <Clock size={28} className="text-gray-200 dark:text-slate-700" />
-              <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">
-                No saved jobs yet.<br />Save your schema design to create a job, then click <strong>Run</strong> to execute it against a database.
-              </p>
+            <div className="py-8 text-center">
+              <Save size={22} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">No saved jobs yet</p>
             </div>
-          ) : (
-            <div className="p-4 space-y-2">
-              {groupedJobs.map(g => (
-                <JobGroupCard key={g.job_name} group={g} onLoad={onLoadJob} />
-              ))}
-            </div>
-          )}
+          ) : groupedJobs.map(g => (
+            <JobGroupCard key={g.job_name} group={g} onLoad={onLoadJob} />
+          ))}
         </div>
       </div>
     </div>
@@ -3387,21 +3412,35 @@ function SchemaDesignerInner() {
               </div>
             </div>
 
-            {/* ── Right: Saved Jobs (collapsible) ── */}
-            <div className={`shrink-0 flex border-l border-gray-200 dark:border-slate-800 overflow-hidden transition-all duration-200 ${rightPanelOpen ? 'w-72' : 'w-6'}`}>
+            {/* ── Right: Saved Jobs / ALTER SQL (collapsible) ── */}
+            <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${rightPanelOpen ? 'w-64' : 'w-9'}`}>
 
-              {/* Notch — always-visible toggle strip */}
-              <button
-                onClick={() => setRightPanelOpen(v => !v)}
-                title={rightPanelOpen ? 'Collapse jobs panel' : 'Expand jobs panel'}
-                className="w-6 shrink-0 flex flex-col items-center justify-center gap-1.5 bg-gray-50 dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-r border-gray-100 dark:border-slate-800 transition-colors"
-              >
-                {rightPanelOpen
-                  ? <ChevronRight size={12} className="text-gray-400 dark:text-slate-500" />
-                  : <ChevronLeft size={12} className="text-gray-400 dark:text-slate-500" />}
-              </button>
+              {/* Header row — always visible, contains toggle */}
+              <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
+                {rightPanelOpen && (designerMode === 'refactor'
+                  ? <Pencil size={11} className="text-amber-500 shrink-0" />
+                  : <Save size={11} className="text-gray-400 shrink-0" />
+                )}
+                {rightPanelOpen && (
+                  <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">
+                    {designerMode === 'refactor' ? 'ALTER SQL' : 'Saved Jobs'}
+                  </span>
+                )}
+                {rightPanelOpen && designerMode !== 'refactor' && groupedJobs.length > 0 && (
+                  <span className="text-[10px] text-gray-400 shrink-0">{groupedJobs.length}</span>
+                )}
+                {rightPanelOpen && designerMode === 'refactor' && alterStmts.length > 0 && (
+                  <span className="text-[10px] text-amber-500 shrink-0">{alterStmts.length}</span>
+                )}
+                <button
+                  onClick={() => setRightPanelOpen(o => !o)}
+                  className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ml-auto"
+                >
+                  {rightPanelOpen ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+                </button>
+              </div>
 
-              {/* Panel content */}
+              {/* Panel content — only when open */}
               {rightPanelOpen && designerMode === 'refactor' ? (
                 /* ── Refactor: ALTER SQL diff panel ── */
                 <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-slate-900 min-w-0">
@@ -3465,34 +3504,22 @@ function SchemaDesignerInner() {
                 </div>
               ) : rightPanelOpen && (
                 /* ── Create/Import: Saved Jobs panel ── */
-                <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-slate-900 min-w-0">
-                  <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-slate-800">
-                    <Clock size={13} className="text-gray-400 dark:text-slate-500" />
-                    <span className="text-xs font-semibold text-gray-700 dark:text-slate-200">Saved Jobs</span>
-                    {loadingJobs && <Loader2 size={10} className="animate-spin text-gray-400" />}
-                  </div>
-                  <div className="flex-1 overflow-auto">
-                    {groupedJobs.length === 0 && !loadingJobs ? (
-                      <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
-                        <Clock size={24} className="text-gray-200 dark:text-slate-700" />
-                        <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">
-                          No saved jobs yet. Save your schema to create a job record.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="p-3 space-y-2">
-                        {groupedJobs.map(g => (
-                          <JobGroupCard
-                            key={g.job_name}
-                            group={g}
-                            onLoad={handleLoadJob}
-                            onRename={handleRenameGroup}
-                            onDelete={handleDeleteJobGroup}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
+                  {groupedJobs.length === 0 && !loadingJobs ? (
+                    <div className="py-8 text-center">
+                      <Save size={22} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
+                      <p className="text-[11px] text-gray-400 dark:text-slate-500">No saved jobs</p>
+                    </div>
+                  ) : groupedJobs.map(g => (
+                    <JobGroupCard
+                      key={g.job_name}
+                      group={g}
+                      onLoad={handleLoadJob}
+                      onRename={handleRenameGroup}
+                      onDelete={handleDeleteJobGroup}
+                      isActive={loadedJob?.job_name === g.job_name}
+                    />
+                  ))}
                 </div>
               )}
             </div>

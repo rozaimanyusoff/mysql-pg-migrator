@@ -1180,6 +1180,15 @@
   - Follow-up fix: `handleSaveMigratedTables` syncs `tableMaps` when saving to the active job — new pending-save tables are merged into the session's `tableMaps` so subsequent "Save Job" clicks see the full table list and won't overwrite them
   - Status: done
 
+- **revision** — Schema Designer: saved jobs panel redesigned to match Migration module style
+  - `JobGroupCard` rewritten: compact card (border-highlight for active job), inline rename input, status badge on name row, runs count + timeAgo + target_db meta, expand-to-show-runs, action row with Load / Rename / Delete buttons and `active` pill
+  - `isActive` prop added to `JobGroupCard` — highlighted when `loadedJob.job_name === group.job_name`
+  - Right panel changed from notch-strip layout to migration-style full-row header with icon, title, count badge, and collapse button; width `w-64` / `w-9`
+  - Header adapts to refactor mode (amber Pencil icon, "ALTER SQL" title, statement count)
+  - `ExecutePanel` job list updated to same compact card style
+  - Files: `src/pages/schema-designer.tsx`
+  - Status: done
+
 - **implement** — Schema Designer: Refactor mode (ALTER TABLE diff against live DB)
   - New third mode "Refactor" added alongside Create and Import in `src/pages/schema-designer.tsx`
   - `DesignerColumn` gains `_originalName`, `_fkConstraintName`, `_uniqueConstraintName`; `DesignerTable` gains `_originalName` — all stamped when loading from live DB, never changed, used by diff
