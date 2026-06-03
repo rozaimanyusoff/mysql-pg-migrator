@@ -938,7 +938,7 @@ function GuidePopover() {
 interface ConnRow {
   id: number; label: string; host: string; port: number;
   username: string; password_enc: string | null;
-  database_name: string; ssl_enabled: boolean; db_type: string;
+  database_name: string; ssl_enabled: boolean; db_type: string; is_active: boolean;
 }
 
 // ── Saved jobs panel ───────────────────────────────────────────────────────────
@@ -1078,7 +1078,11 @@ export default function NormalizerPage() {
 
   useEffect(() => {
     axios.get<{ connections: ConnRow[] }>('/api/connections')
-      .then(r => setConnections(r.data.connections))
+      .then(r => {
+        const conns = r.data.connections;
+        setConnections(conns);
+        setSelectedConnId(prev => prev ?? (conns.find(c => c.is_active)?.id ?? null));
+      })
       .catch(() => {});
   }, []);
 

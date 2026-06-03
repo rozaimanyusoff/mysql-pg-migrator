@@ -964,7 +964,9 @@ export default function ExportImportPage() {
       setLoadingConns(true);
       try {
         const { data } = await axios.get('/api/connections');
-        setConnections((data as { connections: ConnectionRow[] }).connections);
+        const conns = (data as { connections: ConnectionRow[] }).connections;
+        setConnections(conns);
+        setConnId(prev => prev !== '' ? prev : (conns.find(c => c.is_active)?.id ?? ''));
       } catch { /* ignore */ }
       finally { setLoadingConns(false); }
     })();

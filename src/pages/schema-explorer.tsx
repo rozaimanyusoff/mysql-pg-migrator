@@ -666,7 +666,11 @@ export default function SchemaExplorer() {
 
   useEffect(() => {
     axios.get<{ connections: ConnectionRow[] }>('/api/connections')
-      .then(r => setConnections(r.data.connections))
+      .then(r => {
+        const conns = r.data.connections;
+        setConnections(conns);
+        setSelectedConnId(prev => prev ?? (conns.find(c => c.is_active)?.id ?? null));
+      })
       .catch(() => {});
   }, []);
 

@@ -357,7 +357,13 @@ export default function Migration() {
   // ── Load connections ──────────────────────────────────────────────────────────
   useEffect(() => {
     void axios.get<{ connections: ConnectionRow[] }>('/api/connections')
-      .then(r => setConnections(r.data.connections))
+      .then(r => {
+        const conns = r.data.connections;
+        setConnections(conns);
+        const active = conns.filter(c => c.is_active);
+        if (active[0]) setSrcConnId(prev => prev ?? active[0].id);
+        if (active[1]) setTgtConnId(prev => prev ?? active[1].id);
+      })
       .catch(() => {});
   }, []);
 
