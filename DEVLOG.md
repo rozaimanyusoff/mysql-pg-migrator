@@ -3,6 +3,11 @@
 ---
 
 ## 2026-06-04
+- **fix** — Migration: source DB not restored on job load; run panel missing after refresh
+  - `src/pages/migration.tsx` `handleLoadJob` — source restore: when auto-connect had already set `srcConnId` to the same connection, `setSrcConnId(same)` was a no-op so `loadSrcDbs` never fired; fix: detect `srcMatch.id === srcConnId` and call `setSrcDb(job.sourceMeta.database)` directly to trigger the `[srcDb]` useEffect instead
+  - `src/pages/migration.tsx` `handleLoadJob` — run panel: after loading a job only `migratedTableKeys` was restored, `currentRun` stayed null so the run/rollback panel was invisible; fix: restore `currentRun` to the most recent run for that job from run-store
+
+
 - **implement** — Migration full-run rollback: prompt with optional DROP ALL tables
   - `src/lib/migv2/runner.ts` — `rollbackRun` accepts `dropTable` param; DROP runs per-table inside the loop with its own try/catch so one failure doesn't abort others
   - `src/pages/api/migv2/run/rollback.ts` — passes `dropTable` from request body

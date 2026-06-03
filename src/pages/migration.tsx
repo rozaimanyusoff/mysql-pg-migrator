@@ -846,17 +846,21 @@ export default function Migration() {
       setActiveJobId(id);
       setSaveJobName(job.name); setSaveJobDesc(job.description); setDirty(false);
 
-      // Restore migrated table keys from persisted run history for this job
+      // Restore migrated table keys + most recent run for this job
       void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status')
         .then(({ data: runData }) => {
           const keys = new Set<string>();
+          let latestJobRun: MigRun | null = null;
           for (const run of runData.runs) {
-            if (run.jobId !== id || run.status !== 'completed') continue;
+            if (run.jobId !== id) continue;
+            if (!latestJobRun) latestJobRun = run;
+            if (run.status !== 'completed') continue;
             for (const ts of run.tableStates) {
               if (ts.status === 'completed') keys.add(ts.sourceKey);
             }
           }
           setMigratedTableKeys(keys);
+          if (latestJobRun) setCurrentRun(latestJobRun);
         })
         .catch(() => setMigratedTableKeys(new Set()));
 
@@ -877,9 +881,15 @@ export default function Migration() {
         setTableMaps(job.tables);
         setSelectedMapId(firstIncluded?.id ?? null);
         if (firstIncluded) setSrcSchema(firstIncluded.source.schema);
-      } else {
+      } else if (srcMatch) {
         pendingRestoreRef.current = job;
-        if (srcMatch) setSrcConnId(srcMatch.id);
+        if (srcMatch.id === srcConnId) {
+          // Same connection already selected — setSrcConnId would be a no-op.
+          // Set srcDb directly so the [srcDb] useEffect fires and consumes the ref.
+          setSrcDb(job.sourceMeta.database);
+        } else {
+          setSrcConnId(srcMatch.id);
+        }
       }
 
       // Target: if same connection+db already active, just set schema; otherwise use ref cascade
