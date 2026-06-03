@@ -3,6 +3,10 @@
 ---
 
 ## 2026-06-03
+- **fix** — UUID FK column DDL: `DEFAULT 0` rejected by PostgreSQL
+  - `src/lib/migv2/runner.ts` `buildCreateTableSQL` — skip DEFAULT clause entirely when `targetType` is `uuid`; MySQL integer defaults (e.g. `0`) are not valid for UUID columns and caused `column "role_id" is of type uuid but default expression is of type integer`
+  - Status: done
+
 - **fix** — `/connections` 404; restore Settings icon in Navbar
   - `src/pages/export-import.tsx`, `src/pages/migration.tsx` — changed 3 dead links from `/connections` (no such page) to `/settings`
   - `src/components/Navbar.tsx` — added `Settings2` icon link on the right side of the global nav bar; highlights when active on `/settings`

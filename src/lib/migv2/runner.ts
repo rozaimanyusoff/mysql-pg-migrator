@@ -168,7 +168,9 @@ export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql'
   const colDefs = cols.map(c => {
     let type = c.targetType;
     const notNull = !c.nullable ? ' NOT NULL' : '';
-    const def = safeDdlDefault(c.defaultValue, targetType) ? ` DEFAULT ${safeDdlDefault(c.defaultValue, targetType)}` : '';
+    // UUID columns cannot accept numeric/expression defaults from MySQL source
+    const rawDef = c.targetType.toLowerCase() === 'uuid' ? null : safeDdlDefault(c.defaultValue, targetType);
+    const def = rawDef ? ` DEFAULT ${rawDef}` : '';
     if (targetType === 'postgresql') {
       return `  "${c.targetCol}" ${type}${notNull}${def}`;
     } else {
