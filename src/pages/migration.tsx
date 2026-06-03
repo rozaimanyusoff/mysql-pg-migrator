@@ -56,7 +56,7 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${map[status] ?? map.pending}`}>
       <Icon size={9} className={status === 'running' ? 'animate-spin' : ''} />
-      {status}
+      {({ rolled_back: 'rolled back' } as Record<string, string>)[status] ?? status}
     </span>
   );
 }
@@ -1086,8 +1086,9 @@ export default function Migration() {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/rollback',
         { runId: currentRun.id, target: tgtConn, dropTable: drop });
       setCurrentRun(data.run);
-      reloadTgtTables();
+      if (drop) reloadTgtTables(); // only reload target list when DROP was requested (table disappears)
       setMigratedTableKeys(new Set());
+      setSavedMigratedSources(new Set());
       const rolledBackKeys = new Set(currentRun.tableStates.map(ts => ts.sourceKey));
       setAccumulatedTableStates(prev => prev.filter(ts => !rolledBackKeys.has(ts.sourceKey)));
       setAccumulatedTableMaps(prev => { const n = new Map(prev); for (const k of rolledBackKeys) n.delete(k); return n; });
@@ -1108,10 +1109,11 @@ export default function Migration() {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/rollback-table',
         { runId: currentRun.id, tableId, target: tgtConn, dropTable: drop });
       setCurrentRun(data.run);
-      reloadTgtTables();
+      if (drop) reloadTgtTables(); // only reload target list when DROP was requested
       const ts = data.run.tableStates.find(t => t.id === tableId);
       if (ts) {
         setMigratedTableKeys(prev => { const n = new Set(prev); n.delete(ts.sourceKey); return n; });
+        setSavedMigratedSources(prev => { const n = new Set(prev); n.delete(ts.sourceKey); return n; });
         setAccumulatedTableStates(prev => prev.filter(s => s.id !== tableId));
         setAccumulatedTableMaps(prev => { const n = new Map(prev); n.delete(ts.sourceKey); return n; });
       }
