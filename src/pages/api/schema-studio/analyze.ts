@@ -113,6 +113,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const existingFkCols = new Set(existingFkRows.map(r => r.from_col));
         const fkTargets = new Map(existingFkRows.map(r => [r.from_col, { schema: r.to_schema, table: r.to_table, col: r.to_col }]));
 
+        // Collect columns covered by any unique constraint OR unique index
         const { rows: uniqueCols } = await client.query<{ column_name: string }>(
           `SELECT kcu.column_name
            FROM information_schema.table_constraints tc
@@ -121,7 +122,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
            WHERE tc.constraint_type = 'UNIQUE' AND tc.table_schema = $1 AND tc.table_name = $2`,
           [sc, tbl]
         );
-        const uniqueColSet = new Set(uniqueCols.map(r => r.column_name));
+        // Also pick up unique indexes created via CREATE UNIQUE INDEX (not visible in table_constraints)
+        const { rows: uniqueIdxCols } = await client.query<{ attname: string }>(
+          `SELECT DISTINCT a.attname
+           FROM pg_index i
+           JOIN pg_class c ON c.oid = i.indrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+           WHERE i.indisunique AND NOT i.indisprimary
+             AND n.nspname = $1 AND c.relname = $2`,
+          [sc, tbl]
+        );
+        const uniqueColSet = new Set([
+          ...uniqueCols.map(r => r.column_name),
+          ...uniqueIdxCols.map(r => r.attname),
+        ]);
 
         // ── Potential FK by naming convention ────────────────────────────────
         for (const col of cols) {
@@ -200,7 +215,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // ── Missing UNIQUE on semantic columns ───────────────────────────────
         for (const col of cols) {
           if (uniqueColSet.has(col.column_name) || pkCols.has(col.column_name)) continue;
-          if (UNIQUE_CANDIDATES.has(col.column_name.toLowerCase())) {
+          if (!UNIQUE_CANDIDATES.has(col.column_name.toLowerCase())) continue;
+          // Check for duplicate values — if any exist the constraint cannot be applied
+          const { rows: dupeCheck } = await client.query<{ has_dupes: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1 FROM "${sc}"."${tbl}"
+               WHERE "${col.column_name}" IS NOT NULL
+               GROUP BY "${col.column_name}"
+               HAVING COUNT(*) > 1
+             ) AS has_dupes`
+          );
+          if (dupeCheck[0]?.has_dupes) {
+            result.push({
+              id: sid(), kind: 'missing_unique', table: tbl, column: col.column_name,
+              message: `"${col.column_name}" looks like it should be unique but has duplicate values — clean duplicates before adding a constraint.`,
+              suggestedFix: 'Remove duplicate values first, then add a UNIQUE constraint.',
+            });
+          } else {
             result.push({
               id: sid(), kind: 'missing_unique', table: tbl, column: col.column_name,
               message: `"${col.column_name}" looks like it should be unique but has no UNIQUE constraint.`,

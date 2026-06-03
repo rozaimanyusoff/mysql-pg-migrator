@@ -3,6 +3,10 @@
 ---
 
 ## 2026-06-03
+- **fix** — Schema Studio analyzer: `could not create unique index "uq_*"` on apply
+  - `src/pages/api/schema-studio/analyze.ts` — unique-column detection now also queries `pg_index` to catch unique indexes created via `CREATE UNIQUE INDEX` (invisible to `information_schema.table_constraints`); added duplicate-value check before emitting `missing_unique` suggestion — if dupes exist, `alterSql` is omitted and message warns to clean duplicates first
+  - Status: done
+
 - **fix** — Schema Studio FK reference: `relation * does not exist` for non-public schemas
   - `src/pages/schema-studio.tsx` — added `fkRefTable()` + `fkRefToSQL()` helpers to handle both 2-part (`table.col`) and 3-part (`schema.table.col`) fkRef strings; DDL generation now emits schema-qualified `REFERENCES "schema"."table"("col")`; FK picker now stores `schema.table.col` when referenced table is in a non-public schema; ERD edge drawing, incoming FK checks, and drag-to-create-FK all updated; refactor-load no longer strips schema from fkRef
   - Status: done
