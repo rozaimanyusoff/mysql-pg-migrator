@@ -340,6 +340,7 @@ export default function Migration() {
   const [rollingBack, setRollingBack] = useState(false);
   const [rollingBackTableId, setRollingBackTableId] = useState<string | null>(null);
   const [rollbackPrompt, setRollbackPrompt] = useState<{ tableId: string; tableKey: string; drop: boolean } | null>(null);
+  const [runRollbackPrompt, setRunRollbackPrompt] = useState<{ drop: boolean } | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pendingRestoreRef = useRef<MigJob | null>(null);
   const pendingTgtRef = useRef<{ database: string; schema: string } | null>(null);
@@ -1067,16 +1068,16 @@ export default function Migration() {
     } catch { setPolling(false); }
   };
 
-  const handleRollback = async () => {
+  const handleRollback = async (drop = false) => {
     if (!currentRun) return;
+    setRunRollbackPrompt(null);
     setRollingBack(true);
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/rollback',
-        { runId: currentRun.id, target: tgtConn });
+        { runId: currentRun.id, target: tgtConn, dropTable: drop });
       setCurrentRun(data.run);
       reloadTgtTables();
       setMigratedTableKeys(new Set());
-      // Remove rolled-back tables from accumulated state
       const rolledBackKeys = new Set(currentRun.tableStates.map(ts => ts.sourceKey));
       setAccumulatedTableStates(prev => prev.filter(ts => !rolledBackKeys.has(ts.sourceKey)));
       setAccumulatedTableMaps(prev => { const n = new Map(prev); for (const k of rolledBackKeys) n.delete(k); return n; });
@@ -1214,6 +1215,48 @@ export default function Migration() {
                 className={`px-4 py-1.5 rounded-lg text-sm font-medium text-white transition-colors ${rollbackPrompt.drop ? 'bg-rose-600 hover:bg-rose-700' : 'bg-amber-500 hover:bg-amber-600'}`}
               >
                 {rollbackPrompt.drop ? 'Rollback & Drop' : 'Rollback'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full-run rollback confirm dialog */}
+      {runRollbackPrompt && currentRun && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
+            <div>
+              <p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Rollback entire run?</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
+                {currentRun.tableStates.filter(ts => ts.status === 'completed' || ts.status === 'failed').length} table(s) will be rolled back.
+              </p>
+            </div>
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={runRollbackPrompt.drop}
+                onChange={e => setRunRollbackPrompt(p => p ? { ...p, drop: e.target.checked } : p)}
+                className="mt-0.5 accent-rose-500"
+              />
+              <span className="text-xs text-gray-700 dark:text-slate-300">
+                Also <span className="font-semibold text-rose-600 dark:text-rose-400">DROP</span> all target tables after rollback
+                <span className="block text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">
+                  Runs <code className="font-mono">DROP TABLE … CASCADE</code> on each table — cannot be undone.
+                </span>
+              </span>
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setRunRollbackPrompt(null)}
+                className="px-3 py-1.5 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleRollback(runRollbackPrompt.drop)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium text-white transition-colors ${runRollbackPrompt.drop ? 'bg-rose-600 hover:bg-rose-700' : 'bg-amber-500 hover:bg-amber-600'}`}
+              >
+                {runRollbackPrompt.drop ? 'Rollback & Drop All' : 'Rollback All'}
               </button>
             </div>
           </div>
@@ -2283,7 +2326,7 @@ export default function Migration() {
               <span className="text-xs text-gray-400 font-mono">{currentRun.id.slice(0, 8)}</span>
               <div className="flex-1" />
               {(currentRun.status === 'completed' || currentRun.status === 'failed') && (
-                <button onClick={handleRollback} disabled={rollingBack}
+                <button onClick={() => setRunRollbackPrompt({ drop: false })} disabled={rollingBack}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-100 disabled:opacity-50 transition-colors">
                   {rollingBack ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />} Rollback
                 </button>

@@ -561,7 +561,8 @@ export async function rollbackTable(
 
 export async function rollbackRun(
   run: MigRun,
-  target: MigConn
+  target: MigConn,
+  dropTable = false
 ): Promise<MigRun> {
   function log(msg: string) {
     run.logs.push(`[${new Date().toISOString()}] ROLLBACK: ${msg}`);
@@ -599,6 +600,18 @@ export async function rollbackRun(
         log(`${ts.targetKey}: deleted ${ts.insertedPks.length} rows`);
       }
       ts.status = 'rolled_back';
+      if (dropTable) {
+        try {
+          if (target.type === 'postgresql') {
+            await withPg(target, c => c.query(`DROP TABLE IF EXISTS "${schema}"."${table}" CASCADE`).then(() => undefined));
+          } else {
+            await withMysql(target, c => c.query(`DROP TABLE IF EXISTS \`${schema}\`.\`${table}\``).then(() => undefined));
+          }
+          log(`${ts.targetKey}: table dropped`);
+        } catch (dropErr) {
+          log(`${ts.targetKey} DROP ERROR: ${dropErr instanceof Error ? dropErr.message : String(dropErr)}`);
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`${ts.targetKey} rollback ERROR: ${msg}`);

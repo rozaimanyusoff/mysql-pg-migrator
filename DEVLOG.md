@@ -3,6 +3,12 @@
 ---
 
 ## 2026-06-04
+- **implement** — Migration full-run rollback: prompt with optional DROP ALL tables
+  - `src/lib/migv2/runner.ts` — `rollbackRun` accepts `dropTable` param; DROP runs per-table inside the loop with its own try/catch so one failure doesn't abort others
+  - `src/pages/api/migv2/run/rollback.ts` — passes `dropTable` from request body
+  - `src/pages/migration.tsx` — global Rollback button now opens `runRollbackPrompt` dialog; shows table count, same DROP checkbox pattern; button label **Rollback All** / **Rollback & Drop All**
+  - Status: done
+
 - **implement** — Migration per-table rollback: prompt with optional DROP TABLE
   - `src/lib/migv2/runner.ts` — `rollbackTable` accepts new `dropTable` param; after DELETE/TRUNCATE runs `DROP TABLE IF EXISTS … CASCADE` when flag is true
   - `src/pages/api/migv2/run/rollback-table.ts` — passes `dropTable` from request body

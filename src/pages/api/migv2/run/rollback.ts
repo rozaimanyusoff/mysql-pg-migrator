@@ -6,14 +6,14 @@ import type { MigConn } from '../../../../lib/migv2/types';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const { runId, target } = req.body as { runId: string; target: MigConn };
+  const { runId, target, dropTable } = req.body as { runId: string; target: MigConn; dropTable?: boolean };
   if (!runId || !target) return res.status(400).json({ error: 'runId, target required' });
 
   const run = loadRun(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
 
   try {
-    const rolled = await rollbackRun(run, target);
+    const rolled = await rollbackRun(run, target, dropTable ?? false);
     saveRun(rolled);
     return res.status(200).json({ run: rolled });
   } catch (err) {
