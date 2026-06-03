@@ -3,6 +3,10 @@
 ---
 
 ## 2026-06-03
+- **implement** — Schema Studio saved jobs: Export SQL / Markdown / ORM per card
+  - `src/pages/schema-studio.tsx` — added `downloadBlob` + `generateSchemaMd` module-level helpers; `JobGroupCard` gets an "Export ▾" dropdown button (shown when `schema_sql` exists); SQL always available; Markdown + Drizzle/Prisma/TypeORM shown for DDL jobs only (hidden for ALTER-only refactor jobs); ORM tables built inline from `parseSqlToTables` + `generateOrm`
+  - Status: done
+
 - **fix** — Schema Studio: schema not auto-loaded after job restore
   - `src/pages/schema-studio.tsx` — `loadRefactorSchema` now accepts optional `schemaOverride` param to bypass stale closure on `refactorSchema`; added `pendingAutoLoad` ref (stores target schema across async chain); `handleLoadJob` extracts schema from first `ALTER/CREATE TABLE "schema"."table"` pattern in saved SQL (falls back to `public`); new `useEffect` watching `refactorSchemas` consumes the ref and fires `loadRefactorSchema(schemaToLoad)` automatically once schemas list is ready
   - Status: done

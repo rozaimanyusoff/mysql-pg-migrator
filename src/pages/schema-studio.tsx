@@ -466,6 +466,35 @@ function extractTablesFromSql(sql: string | null): string[] {
   return [...new Set(matches.map(m => m[1]).filter(Boolean))];
 }
 
+function downloadBlob(content: string, filename: string, mime = 'text/plain') {
+  const url = URL.createObjectURL(new Blob([content], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function generateSchemaMd(tables: DesignerTable[], jobName: string): string {
+  const lines = [`# Schema: ${jobName}`, ''];
+  for (const t of tables) {
+    const tq = t.schema && t.schema !== 'public' ? `${t.schema}.${t.name}` : t.name;
+    lines.push(`## \`${tq}\``, '');
+    lines.push('| Column | Type | Null | Default | Notes |');
+    lines.push('|--------|------|------|---------|-------|');
+    for (const c of t.columns) {
+      const type = c.length ? `${c.type}(${c.length})` : c.type;
+      const notes: string[] = [];
+      if (c.isPk) notes.push('PK');
+      if (c.isUnique && !c.isPk) notes.push('UNIQUE');
+      if (c.isAutoIncrement) notes.push('AUTO');
+      if (c.fkRef) notes.push(`FK → \`${c.fkRef}\``);
+      if (c.comment) notes.push(c.comment);
+      lines.push(`| \`${c.name}\` | \`${type}\` | ${c.nullable ? 'YES' : 'NO'} | ${c.defaultValue || '—'} | ${notes.join(', ') || '—'} |`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 function groupJobs(jobs: SchemaJob[]): JobGroup[] {
   const map = new Map<string, SchemaJob[]>();
   for (const j of jobs) {
@@ -571,6 +600,7 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive }: {
   const [expanded, setExpanded] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState('');
+  const [showExport, setShowExport] = useState(false);
   const latest = group.runs[0];
   const hasFailure = group.runs.some(r => r.status === 'failed');
   const allSuccess = group.runs.every(r => r.status === 'success');
@@ -656,10 +686,75 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive }: {
         {isActive && (
           <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>
         )}
+
+        {/* Export dropdown */}
+        {latest.schema_sql && (
+          <div className="relative ml-auto">
+            <button
+              onClick={() => setShowExport(v => !v)}
+              className="flex items-center gap-0.5 px-2 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
+            >
+              <Download size={9} /> Export
+            </button>
+            {showExport && (() => {
+              const isDdl = !latest.schema_sql!.trim().toUpperCase().startsWith('ALTER');
+              const tables = isDdl ? parseSqlToTables(latest.schema_sql!) : [];
+              const slug = latest.job_name.replace(/\s+/g, '-').toLowerCase();
+              const exportOrm = (target: OrmTarget) => {
+                const ormTables: OrmTableDef[] = tables.map(t => ({
+                  schema: t.schema || 'public', table: t.name,
+                  columns: t.columns.map(c => {
+                    const fkParts = c.fkRef ? c.fkRef.split('.') : [];
+                    const rawType = c.type.toLowerCase();
+                    const lenNum = c.length ? Number(c.length.split(',')[0]) : null;
+                    const scaleNum = c.length?.includes(',') ? Number(c.length.split(',')[1]) : null;
+                    return {
+                      name: c.name, rawType,
+                      maxLength: ['varchar','char'].includes(rawType) ? lenNum : null,
+                      numericPrecision: rawType === 'numeric' ? lenNum : null,
+                      numericScale: rawType === 'numeric' ? scaleNum : null,
+                      fullType: c.length ? `${c.type}(${c.length})` : c.type,
+                      nullable: c.nullable, defaultValue: c.defaultValue || null,
+                      isPk: c.isPk, isUnique: c.isUnique, isAutoIncrement: c.isAutoIncrement,
+                      comment: c.comment || null,
+                      fkToTable: fkParts.length >= 2 ? fkParts[fkParts.length - 2] : null,
+                      fkToCol: fkParts.length >= 1 ? fkParts[fkParts.length - 1] : null,
+                    };
+                  }),
+                }));
+                const code = generateOrm(ormTables, 'postgresql', target);
+                const filename = target === 'prisma' ? `${slug}.prisma` : `${slug}-${target}.ts`;
+                downloadBlob(code, filename);
+                setShowExport(false);
+              };
+              return (
+                <div className="absolute bottom-full right-0 mb-1 z-50 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg overflow-hidden min-w-[120px]">
+                  <button onClick={() => { downloadBlob(latest.schema_sql!, `${slug}.sql`, 'text/sql'); setShowExport(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                    <FileCode2 size={10} className="text-emerald-500" /> SQL
+                  </button>
+                  {isDdl && (
+                    <button onClick={() => { downloadBlob(generateSchemaMd(tables, latest.job_name), `${slug}.md`); setShowExport(false); }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                      <FileText size={10} className="text-blue-500" /> Markdown
+                    </button>
+                  )}
+                  {isDdl && (['drizzle','prisma','typeorm'] as OrmTarget[]).map(t => (
+                    <button key={t} onClick={() => exportOrm(t)}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors capitalize">
+                      <Layers size={10} className="text-violet-500" /> {t}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
         <button
           onClick={() => onLoad(latest)}
           title="Load latest schema into designer"
-          className="ml-auto px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors"
+          className={`${latest.schema_sql ? '' : 'ml-auto '}px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors`}
         >
           Load
         </button>
