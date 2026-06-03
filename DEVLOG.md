@@ -3,6 +3,10 @@
 ---
 
 ## 2026-06-03
+- **fix** — Schema Studio FK reference: `relation * does not exist` for non-public schemas
+  - `src/pages/schema-studio.tsx` — added `fkRefTable()` + `fkRefToSQL()` helpers to handle both 2-part (`table.col`) and 3-part (`schema.table.col`) fkRef strings; DDL generation now emits schema-qualified `REFERENCES "schema"."table"("col")`; FK picker now stores `schema.table.col` when referenced table is in a non-public schema; ERD edge drawing, incoming FK checks, and drag-to-create-FK all updated; refactor-load no longer strips schema from fkRef
+  - Status: done
+
 - **fix** — UUID FK column DDL: `DEFAULT 0` rejected by PostgreSQL
   - `src/lib/migv2/runner.ts` `buildCreateTableSQL` — skip DEFAULT clause entirely when `targetType` is `uuid`; MySQL integer defaults (e.g. `0`) are not valid for UUID columns and caused `column "role_id" is of type uuid but default expression is of type integer`
   - Status: done

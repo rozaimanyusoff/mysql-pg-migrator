@@ -254,6 +254,18 @@ function colInfoToDesigner(c: ColumnInfo): DesignerColumn {
 
 function qi(n: string, _t?: DbType) { return `"${n}"`; }
 
+// fkRef helpers — handles both "table.col" (2-part) and "schema.table.col" (3-part)
+function fkRefTable(fkRef: string): string {
+  const p = fkRef.split('.');
+  return p.length >= 3 ? p[p.length - 2] : p[0];
+}
+function fkRefToSQL(fkRef: string): string | null {
+  const p = fkRef.split('.');
+  if (p.length === 3) return `"${p[0]}"."${p[1]}"("${p[2]}")`;
+  if (p.length === 2) return `"${p[0]}"("${p[1]}")`;
+  return null;
+}
+
 function resolveType(col: DesignerColumn, _dbType?: DbType): string {
   let type = col.type;
   // Normalise MySQL types that may have been imported via SQL paste
@@ -289,8 +301,8 @@ function generateDDL(tables: DesignerTable[], _dbType?: DbType): string[] {
     for (const c of t.columns) if (c.isUnique && !c.isPk) defs.push(`  UNIQUE ("${c.name}")`);
     for (const c of t.columns) {
       if (c.fkRef) {
-        const [rt, rc] = c.fkRef.split('.');
-        if (rt && rc) defs.push(`  FOREIGN KEY ("${c.name}") REFERENCES "${rt}"("${rc}")`);
+        const ref = fkRefToSQL(c.fkRef);
+        if (ref) defs.push(`  FOREIGN KEY ("${c.name}") REFERENCES ${ref}`);
       }
     }
     stmts.push(`CREATE TABLE IF NOT EXISTS ${tq} (\n${defs.join(',\n')}\n);`);
@@ -356,8 +368,8 @@ function generateAlterDDL(original: DesignerTable[], current: DesignerTable[], _
         stmts.push(`ALTER TABLE ${tq} ADD COLUMN "${cc.name}" ${type}${notNull}${def};`);
         if (cc.isUnique && !cc.isPk) stmts.push(`ALTER TABLE ${tq} ADD UNIQUE ("${cc.name}");`);
         if (cc.fkRef) {
-          const [rt, rc] = cc.fkRef.split('.');
-          if (rt && rc) stmts.push(`ALTER TABLE ${tq} ADD FOREIGN KEY ("${cc.name}") REFERENCES "${rt}"("${rc}");`);
+          const ref = fkRefToSQL(cc.fkRef);
+          if (ref) stmts.push(`ALTER TABLE ${tq} ADD FOREIGN KEY ("${cc.name}") REFERENCES ${ref};`);
         }
         continue;
       }
@@ -410,8 +422,8 @@ function generateAlterDDL(original: DesignerTable[], current: DesignerTable[], _
       }
       // FK: add if new or changed
       if (cc.fkRef && cc.fkRef !== oc.fkRef) {
-        const [rt, rc] = cc.fkRef.split('.');
-        if (rt && rc) stmts.push(`ALTER TABLE ${tq} ADD FOREIGN KEY ("${cc.name}") REFERENCES "${rt}"("${rc}");`);
+        const ref = fkRefToSQL(cc.fkRef);
+        if (ref) stmts.push(`ALTER TABLE ${tq} ADD FOREIGN KEY ("${cc.name}") REFERENCES ${ref};`);
       }
     }
   }
@@ -788,7 +800,9 @@ function FkPickerModal({ tables, currentTableId, value, onSelect, onClose }: {
                   {pickedTable.name} — pick column
                 </p>
                 {pickedTable.columns.map(col => {
-                  const ref = `${pickedTable.name}.${col.name}`;
+                  const ref = pickedTable.schema && pickedTable.schema !== 'public'
+                    ? `${pickedTable.schema}.${pickedTable.name}.${col.name}`
+                    : `${pickedTable.name}.${col.name}`;
                   const selected = value === ref;
                   return (
                     <button key={col.id} onClick={() => { onSelect(ref); onClose(); }}
@@ -874,7 +888,7 @@ function buildDesignerErd(tables: DesignerTable[]): { nodes: Node[]; edges: Edge
   tables.forEach(t => {
     t.columns.forEach(col => {
       if (!col.fkRef) return;
-      const [targetName] = col.fkRef.split('.');
+      const targetName = fkRefTable(col.fkRef);
       if (!byName.has(targetName) || targetName === t.name) return;
       const eid = `${t.name}→${targetName}`;
       if (edgeSet.has(eid)) return;
@@ -1098,7 +1112,7 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
   const fkCols = table.columns.filter(c => c.fkRef);
   const incomingFks = tables.flatMap(t =>
     t.id !== table.id
-      ? t.columns.filter(c => c.fkRef?.startsWith(`${table.name}.`)).map(c => ({ fromTable: t, fromCol: c }))
+      ? t.columns.filter(c => c.fkRef ? fkRefTable(c.fkRef) === table.name : false).map(c => ({ fromTable: t, fromCol: c }))
       : []
   );
 
@@ -1381,7 +1395,7 @@ function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd
                 )}
                 {schemaTables.map(t => {
                   const hasFk = t.columns.some(c => c.fkRef);
-                  const isReferenced = tables.some(ot => ot.id !== t.id && ot.columns.some(c => c.fkRef?.startsWith(`${t.name}.`)));
+                  const isReferenced = tables.some(ot => ot.id !== t.id && ot.columns.some(c => c.fkRef ? fkRefTable(c.fkRef) === t.name : false));
                   return (
                     <div
                       key={t.id}
@@ -2575,7 +2589,7 @@ function SchemaDesignerInner() {
               isAutoIncrement: /serial|auto_increment/i.test(c.dataType) || /^nextval\(/i.test(c.defaultValue ?? ''),
               defaultValue: c.defaultValue ?? '',
               comment: c.comment ?? '',
-              fkRef: c.fkRef ? c.fkRef.split('.').slice(1).join('.') : '', // "schema.table.col" → "table.col"
+              fkRef: c.fkRef ?? '',
               _fkConstraintName: fkMap.get(c.name),
               _uniqueConstraintName: uqMap.get(c.name),
             };
@@ -2929,12 +2943,16 @@ function SchemaDesignerInner() {
     setTables(prev => {
       const targetTbl = prev.find(t => t.name === targetTableName);
       const targetPk = targetTbl?.columns.find(c => c.isPk)?.name ?? 'id';
+      const targetSchema = targetTbl?.schema;
+      const fkRefVal = targetSchema && targetSchema !== 'public'
+        ? `${targetSchema}.${targetTableName}.${targetPk}`
+        : `${targetTableName}.${targetPk}`;
       return prev.map(t => {
         if (t.name !== sourceTableName) return t;
         return {
           ...t,
           columns: t.columns.map(c =>
-            c.id === sourceColId ? { ...c, fkRef: `${targetTableName}.${targetPk}`, isUnique: false } : c
+            c.id === sourceColId ? { ...c, fkRef: fkRefVal, isUnique: false } : c
           ),
         };
       });
