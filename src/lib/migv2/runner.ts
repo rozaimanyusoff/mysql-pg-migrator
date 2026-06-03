@@ -158,12 +158,15 @@ function safeDdlDefault(raw: string | null | undefined, targetType: 'postgresql'
   return null;
 }
 
+// Effective target column name — use targetName override when set
+function tgtCol(c: ColumnMap): string { return c.targetName ?? c.targetCol; }
+
 export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mysql'): string {
   const { schema, table } = tableMap.target;
   const cols = tableMap.columns.filter(c => c.include);
 
   const pkCol = cols.find(c => c.conversion === 'serial_to_uuid') ??
-    cols.find(c => c.sourceCol && c.targetCol.toLowerCase() === 'id');
+    cols.find(c => c.sourceCol && tgtCol(c).toLowerCase() === 'id');
 
   const colDefs = cols.map(c => {
     let type = c.targetType;
@@ -172,9 +175,9 @@ export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql'
     const rawDef = c.targetType.toLowerCase() === 'uuid' ? null : safeDdlDefault(c.defaultValue, targetType);
     const def = rawDef ? ` DEFAULT ${rawDef}` : '';
     if (targetType === 'postgresql') {
-      return `  "${c.targetCol}" ${type}${notNull}${def}`;
+      return `  "${tgtCol(c)}" ${type}${notNull}${def}`;
     } else {
-      return `  \`${c.targetCol}\` ${type}${notNull}${def}`;
+      return `  \`${tgtCol(c)}\` ${type}${notNull}${def}`;
     }
   });
 
@@ -191,9 +194,9 @@ export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql'
 
   if (pkCol) {
     if (targetType === 'postgresql') {
-      colDefs.push(`  PRIMARY KEY ("${pkCol.targetCol}")`);
+      colDefs.push(`  PRIMARY KEY ("${tgtCol(pkCol)}")`);
     } else {
-      colDefs.push(`  PRIMARY KEY (\`${pkCol.targetCol}\`)`);
+      colDefs.push(`  PRIMARY KEY (\`${tgtCol(pkCol)}\`)`);
     }
   }
 
@@ -244,13 +247,12 @@ function transformRow(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const col of tableMap.columns.filter(c => c.include)) {
+    const outCol = tgtCol(col);
     if (col.sourceCol === null) {
-      // target-only column: use default (null or literal)
-      out[col.targetCol] = col.defaultValue ?? null;
+      out[outCol] = col.defaultValue ?? null;
     } else {
       const originalVal = row[col.sourceCol];
-      out[col.targetCol] = coerceValue(originalVal, col, tableMap);
-      // Preserve original serial integer in the legacy column alongside the UUID
+      out[outCol] = coerceValue(originalVal, col, tableMap);
       if (col.keepLegacyAs && col.conversion === 'serial_to_uuid') {
         out[col.keepLegacyAs] = originalVal != null ? Number(originalVal) : null;
       }
@@ -414,9 +416,9 @@ export async function advanceRun(
 
       // Find target PK column
       const pkColMap = tableMap.columns.find(c =>
-        c.include && (c.conversion === 'serial_to_uuid' || c.targetCol.toLowerCase() === 'id')
+        c.include && (c.conversion === 'serial_to_uuid' || tgtCol(c).toLowerCase() === 'id')
       );
-      ts.targetPkCol = pkColMap?.targetCol ?? null;
+      ts.targetPkCol = pkColMap ? tgtCol(pkColMap) : null;
 
       // Read chunk
       const chunk = await readChunk(
