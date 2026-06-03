@@ -7,7 +7,7 @@ import axios from 'axios';
 import {
   ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
   Database, FileCode, FileText, Layers, Loader2,
-  Pencil, Play, Plus, RotateCcw, Save, Search,
+  Pencil, Play, Plus, Undo2, Save, Search,
   Table2, Trash2, X, AlertTriangle, CheckCircle2, Clock,
   Network,
 } from 'lucide-react';
@@ -51,7 +51,7 @@ function StatusBadge({ status }: { status: string }) {
   const Icon = status === 'running' ? Loader2
     : status === 'completed' ? CheckCircle2
     : status === 'failed' ? AlertTriangle
-    : status === 'rolled_back' ? RotateCcw
+    : status === 'rolled_back' ? Undo2
     : Clock;
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${map[status] ?? map.pending}`}>
@@ -2303,7 +2303,7 @@ export default function Migration() {
                                 title={`Rollback ${ts.sourceKey}`}
                                 className="shrink-0 p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-40 transition-colors"
                               >
-                                {isRollingBackThis ? <Loader2 size={9} className="animate-spin" /> : <RotateCcw size={9} />}
+                                {isRollingBackThis ? <Loader2 size={9} className="animate-spin" /> : <Undo2 size={9} />}
                               </button>
                             )}
                             <CheckCircle2 size={10} className="text-emerald-500 shrink-0" />
@@ -2338,7 +2338,7 @@ export default function Migration() {
               {(currentRun.status === 'completed' || currentRun.status === 'failed') && (
                 <button onClick={() => setRunRollbackPrompt({ drop: false })} disabled={rollingBack}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-100 disabled:opacity-50 transition-colors">
-                  {rollingBack ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />} Rollback
+                  {rollingBack ? <Loader2 size={11} className="animate-spin" /> : <Undo2 size={11} />} Rollback
                 </button>
               )}
               <button onClick={() => setCurrentRun(null)}
@@ -2365,7 +2365,7 @@ export default function Migration() {
                             title={`Rollback ${ts.sourceKey}`}
                             className="shrink-0 p-0.5 rounded text-gray-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-40 transition-colors"
                           >
-                            {isRollingBackThis ? <Loader2 size={9} className="animate-spin" /> : <RotateCcw size={9} />}
+                            {isRollingBackThis ? <Loader2 size={9} className="animate-spin" /> : <Undo2 size={9} />}
                           </button>
                         )}
                       </div>
