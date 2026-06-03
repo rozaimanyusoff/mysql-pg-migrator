@@ -2,6 +2,12 @@
 
 ---
 
+## 2026-06-03
+- **fix** — `/connections` 404; restore Settings icon in Navbar
+  - `src/pages/export-import.tsx`, `src/pages/migration.tsx` — changed 3 dead links from `/connections` (no such page) to `/settings`
+  - `src/components/Navbar.tsx` — added `Settings2` icon link on the right side of the global nav bar; highlights when active on `/settings`
+  - Status: done
+
 ## 2026-06-02
 - **fix** — Pending Save accumulates across multiple runs; FK picker uses source tables
   - `src/pages/migration.tsx` — added `accumulatedTableStates` + `accumulatedTableMaps` state; `completedMigratedStates` now derives from accumulated state — tables from all runs stay in Pending Save until saved/cleared; `advanceMigration` merges per run (latest entry wins per sourceKey); removed `savedMigratedSources` reset in `startMigration`; `handleSaveMigratedTables` reads from `accumulatedTableMaps`; rollback handlers remove from accumulator; page-load restore populates accumulator

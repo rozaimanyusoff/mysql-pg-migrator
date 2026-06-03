@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Settings2 } from 'lucide-react';
 
 const MODULE_LABELS: Record<string, string> = {
   '/migration': 'Migration',
@@ -42,6 +42,18 @@ export default function Navbar() {
       )}
 
       <div className="flex-1" />
+
+      <Link
+        href="/settings"
+        title="Settings"
+        className={`p-1.5 rounded-md transition-colors ${
+          router.pathname === '/settings'
+            ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40'
+            : 'text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800'
+        }`}
+      >
+        <Settings2 size={16} />
+      </Link>
     </header>
   );
 }

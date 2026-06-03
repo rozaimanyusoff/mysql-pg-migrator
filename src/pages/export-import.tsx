@@ -527,7 +527,7 @@ function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgt
       {connections.length === 0 ? (
         <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center py-6 italic">
           No saved connections.<br />
-          <Link href="/connections" className="text-blue-500 hover:underline not-italic">Add one →</Link>
+          <Link href="/settings" className="text-blue-500 hover:underline not-italic">Add one →</Link>
         </p>
       ) : (
         connections.map((c) => {

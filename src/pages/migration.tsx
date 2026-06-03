@@ -1228,7 +1228,7 @@ export default function Migration() {
                       </div>
                       <div className="flex flex-col gap-1.5">
                         <ConnSelect connections={connections} value={srcConnId}
-                          onChange={id => setSrcConnId(id)} onNew={() => void router.push('/connections')} accent="blue" />
+                          onChange={id => setSrcConnId(id)} onNew={() => void router.push('/settings')} accent="blue" />
                         <div className="flex items-center gap-1.5">
                           {srcConnId && (srcLoadingDbs
                             ? <Loader2 size={11} className="animate-spin text-gray-400" />
@@ -1331,7 +1331,7 @@ export default function Migration() {
                       </div>
                       <div className="flex flex-col gap-1.5">
                         <ConnSelect connections={connections} value={tgtConnId}
-                          onChange={id => setTgtConnId(id)} onNew={() => void router.push('/connections')} accent="violet" />
+                          onChange={id => setTgtConnId(id)} onNew={() => void router.push('/settings')} accent="violet" />
 
                         {/* DB selector / create-new-DB row */}
                         {tgtConnId && (tgtLoadingDbs
