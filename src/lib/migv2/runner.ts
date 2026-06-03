@@ -161,8 +161,14 @@ function safeDdlDefault(raw: string | null | undefined, targetType: 'postgresql'
 // Effective target column name — use targetName override when set
 function tgtCol(c: ColumnMap): string { return c.targetName ?? c.targetCol; }
 
+// Effective target table name — use targetAlias override when set
+function resolveTargetTable(tableMap: TableMap): string {
+  return tableMap.targetAlias?.trim() || tableMap.target.table;
+}
+
 export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mysql'): string {
-  const { schema, table } = tableMap.target;
+  const schema = tableMap.target.schema;
+  const table = resolveTargetTable(tableMap);
   const cols = tableMap.columns.filter(c => c.include);
 
   const pkCol = cols.find(c => c.conversion === 'serial_to_uuid') ??
@@ -220,7 +226,10 @@ function coerceValue(
   }
 
   if (col.fkRef) {
-    return seqToUUID(col.fkRef, String(val));
+    // Use only the last 2 parts (schema.table) as the namespace so that 3-part
+    // cross-DB refs (database.schema.table) generate the same UUID as 2-part refs.
+    const ns = col.fkRef.split('.').slice(-2).join('.');
+    return seqToUUID(ns, String(val));
   }
 
   // Boolean coercions
@@ -388,7 +397,8 @@ export async function advanceRun(
 
       // Truncate target if requested (first chunk only)
       if (ts.offset === 0 && tableMap.truncateBeforeMigrate) {
-        const { schema, table } = tableMap.target;
+        const schema = tableMap.target.schema;
+        const table = resolveTargetTable(tableMap);
         if (target.type === 'postgresql') {
           await withPg(target, c => c.query(`TRUNCATE "${schema}"."${table}" CASCADE`).then(() => undefined));
         } else {
@@ -445,7 +455,7 @@ export async function advanceRun(
 
       // Insert into target (upsert when incremental by timestamp)
       const pks = await insertRows(
-        target, tableMap.target.schema, tableMap.target.table,
+        target, tableMap.target.schema, resolveTargetTable(tableMap),
         transformed, ts.targetPkCol, useUpsert
       );
 
@@ -521,7 +531,8 @@ export async function rollbackTable(
   const tableMap = run.tables.find(t => t.id === tableId);
   if (!tableMap) { log(`tableMap ${tableId} missing`); return run; }
 
-  const { schema, table } = tableMap.target;
+  const schema = tableMap.target.schema;
+  const table = resolveTargetTable(tableMap);
   try {
     if (ts.pkOverflow || !ts.targetPkCol || !ts.insertedPks.length) {
       if (target.type === 'postgresql') {
@@ -575,7 +586,8 @@ export async function rollbackRun(
     const tableMap = run.tables.find(t => t.id === ts.id);
     if (!tableMap) continue;
 
-    const { schema, table } = tableMap.target;
+    const schema = tableMap.target.schema;
+    const table = resolveTargetTable(tableMap);
 
     try {
       if (ts.pkOverflow || !ts.targetPkCol || !ts.insertedPks.length) {
@@ -650,7 +662,7 @@ export function buildMigrationMd(run: MigRun): string {
 
   for (const tm of run.tables.filter(t => t.include)) {
     const ts = run.tableStates.find(s => s.id === tm.id);
-    lines.push(`### \`${tm.source.schema}.${tm.source.table}\` → \`${tm.target.schema}.${tm.target.table}\``);
+    lines.push(`### \`${tm.source.schema}.${tm.source.table}\` → \`${tm.target.schema}.${resolveTargetTable(tm)}\``);
     lines.push(``);
     if (ts) {
       lines.push(`**Status:** ${ts.status} | **Rows:** ${ts.rowsMigrated} / ${ts.rowsSource}`);
@@ -666,7 +678,8 @@ export function buildMigrationMd(run: MigRun): string {
 
     // Rollback info
     if (ts && ts.insertedPks.length > 0) {
-      const { schema, table } = tm.target;
+      const schema = tm.target.schema;
+      const table = resolveTargetTable(tm);
       const pkCol = ts.targetPkCol ?? 'id';
       lines.push(`**Rollback SQL:**`);
       lines.push(`\`\`\`sql`);

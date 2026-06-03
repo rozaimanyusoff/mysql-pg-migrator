@@ -1,11 +1,11 @@
 'use client';
 import Head from 'next/head';
 import Link from 'next/link';
-
+import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
-  ArrowLeft, Database, Plus, Trash2, Table2, Upload, Play, Copy,
+  ArrowLeft, ArrowRight, Database, Plus, Trash2, Table2, Upload, Play, Copy,
   Check, RefreshCw, FileSpreadsheet, FileCode2, FileText, CheckCircle2,
   XCircle, Loader2, X, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Download,
   Columns, Sprout, Save, Clock,
@@ -13,7 +13,7 @@ import {
   Network, Pencil, Zap, AlertTriangle,
 } from 'lucide-react';
 import {
-  ReactFlow, Background, Controls,
+  ReactFlow, Background, Panel,
   useNodesState, useEdgesState,
   BaseEdge, getSmoothStepPath,
   Handle, Position, type Node, type Edge, type EdgeProps, type Connection,
@@ -998,7 +998,9 @@ function buildDesignerErd(tables: DesignerTable[]): { nodes: Node[]; edges: Edge
   return { nodes, edges };
 }
 
-function computeDesignerErdLayout(nodes: Node[], edges: Edge[]): Map<string, { x: number; y: number }> {
+function computeDesignerErdLayout(
+  nodes: Node[], edges: Edge[], orientation: 'LR' | 'TB' = 'LR'
+): Map<string, { x: number; y: number }> {
   const outCount = new Map(nodes.map(n => [n.id, 0]));
   edges.forEach(e => outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1));
   const roots = nodes.filter(n => outCount.get(n.id) === 0).map(n => n.id);
@@ -1017,15 +1019,30 @@ function computeDesignerErdLayout(nodes: Node[], edges: Edge[]): Map<string, { x
   const byLevel = new Map<number, string[]>();
   nodes.forEach(n => { const l = level.get(n.id)!; byLevel.set(l, [...(byLevel.get(l) ?? []), n.id]); });
   const positioned = new Map<string, { x: number; y: number }>();
-  let px = 0;
-  [...byLevel.keys()].sort((a, b) => a - b).forEach(l => {
-    const ids = byLevel.get(l)!;
-    const heights = ids.map(id => erdNodeHeight((nodes.find(n => n.id === id)?.data as { columns: DesignerColumn[] })?.columns?.length ?? 5));
-    const total = heights.reduce((s, h) => s + h + ERD_V_GAP, -ERD_V_GAP);
-    let py = -total / 2;
-    ids.forEach((id, i) => { positioned.set(id, { x: px, y: py }); py += heights[i] + ERD_V_GAP; });
-    px += ERD_COL_W + ERD_H_GAP;
-  });
+  const levels = [...byLevel.keys()].sort((a, b) => a - b);
+
+  if (orientation === 'LR') {
+    let px = 0;
+    levels.forEach(l => {
+      const ids = byLevel.get(l)!;
+      const heights = ids.map(id => erdNodeHeight((nodes.find(n => n.id === id)?.data as { columns: DesignerColumn[] })?.columns?.length ?? 5));
+      const total = heights.reduce((s, h) => s + h + ERD_V_GAP, -ERD_V_GAP);
+      let py = -total / 2;
+      ids.forEach((id, i) => { positioned.set(id, { x: px, y: py }); py += heights[i] + ERD_V_GAP; });
+      px += ERD_COL_W + ERD_H_GAP;
+    });
+  } else {
+    let py = 0;
+    levels.forEach(l => {
+      const ids = byLevel.get(l)!;
+      const heights = ids.map(id => erdNodeHeight((nodes.find(n => n.id === id)?.data as { columns: DesignerColumn[] })?.columns?.length ?? 5));
+      const maxH = Math.max(...heights, 0);
+      const totalW = ids.length * ERD_COL_W + (ids.length - 1) * ERD_H_GAP;
+      let px = -totalW / 2;
+      ids.forEach(id => { positioned.set(id, { x: px, y: py }); px += ERD_COL_W + ERD_H_GAP; });
+      py += maxH + ERD_V_GAP * 2;
+    });
+  }
   return positioned;
 }
 
@@ -1055,30 +1072,42 @@ function DesignerErdCrowsFoot({ id, sourceX, sourceY, targetX, targetY, sourcePo
   );
 }
 
-function DesignerErdTableNode({ data }: { data: { label: string; columns: DesignerColumn[]; highlighted?: boolean } }) {
+function DesignerErdTableNode({ data }: { data: { label: string; columns: DesignerColumn[]; highlighted?: boolean; orientation?: 'LR' | 'TB'; onHide?: () => void } }) {
   const isHighlighted = Boolean(data.highlighted);
+  const isLR = (data.orientation ?? 'LR') === 'LR';
+  const targetPos = isLR ? Position.Left : Position.Top;
+  const sourcePos = isLR ? Position.Right : Position.Bottom;
   return (
-    <div className={`bg-white dark:bg-slate-800 border rounded-lg shadow-md min-w-[220px] text-xs overflow-hidden transition-all duration-150 ${isHighlighted ? 'border-amber-400 dark:border-amber-500 shadow-amber-200/50 dark:shadow-amber-900/40 shadow-lg' : 'border-gray-300 dark:border-slate-600'}`}>
-      {/* Single target handle on the left (whole-table) */}
-      <Handle type="target" position={Position.Left} id="__table__" className="!bg-blue-500 !w-2.5 !h-2.5" />
-      <div className={`text-white px-3 py-1.5 font-semibold text-[11px] tracking-wide truncate transition-colors duration-150 ${isHighlighted ? 'bg-amber-500 dark:bg-amber-600' : 'bg-blue-600 dark:bg-blue-700'}`}>
-        {data.label}
+    <div className={`group/node bg-white dark:bg-slate-800 border rounded-lg shadow-md min-w-[220px] text-xs overflow-hidden transition-all duration-150 ${isHighlighted ? 'border-amber-400 dark:border-amber-500 shadow-amber-200/50 dark:shadow-amber-900/40 shadow-lg' : 'border-gray-300 dark:border-slate-600'}`}>
+      <Handle type="target" position={targetPos} id="__table__" className="!bg-blue-500 !w-3 !h-3" />
+      <div className={`group/header flex items-center gap-1.5 text-white px-3 py-1.5 transition-colors duration-150 ${isHighlighted ? 'bg-amber-500 dark:bg-amber-600' : 'bg-blue-600 dark:bg-blue-700'}`}>
+        <span className="font-semibold text-[11px] tracking-wide truncate flex-1">{data.label}</span>
+        {data.onHide && (
+          <button
+            onClick={e => { e.stopPropagation(); data.onHide!(); }}
+            title="Hide this table from ERD"
+            className="opacity-0 group-hover/header:opacity-100 p-0.5 rounded hover:bg-white/20 transition-all shrink-0"
+          >
+            <X size={10} />
+          </button>
+        )}
       </div>
       <div className="divide-y divide-gray-100 dark:divide-slate-700">
         {data.columns.map(col => (
-          <div key={col.id} className="relative flex items-center gap-1.5 px-3 py-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 group/col">
+          <div key={col.id} className="relative flex items-center gap-1.5 px-3 py-1 hover:bg-gray-50 dark:hover:bg-slate-700/50">
             <span className="shrink-0 w-8 text-[10px] font-bold">
               {col.isPk ? <span className="text-amber-500">PK</span> : col.fkRef ? <span className="text-blue-500">FK</span> : <span className="text-gray-300 dark:text-slate-600">—</span>}
             </span>
             <span className="font-medium text-gray-800 dark:text-slate-200 truncate flex-1">{col.name}</span>
             <span className="text-gray-400 dark:text-slate-500 shrink-0 text-[10px]">{col.type}{col.length ? `(${col.length})` : ''}</span>
-            {/* Per-column source handle — visible on hover */}
+            {/* Source handle — visible on node hover, larger hit area */}
             <Handle
               type="source"
-              position={Position.Right}
+              position={sourcePos}
               id={col.id}
-              title={`Drag to create FK from ${col.name}`}
-              className="!bg-violet-500 !w-2 !h-2 !opacity-0 group-hover/col:!opacity-100 !transition-opacity"
+              title={`Drag → create FK from ${col.name}`}
+              style={{ cursor: 'crosshair' }}
+              className="!bg-violet-500 !w-4 !h-4 !rounded-full !border-2 !border-white dark:!border-slate-700 !opacity-0 group-hover/node:!opacity-60 hover:!opacity-100 !transition-opacity !shadow-sm"
             />
           </div>
         ))}
@@ -1095,17 +1124,51 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
   onClose: () => void;
   onFkCreate?: (sourceTable: string, sourceColId: string, targetTable: string) => void;
 }) {
-  const { fitView } = useReactFlow();
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [orientation, setOrientation] = useState<'LR' | 'TB'>('LR');
+  const [showEdges, setShowEdges] = useState(true);
+  const [hiddenNodes, setHiddenNodes] = useState<Set<string>>(new Set());
+
+  const hideNode = useCallback((id: string) => {
+    setHiddenNodes(prev => new Set([...prev, id]));
+  }, []);
+
+  const prevOrientationRef = useRef<'LR' | 'TB' | null>(null);
 
   useEffect(() => {
+    const orientationChanged = prevOrientationRef.current !== orientation;
+    prevOrientationRef.current = orientation;
     const { nodes: n, edges: e } = buildDesignerErd(tables);
-    const pos = computeDesignerErdLayout(n, e);
-    setNodes(n.map(node => ({ ...node, position: pos.get(node.id) ?? { x: 0, y: 0 } })));
-    setEdges(e);
-    setTimeout(() => fitView({ padding: 0.12, duration: 300 }), 80);
-  }, [tables, fitView, setNodes, setEdges]);
+
+    if (orientationChanged || nodes.length === 0) {
+      // Full relayout: orientation changed or first mount
+      const pos = computeDesignerErdLayout(n, e, orientation);
+      setNodes(n.map(node => ({
+        ...node,
+        position: pos.get(node.id) ?? { x: 0, y: 0 },
+        data: { ...node.data, orientation, onHide: () => hideNode(node.id) },
+      })));
+      setEdges(e);
+      setTimeout(() => fitView({ padding: 0.12, duration: 300 }), 80);
+    } else {
+      // Tables-only change (e.g. FK created): preserve positions, just refresh edges + column data
+      setEdges(e);
+      const tableMap = new Map(tables.map(t => [t.name, t]));
+      setNodes(prev => prev.map(node => {
+        const t = tableMap.get(node.id);
+        if (!t) return node;
+        return { ...node, data: { ...node.data, columns: t.columns, orientation, onHide: () => hideNode(node.id) } };
+      }));
+    }
+  }, [tables, orientation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visibleNodes = useMemo(() => nodes.filter(n => !hiddenNodes.has(n.id)), [nodes, hiddenNodes]);
+  const visibleEdges = useMemo(() =>
+    showEdges ? edges.filter(e => !hiddenNodes.has(e.source) && !hiddenNodes.has(e.target)) : [],
+    [edges, showEdges, hiddenNodes]
+  );
 
   // ── Hover highlight ─────────────────────────────────────────────────────────
   const onEdgeMouseEnter = useCallback((_: React.MouseEvent, edge: Edge) => {
@@ -1122,8 +1185,7 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
   const onConnect = useCallback((connection: Connection) => {
     const { source, sourceHandle, target } = connection;
     if (!source || !target || !sourceHandle || sourceHandle === '__table__') return;
-    if (source === target) return; // no self-FK
-    // Optimistically add edge to canvas
+    if (source === target) return;
     setEdges(prev => addEdge({
       ...connection,
       id: `${source}→${target}`,
@@ -1133,27 +1195,25 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
     onFkCreate?.(source, sourceHandle, target);
   }, [setEdges, onFkCreate]);
 
+  const btnBase = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors';
+  const btnActive = `${btnBase} bg-blue-600 text-white shadow-sm`;
+  const btnInactive = `${btnBase} bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700`;
+
   return (
     <div className="fixed inset-0 z-[300] flex flex-col bg-black/60 backdrop-blur-sm">
-      <div className="flex items-center gap-3 px-5 py-3 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 shrink-0">
-        <Network size={15} className="text-blue-500" />
+      {/* Minimal header — title only */}
+      <div className="flex items-center gap-3 px-5 py-2.5 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 shrink-0">
+        <Network size={14} className="text-blue-500" />
         <span className="font-semibold text-sm text-gray-800 dark:text-slate-100">ERD — Schema Studio</span>
         <span className="text-[11px] text-gray-400 dark:text-slate-500">{tables.length} table{tables.length !== 1 ? 's' : ''}</span>
         <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
-          Drag column → table to create FK
+          Drag column handle → table to create FK
         </span>
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={onClose}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
-          >
-            <X size={12} /> Back to Designer
-          </button>
-        </div>
       </div>
+
       <div className="flex-1 overflow-hidden">
         <ReactFlow
-          nodes={nodes} edges={edges}
+          nodes={visibleNodes} edges={visibleEdges}
           onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
           nodeTypes={designerErdNodeTypes} edgeTypes={designerErdEdgeTypes}
           onEdgeMouseEnter={onEdgeMouseEnter} onEdgeMouseLeave={onEdgeMouseLeave}
@@ -1162,9 +1222,78 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
           proOptions={{ hideAttribution: true }}
         >
           <Background />
-          <Controls />
+
+          {/* ── Top-right control panel ── */}
+          <Panel position="top-right">
+            <div className="flex flex-col gap-1.5 p-2 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-gray-200 dark:border-slate-700 shadow-lg backdrop-blur-sm min-w-[120px]">
+
+              {/* Zoom */}
+              <div className="flex items-center gap-1 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+                <button onClick={() => zoomOut({ duration: 200 })} title="Zoom out"
+                  className="flex-1 flex items-center justify-center py-1.5 text-[13px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                  −
+                </button>
+                <button onClick={() => fitView({ padding: 0.12, duration: 300 })} title="Fit view"
+                  className="flex-1 flex items-center justify-center py-1.5 text-[10px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors border-x border-gray-200 dark:border-slate-700">
+                  ⊡
+                </button>
+                <button onClick={() => zoomIn({ duration: 200 })} title="Zoom in"
+                  className="flex-1 flex items-center justify-center py-1.5 text-[13px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                  +
+                </button>
+              </div>
+
+              <div className="h-px bg-gray-200 dark:bg-slate-700" />
+
+              {/* Orientation */}
+              <div className="flex items-center gap-1 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+                <button
+                  onClick={() => setOrientation('LR')}
+                  title="Horizontal layout (left → right)"
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium transition-colors ${orientation === 'LR' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
+                >
+                  <ArrowRight size={11} />LR
+                </button>
+                <button
+                  onClick={() => setOrientation('TB')}
+                  title="Vertical layout (top → bottom)"
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium transition-colors ${orientation === 'TB' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
+                >
+                  <ArrowRight size={11} className="rotate-90" />TB
+                </button>
+              </div>
+
+              {/* Hide/show reference lines */}
+              <button
+                onClick={() => setShowEdges(v => !v)}
+                className={showEdges ? btnInactive : btnActive}
+              >
+                <Network size={11} />
+                {showEdges ? 'Hide refs' : 'Show refs'}
+              </button>
+
+              {/* Restore hidden nodes */}
+              {hiddenNodes.size > 0 && (
+                <button
+                  onClick={() => setHiddenNodes(new Set())}
+                  className={btnInactive}
+                >
+                  <Plus size={11} />
+                  Show hidden ({hiddenNodes.size})
+                </button>
+              )}
+
+              <div className="h-px bg-gray-200 dark:bg-slate-700" />
+
+              {/* Close */}
+              <button onClick={onClose} className={btnInactive}>
+                <X size={11} /> Back
+              </button>
+            </div>
+          </Panel>
         </ReactFlow>
       </div>
+
       {tables.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <p className="text-gray-400 dark:text-slate-500 text-sm">No tables to preview — add tables in the designer first.</p>
@@ -1449,73 +1578,60 @@ function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd
     return m;
   }, [tables, schemas]);
 
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['public', '']));
-  const toggleSchema = (s: string) => setExpanded(p => { const n = new Set(p); n.has(s) ? n.delete(s) : n.add(s); return n; });
-
   return (
     <div className="flex flex-col h-full">
-      {/* Tree */}
       <div className="flex-1 overflow-y-auto py-1">
         {Array.from(grouped.entries()).map(([schema, schemaTables]) => (
           <div key={schema}>
-            {/* Schema header */}
-            <div className="flex items-center group/schema">
-              <button
-                onClick={() => toggleSchema(schema)}
-                className="flex-1 flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors"
-              >
-                {expanded.has(schema) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+            {/* Schema label */}
+            <div className="flex items-center group/schema px-3 py-1.5">
+              <div className="flex-1 flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">
                 <Layers size={10} />
                 <span>{schema || 'public'}</span>
                 {schemaTables.length > 0 && <span className="opacity-60">({schemaTables.length})</span>}
-              </button>
+              </div>
               {allowAddTable && (
                 <button
                   onClick={() => onAddTableFor(schema)}
                   title={`Add table to ${schema}`}
-                  className="opacity-0 group-hover/schema:opacity-100 p-1.5 mr-1 text-gray-400 hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400 transition-all shrink-0"
+                  className="opacity-0 group-hover/schema:opacity-100 p-1 text-gray-400 hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400 transition-all shrink-0"
                 >
                   <Plus size={11} />
                 </button>
               )}
             </div>
 
-            {/* Tables under schema */}
-            {expanded.has(schema) && (
-              <>
-                {schemaTables.length === 0 && (
-                  <p className="pl-8 py-1.5 text-[10px] italic text-gray-300 dark:text-slate-700">
-                    Empty — hover + to add table
-                  </p>
-                )}
-                {schemaTables.map(t => {
-                  const hasFk = t.columns.some(c => c.fkRef);
-                  const isReferenced = tables.some(ot => ot.id !== t.id && ot.columns.some(c => c.fkRef ? fkRefTable(c.fkRef) === t.name : false));
-                  return (
-                    <div
-                      key={t.id}
-                      onClick={() => onSelect(t.id)}
-                      className={`group flex items-center gap-2 py-1.5 pl-7 pr-2 cursor-pointer transition-colors
-                        ${selectedId === t.id
-                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                          : 'hover:bg-gray-50 dark:hover:bg-slate-800/30 text-gray-700 dark:text-slate-300'}`}
-                    >
-                      <Table2 size={11} className={`shrink-0 ${selectedId === t.id ? 'text-blue-500' : 'text-gray-400 dark:text-slate-500'}`} />
-                      <span className="flex-1 text-[11px] font-medium truncate">{t.name}</span>
-                      {hasFk && <span title="Has FK references"><Link2 size={9} className="text-blue-400 dark:text-blue-500 shrink-0" /></span>}
-                      {isReferenced && <span title="Referenced by other tables"><ChevronRight size={9} className="text-purple-400 dark:text-purple-500 shrink-0 -rotate-90" /></span>}
-                      <span className="text-[10px] text-gray-400 dark:text-slate-600">{t.columns.length}</span>
-                      <button
-                        onClick={e => { e.stopPropagation(); onDelete(t.id); }}
-                        className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition-all shrink-0"
-                      >
-                        <X size={11} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </>
-            )}
+            {/* Tables under schema — always visible */}
+            {schemaTables.length === 0 ? (
+              <p className="pl-7 pb-1.5 text-[10px] italic text-gray-300 dark:text-slate-700">
+                Empty — hover + to add table
+              </p>
+            ) : schemaTables.map(t => {
+              const hasFk = t.columns.some(c => c.fkRef);
+              const isReferenced = tables.some(ot => ot.id !== t.id && ot.columns.some(c => c.fkRef ? fkRefTable(c.fkRef) === t.name : false));
+              return (
+                <div
+                  key={t.id}
+                  onClick={() => onSelect(t.id)}
+                  className={`group flex items-center gap-2 py-1.5 pl-7 pr-2 cursor-pointer transition-colors
+                    ${selectedId === t.id
+                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                      : 'hover:bg-gray-50 dark:hover:bg-slate-800/30 text-gray-700 dark:text-slate-300'}`}
+                >
+                  <Table2 size={11} className={`shrink-0 ${selectedId === t.id ? 'text-blue-500' : 'text-gray-400 dark:text-slate-500'}`} />
+                  <span className="flex-1 text-[11px] font-medium truncate">{t.name}</span>
+                  {hasFk && <span title="Has FK references"><Link2 size={9} className="text-blue-400 dark:text-blue-500 shrink-0" /></span>}
+                  {isReferenced && <span title="Referenced by other tables"><ChevronRight size={9} className="text-purple-400 dark:text-purple-500 shrink-0 -rotate-90" /></span>}
+                  <span className="text-[10px] text-gray-400 dark:text-slate-600">{t.columns.length}</span>
+                  <button
+                    onClick={e => { e.stopPropagation(); onDelete(t.id); }}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition-all shrink-0"
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         ))}
       </div>
@@ -2512,6 +2628,7 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 function SchemaDesignerInner() {
+  const router = useRouter();
   const { showWarning, showError } = useAlert();
 
   // Connections (kept for ImportPanel + ExecuteJobModal)
@@ -2936,6 +3053,20 @@ function SchemaDesignerInner() {
       .then(r => setConnections(r.data.connections))
       .catch(() => { });
   }, []);
+
+  // Auto-load from Migration module: /schema-studio?connId=X&database=Y&schema=Z
+  const urlParamsApplied = useRef(false);
+  useEffect(() => {
+    if (urlParamsApplied.current || !connections.length || !router.isReady) return;
+    const { connId, database, schema } = router.query as Record<string, string | undefined>;
+    if (!connId || !database) return;
+    urlParamsApplied.current = true;
+    pendingRefactorDb.current = database;
+    if (schema) pendingAutoLoad.current = schema;
+    setRefactorConnId(Number(connId));
+    setDesignerMode('refactor');
+    setRightPanelTab('suggest');
+  }, [connections, router.isReady, router.query]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAddSchema = (name: string) => {
     setDesignerSchemas(p => p.includes(name) ? p : [...p, name]);

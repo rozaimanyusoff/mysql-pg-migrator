@@ -6,6 +6,7 @@ export interface MigTableInfo {
   name: string;
   rowCount: number;
   columnCount: number;
+  database: string;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -34,6 +35,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return rows.map((r: any) => ({
           schema: r.schema, name: r.name,
           rowCount: Number(r.row_count), columnCount: Number(r.col_count),
+          database: conn.database,
         }));
       });
       return res.status(200).json({ tables });
@@ -58,6 +60,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return (rows as any[]).map(r => ({
           schema: r.schema, name: r.name,
           rowCount: Number(r.row_count), columnCount: Number(r.col_count),
+          database: conn.database,
         }));
       });
       return res.status(200).json({ tables });

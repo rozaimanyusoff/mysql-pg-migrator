@@ -50,6 +50,7 @@ export interface TableMap {
   target: { schema: string; table: string };
   columns: ColumnMap[];
   truncateBeforeMigrate: boolean;
+  targetAlias?: string | null;               // overrides target.table as the physical table name in SQL
   // Incremental sync
   syncMode?: 'full' | 'incremental';
   incrementalCol?: string | null;            // source column used as high-water mark
@@ -78,6 +79,7 @@ export interface MigJobTableSummary {
   source: { schema: string; table: string };
   sourceDatabase?: string;
   target: { schema: string; table: string };
+  targetAlias?: string | null;
 }
 
 export interface MigJobSummary {

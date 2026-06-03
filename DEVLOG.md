@@ -2,7 +2,80 @@
 
 ---
 
+## 2026-06-03
+- **implement** — Schema Studio ERD: canvas control panel + orientation + hide refs + hide nodes
+  - `src/pages/schema-studio.tsx` — `computeDesignerErdLayout`: added `orientation: 'LR' | 'TB'` param; TB mode stacks levels along Y axis with nodes arranged horizontally per level
+  - `DesignerErdTableNode`: handle positions now dynamic (`Position.Left/Right` for LR, `Position.Top/Bottom` for TB); added hide button (×) in node title bar — appears on hover, calls `data.onHide()`
+  - `ErdPreviewInner`: state added (`orientation`, `showEdges`, `hiddenNodes`); nodes rebuilt with `orientation` + `onHide` callback on each orientation change; `visibleNodes` and `visibleEdges` derived with `useMemo` filtering hidden nodes and optionally empty edges; header simplified to title + count only; controls moved to `<Panel position="top-right">`: LR/TB toggle, Hide/Show refs button, "Show hidden (N)" restore button, Back button
+  - Added `Panel` to `@xyflow/react` imports
+  - Status: done
+- **revision** — Schema Studio: `TableTreePanel` — remove collapsible schema groups
+  - `src/pages/schema-studio.tsx` — removed `expanded` Set state and `toggleSchema`; schema header changed from clickable toggle button to plain label; tables under each schema always visible (no expand/collapse); `+` add-table button retained on hover
+  - Status: done
+- **revision** — Migration: saved job card layout & icon UX
+  - `src/pages/migration.tsx` — card restructured: distinct header section (name + version), meta row (count · date + active badge + expand toggle), expanded table list, and actions row (Load button left + icon group right)
+  - Icons bumped to `size={12}`, colour changed from `text-gray-400` to `text-slate-500 dark:text-slate-400` for better dark-mode visibility; hover colours retained per action (violet/emerald/blue/rose)
+  - All icon buttons wrapped in `<Tooltip>` (Radix-based, from `../components/Tooltip`) — tooltips: Analyze in Schema Studio, Export DDL SQL, Export Markdown, Rename job, Delete job, Remove from job
+  - Status: done
+- **fix** — Migration v2: preview 500 on saved job load
+  - `src/pages/migration.tsx` — target preview useEffect: added `tgtTables.some(...)` check before calling preview API; if target table doesn't exist in target DB yet (not migrated / dropped), skip the preview call entirely — was causing 500 "table not found" whenever a saved job was loaded with unmigrated target tables
+  - Status: done
+- **fix** — Migration v2: 3 bugs + 2 enhancements (multi-DB follow-up)
+  - `src/pages/migration.tsx` — fix stale `colsCache` key in Src Type column display (was `schema.table`, now `database.schema.table` consistent with cache write)
+  - `src/pages/migration.tsx` — fix preview 500: added `!srcConn.host` guard in `srcConnForMap` and preview useEffect to prevent API call with uninitialised connection
+  - `src/pages/migration.tsx` — `handleLoadJob`: collect all unique `sourceDatabase` values from job tables → set all into `srcDbsSelected` (not just `sourceMeta.database`); `loadSrcDbs` also uses full job DB list when restoring
+  - `src/pages/migration.tsx` — added `DbMultiSelect` combobox component (trigger button shows selected count/name, dropdown with checkboxes, Select-all/Clear, closes on outside click); replaced inline checkbox list
+  - Status: done
+- **implement** — Migration → Schema Studio integration (push flow)
+  - `src/pages/migration.tsx` — `handleOpenInSchemaStudio(jobId)`: loads full job, matches target connection by host/port/username, navigates to `/schema-studio?connId=X&database=Y&schema=Z`; added `ExternalLink` icon button on each saved job card (title: "Analyze in Schema Studio")
+  - `src/pages/schema-studio.tsx` — added `useRouter`; URL param handler useEffect watches `[connections, router.isReady]`; on first load with params: sets `pendingRefactorDb.current`, `pendingAutoLoad.current`, `refactorConnId`, switches mode to `refactor` + tab to `suggest`; cascades through existing useEffects to auto-load the target schema
+  - Status: done
+- **implement** — Migration v2: multi-source DB selection + cross-DB FK Ref
+  - `src/pages/api/migv2/tables.ts` — added `database` field to `MigTableInfo` and each returned table row
+  - `src/lib/migv2/runner.ts` — `coerceValue`: FK UUID namespace uses `fkRef.split('.').slice(-2).join('.')` so 3-part cross-DB refs (`db.schema.table`) generate same UUID as 2-part refs (backward compatible)
+  - `src/pages/migration.tsx`:
+    - Replaced `srcDb: string` with `srcDbsSelected: string[]`; DB selector is now a scrollable checkbox list with Select-all/Clear; `loadSrcDbs` auto-selects the default DB on load
+    - Table loading useEffect: `Promise.all` loads tables from all selected DBs in parallel and merges results; each table stamped with `database` field
+    - `reloadSrcTables` updated for multi-DB
+    - `toggleTable` now accepts full `MigTableInfo` object; uses per-table DB for column API call; column cache key changed from `schema.table` → `database.schema.table` to prevent cross-DB collisions
+    - `isTableIncluded` and table list `mapEntry` lookup now consider `sourceDatabase`
+    - Table list: grouped by DB header when multiple DBs selected; unique key is `database.schema.table`
+    - FK Ref picker: grouped by DB; stores `db.schema.table` (PG) or `db.table` (MySQL); placeholder text updated
+    - Job restore: `sameSrcConn` check uses `srcDbsSelected.includes(...)` instead of strict equality
+  - Status: done
+- **implement** — Migration v2: target table alias (rename) feature
+  - `src/lib/migv2/types.ts` — added `targetAlias?: string | null` to `TableMap` and `MigJobTableSummary`
+  - `src/lib/migv2/runner.ts` — added `resolveTargetTable()` helper; replaced all SQL operation sites (CREATE TABLE, TRUNCATE, INSERT, DELETE, DROP, rollback SQL in migration report) to use the alias when set
+  - `src/pages/api/migv2/jobs/export-sql.ts` — TRUNCATE and comment header now use resolved table name
+  - `src/lib/migv2/job-store.ts` — `listJobs` now includes `targetAlias` in table summary
+  - `src/pages/migration.tsx` — column mapping header: alias input (text field, placeholder = target.table, disabled + tooltip when `lastSyncedValue` is set); path display shows alias; saved jobs sidebar shows alias with ✎ badge if renamed; job summary markdown export uses alias
+  - Fully backward compatible — old jobs without `targetAlias` fall through to `target.table`
+  - Status: done
+
 ## 2026-06-04
+- **implement** — Migration: re-apply full session changes to migration.tsx after accidental revert
+  - `src/pages/migration.tsx` — added `ExternalLink` to lucide imports
+  - Replaced `srcDb: string` state with `srcDbsSelected: string[]`; added `DbMultiSelect` combobox component (trigger shows selected count/name, dropdown with checkboxes + Select-all/Clear, closes on outside click)
+  - `loadSrcDbs`: reset logic uses `setSrcDbsSelected([])`; on restore, collects all unique `sourceDatabase` values from job tables and pre-selects them
+  - `[srcDbsSelected]` useEffect: `Promise.all` loads tables from all selected DBs in parallel and merges results; `srcConn` set to first DB's conn; column cache key on restore now uses `database.schema.table`
+  - `reloadSrcTables`: updated for multi-DB parallel load
+  - `isTableIncluded`: added optional `database` param for cross-DB awareness
+  - `toggleTable`: accepts `MigTableInfo` object (not schema+table strings); uses `sourceDatabase` for colsCache key (`database.schema.table`) and `mapEntry` lookup
+  - `srcColsForSelected` and Src Type column display: cache key updated to `database.schema.table`
+  - `srcConnForMap`: added `if (!srcConn.host) return srcConn` guard
+  - Source preview useEffect: added `!srcConn.host` guard
+  - Target preview useEffect: added `tgtTableExists` check; preview API only called when target table exists (fixes 500 on saved-job load)
+  - `handleLoadJob`: collects `jobSrcDbs` from all included `sourceDatabase` fields; `allDbsAlreadySelected` check replaces single-DB equality; sets `setSrcDbsSelected(jobSrcDbs)` instead of `setSrcDb`
+  - Added `handleOpenInSchemaStudio(jobId)`: matches target connection → navigates to `/schema-studio?connId=X&database=Y&schema=Z`
+  - Source DB selector replaced with `<DbMultiSelect>` component
+  - Source table list: grouped by DB header (sticky) when multiple DBs selected; `key` is `database.schema.table`
+  - FK Ref picker: grouped by DB; key format `db.schema.table` (PG) or `db.table` (MySQL); placeholder updated
+  - Column mapping header: path display shows `targetAlias` when set; alias text input added (disabled + tooltip when `lastSyncedValue` exists)
+  - Job summary markdown export: uses `resolvedTable` (alias or table name)
+  - Saved jobs sidebar: shows `targetAlias` with ✎ badge when renamed
+  - Job card actions row: Load button `bg-gray-100`, icon buttons wrapped in `<Tooltip>`, `ExternalLink` button added, icons bumped to `size={12}`, color `text-slate-500 dark:text-slate-400`
+  - Status: done
+
 - **fix** — Migration: source DB not restored on job load; run panel missing after refresh
   - `src/pages/migration.tsx` `handleLoadJob` — source restore: when auto-connect had already set `srcConnId` to the same connection, `setSrcConnId(same)` was a no-op so `loadSrcDbs` never fired; fix: detect `srcMatch.id === srcConnId` and call `setSrcDb(job.sourceMeta.database)` directly to trigger the `[srcDb]` useEffect instead
   - `src/pages/migration.tsx` `handleLoadJob` — run panel: after loading a job only `migratedTableKeys` was restored, `currentRun` stayed null so the run/rollback panel was invisible; fix: restore `currentRun` to the most recent run for that job from run-store

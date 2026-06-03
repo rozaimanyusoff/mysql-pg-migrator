@@ -22,14 +22,15 @@ function buildJobDDL(job: MigJob): string {
   const excluded = job.tables.filter(t => !t.include);
 
   for (const table of included) {
+    const tgtTable = table.targetAlias?.trim() || table.target.table;
     lines.push(
-      `-- ── ${table.source.schema}.${table.source.table} → ${table.target.schema}.${table.target.table} ──`,
+      `-- ── ${table.source.schema}.${table.source.table} → ${table.target.schema}.${tgtTable} ──`,
     );
     if (table.truncateBeforeMigrate) {
       if (targetType === 'postgresql') {
-        lines.push(`TRUNCATE TABLE "${table.target.schema}"."${table.target.table}" CASCADE;`);
+        lines.push(`TRUNCATE TABLE "${table.target.schema}"."${tgtTable}" CASCADE;`);
       } else {
-        lines.push(`TRUNCATE TABLE \`${table.target.schema}\`.\`${table.target.table}\`;`);
+        lines.push(`TRUNCATE TABLE \`${table.target.schema}\`.\`${tgtTable}\`;`);
       }
     }
     lines.push(buildCreateTableSQL(table, targetType));

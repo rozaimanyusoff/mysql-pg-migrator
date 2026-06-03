@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
-  Database, FileCode, FileText, Layers, Loader2,
+  Database, ExternalLink, FileCode, FileText, Layers, Loader2,
   Pencil, Play, Plus, Undo2, Save, Search,
   Table2, Trash2, X, AlertTriangle, CheckCircle2, Clock,
   Network,
@@ -258,6 +258,72 @@ function MigrationGuidePopover() {
   );
 }
 
+// ── DbMultiSelect ─────────────────────────────────────────────────────────────
+
+function DbMultiSelect({ dbs, selected, onChange }: {
+  dbs: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    if (open) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const label = selected.length === 0
+    ? '— select database —'
+    : selected.length === 1
+      ? selected[0]
+      : `${selected.length} databases`;
+
+  const toggle = (db: string) =>
+    onChange(selected.includes(db) ? selected.filter(d => d !== db) : [...selected, db]);
+
+  return (
+    <div ref={ref} className="relative w-full">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-1.5 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 hover:border-blue-400 focus:outline-none focus:border-blue-400 transition-colors font-mono"
+      >
+        <span className={`flex-1 text-left truncate ${selected.length === 0 ? 'text-gray-400 dark:text-slate-500' : ''}`}>{label}</span>
+        <ChevronDown size={11} className={`shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-0.5 w-full rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg overflow-hidden">
+          <div className="flex items-center justify-between px-2 py-1 border-b border-gray-100 dark:border-slate-700">
+            <span className="text-[9px] uppercase tracking-wider text-gray-400 dark:text-slate-500 font-semibold">Databases</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => onChange(dbs)} className="text-[9px] text-blue-500 hover:text-blue-700 dark:hover:text-blue-300">all</button>
+              <button onClick={() => onChange([])} className="text-[9px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">clear</button>
+            </div>
+          </div>
+          <div className="max-h-40 overflow-y-auto">
+            {dbs.map(db => (
+              <label key={db} className="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-950/20 transition-colors border-b border-gray-50 dark:border-slate-700/50 last:border-0">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(db)}
+                  onChange={() => toggle(db)}
+                  className="accent-blue-500 shrink-0"
+                />
+                <span className="text-[11px] font-mono text-gray-700 dark:text-slate-300 truncate flex-1">{db}</span>
+                {selected.includes(db) && <Check size={9} className="shrink-0 text-blue-500" />}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function Migration() {
@@ -269,7 +335,7 @@ export default function Migration() {
   // ── Source ────────────────────────────────────────────────────────────────────
   const [srcConnId, setSrcConnId] = useState<number | null>(null);
   const [srcDbs, setSrcDbs] = useState<string[]>([]);
-  const [srcDb, setSrcDb] = useState('');
+  const [srcDbsSelected, setSrcDbsSelected] = useState<string[]>([]);
   const [srcSchema, setSrcSchema] = useState('');
   const [srcLoadingDbs, setSrcLoadingDbs] = useState(false);
   const [srcDbError, setSrcDbError] = useState('');
@@ -374,7 +440,7 @@ export default function Migration() {
     const row = connections.find(c => c.id === connId);
     if (!row) return;
     const isRestore = !!pendingRestoreRef.current;
-    setSrcLoadingDbs(true); setSrcDbs([]); setSrcDb(''); setSrcDbError(''); setSrcSchema('');
+    setSrcLoadingDbs(true); setSrcDbs([]); setSrcDbsSelected([]); setSrcDbError(''); setSrcSchema('');
     setSrcConnected(false); setSrcTables([]);
     if (!isRestore) { setTableMaps([]); setColsCache({}); setSelectedMapId(null); }
     try {
@@ -384,7 +450,16 @@ export default function Migration() {
       );
       setSrcDbs(data.databases);
       const def = data.databases.includes(row.database_name) ? row.database_name : data.databases[0] ?? '';
-      setSrcDb((isRestore && pendingRestoreRef.current?.sourceMeta.database) || def);
+      if (isRestore && pendingRestoreRef.current) {
+        const job = pendingRestoreRef.current;
+        const jobSrcDbs = [...new Set(
+          job.tables.filter(t => t.include && t.sourceDatabase).map(t => t.sourceDatabase!)
+        )];
+        if (jobSrcDbs.length === 0 && job.sourceMeta.database) jobSrcDbs.push(job.sourceMeta.database);
+        setSrcDbsSelected(jobSrcDbs.filter(db => data.databases.includes(db)));
+      } else {
+        setSrcDbsSelected(def ? [def] : []);
+      }
     } catch (err) {
       setSrcDbError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Failed') : 'Failed');
     } finally { setSrcLoadingDbs(false); }
@@ -392,45 +467,52 @@ export default function Migration() {
 
   useEffect(() => {
     if (srcConnId) void loadSrcDbs(srcConnId);
-    else { setSrcDbs([]); setSrcDb(''); setSrcSchema(''); setSrcConnected(false); setSrcTables([]); }
+    else { setSrcDbs([]); setSrcDbsSelected([]); setSrcSchema(''); setSrcConnected(false); setSrcTables([]); }
   }, [srcConnId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!srcConnId || !srcDb) { setSrcConnected(false); return; }
+    if (!srcConnId || !srcDbsSelected.length) { setSrcConnected(false); return; }
     const row = connections.find(c => c.id === srcConnId);
     if (!row) return;
-    const conn = connRowToMigConn(row, srcDb);
-    setSrcConn(conn);
+    const baseConn = connRowToMigConn(row, srcDbsSelected[0]);
+    setSrcConn(baseConn);
     setSrcConnecting(true); setSrcError(''); setSrcConnected(false);
     setSrcTables([]);
     if (!pendingRestoreRef.current) { setSelectedMapId(null); setSrcSchema(''); }
-    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', conn)
-      .then(({ data }) => {
-        setSrcTables(data.tables);
+    void Promise.all(
+      srcDbsSelected.map(db =>
+        axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', connRowToMigConn(row, db))
+          .then(({ data }) => data.tables)
+      )
+    )
+      .then(results => {
+        const merged = results.flat();
+        setSrcTables(merged);
         setSrcConnected(true);
         if (pendingRestoreRef.current) {
           const job = pendingRestoreRef.current;
           const firstIncluded = job.tables.find(m => m.include);
           setTableMaps(job.tables);
           setSelectedMapId(firstIncluded?.id ?? null);
-          setSrcSchema(firstIncluded?.source.schema ?? (data.tables[0]?.schema ?? ''));
+          setSrcSchema(firstIncluded?.source.schema ?? (merged[0]?.schema ?? ''));
           pendingRestoreRef.current = null;
-          // Populate colsCache for the selected map so the columns panel doesn't stay in "Loading" state
           if (firstIncluded) {
-            const key = `${firstIncluded.source.schema}.${firstIncluded.source.table}`;
+            const tableKey = `${firstIncluded.source.schema}.${firstIncluded.source.table}`;
+            const colCacheKey = `${firstIncluded.sourceDatabase ?? srcDbsSelected[0]}.${tableKey}`;
+            const colConn = connRowToMigConn(row, firstIncluded.sourceDatabase ?? srcDbsSelected[0]);
             void axios.post<{ columns: MigColumnInfo[] }>(
-              '/api/migv2/columns', { conn, tableKey: key }
-            ).then(({ data: colData }) => setColsCache(prev => ({ ...prev, [key]: colData.columns })))
+              '/api/migv2/columns', { conn: colConn, tableKey }
+            ).then(({ data: colData }) => setColsCache(prev => ({ ...prev, [colCacheKey]: colData.columns })))
              .catch(() => {});
           }
         } else {
-          const first = data.tables[0]?.schema;
+          const first = merged[0]?.schema;
           if (first) setSrcSchema(first);
         }
       })
       .catch(err => setSrcError(axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Connection failed') : 'Connection failed'))
       .finally(() => setSrcConnecting(false));
-  }, [srcDb]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [srcDbsSelected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Target DB loading ─────────────────────────────────────────────────────────
   const loadTgtDbs = useCallback(async (connId: number) => {
@@ -513,11 +595,18 @@ export default function Migration() {
   }, [tgtDb]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reloadSrcTables = useCallback(() => {
-    if (!srcConnId || !srcDb) return;
-    void axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', srcConn)
-      .then(({ data }) => setSrcTables(data.tables))
+    if (!srcConnId || !srcDbsSelected.length) return;
+    const row = connections.find(c => c.id === srcConnId);
+    if (!row) return;
+    void Promise.all(
+      srcDbsSelected.map(db =>
+        axios.post<{ tables: MigTableInfo[] }>('/api/migv2/tables', connRowToMigConn(row, db))
+          .then(({ data }) => data.tables)
+      )
+    )
+      .then(results => setSrcTables(results.flat()))
       .catch(() => {});
-  }, [srcConnId, srcDb, srcConn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [srcConnId, srcDbsSelected, connections]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reloadTgtTables = useCallback(() => {
     if (!tgtConnId || !tgtDb) return;
@@ -539,15 +628,16 @@ export default function Migration() {
   }, [tgtConnId, tgtDb, tgtConn, connections]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Table toggle ──────────────────────────────────────────────────────────────
-  const isTableIncluded = (schema: string, table: string) =>
-    tableMaps.some(m => m.source.schema === schema && m.source.table === table && m.include);
+  const isTableIncluded = (schema: string, table: string, database?: string) =>
+    tableMaps.some(m => m.source.schema === schema && m.source.table === table && m.include && (!database || m.sourceDatabase === database));
 
-  const toggleTable = async (schema: string, table: string) => {
-    const existing = tableMaps.find(m => m.source.schema === schema && m.source.table === table);
+  const toggleTable = async (t: MigTableInfo) => {
+    const { schema, name: table, database } = t;
+    const existing = tableMaps.find(m => m.source.schema === schema && m.source.table === table && m.sourceDatabase === database);
     if (existing) {
       const willExclude = existing.include;
       setTableMaps(prev => prev.map(m =>
-        m.source.schema === schema && m.source.table === table ? { ...m, include: !m.include } : m
+        m.id === existing.id ? { ...m, include: !m.include } : m
       ));
       if (willExclude) {
         const key = `${schema}.${table}`;
@@ -557,31 +647,32 @@ export default function Migration() {
       setDirty(true);
       return;
     }
-    const key = `${schema}.${table}`;
+    const tableKey = `${schema}.${table}`;
+    const colCacheKey = `${database}.${tableKey}`;
     const mapId = newId();
-    // Auto-assign same name unless a table with that name already exists in the target schema
     const existsInTarget = tgtConnected && tgtTables.some(
       t => t.schema === (tgtDefaultSchema || 'public') && t.name === table
     );
     const autoTargetTable = !existsInTarget ? table : '';
-    // Create placeholder map immediately so preview fires right away
     setTableMaps(prev => [...prev, {
       id: mapId, include: true,
       source: { schema, table },
-      sourceDatabase: srcDb,
+      sourceDatabase: database,
       target: { schema: tgtDefaultSchema || '', table: autoTargetTable },
       columns: [], truncateBeforeMigrate: false,
     }]);
     setSelectedMapId(mapId);
     setLoadingCols(true);
     try {
-      let srcCols = colsCache[key];
+      let srcCols = colsCache[colCacheKey];
       if (!srcCols) {
+        const row = connections.find(c => c.id === srcConnId);
+        const perDbConn = row ? connRowToMigConn(row, database) : { ...srcConn, database };
         const { data } = await axios.post<{ columns: MigColumnInfo[] }>(
-          '/api/migv2/columns', { conn: srcConn, tableKey: key }
+          '/api/migv2/columns', { conn: perDbConn, tableKey }
         );
         srcCols = data.columns;
-        setColsCache(prev => ({ ...prev, [key]: srcCols }));
+        setColsCache(prev => ({ ...prev, [colCacheKey]: srcCols }));
       }
       const columns: ColumnMap[] = srcCols.map(c => {
         const isSerial = c.isPk && (c.isAutoIncrement || isPkLikeSerial(c.rawType));
@@ -657,7 +748,7 @@ export default function Migration() {
   ), [tgtTables, tgtSchemas, tgtDefaultSchema, tgtSearch]);
 
   const srcColsForSelected = selectedMap
-    ? (colsCache[`${selectedMap.source.schema}.${selectedMap.source.table}`] ?? [])
+    ? (colsCache[`${selectedMap.sourceDatabase ?? ''}.${selectedMap.source.schema}.${selectedMap.source.table}`] ?? [])
     : [];
 
   const tgtColsForSelected = selectedMap
@@ -888,18 +979,22 @@ export default function Migration() {
 
       const firstIncluded = job.tables.find(m => m.include);
 
-      // Source: if same connection+db already active, restore directly; otherwise use ref cascade
-      const sameSrcConn = srcMatch && srcMatch.id === srcConnId && job.sourceMeta.database === srcDb;
-      if (sameSrcConn) {
+      const jobSrcDbs = [...new Set(
+        job.tables.filter(t => t.include && t.sourceDatabase).map(t => t.sourceDatabase!)
+      )];
+      if (jobSrcDbs.length === 0 && job.sourceMeta.database) jobSrcDbs.push(job.sourceMeta.database);
+
+      // Source: if same connection+dbs already active, restore directly; otherwise use ref cascade
+      const allDbsAlreadySelected = srcMatch && srcMatch.id === srcConnId && jobSrcDbs.every(db => srcDbsSelected.includes(db));
+      if (allDbsAlreadySelected) {
         setTableMaps(job.tables);
         setSelectedMapId(firstIncluded?.id ?? null);
         if (firstIncluded) setSrcSchema(firstIncluded.source.schema);
       } else if (srcMatch) {
         pendingRestoreRef.current = job;
         if (srcMatch.id === srcConnId) {
-          // Same connection already selected — setSrcConnId would be a no-op.
-          // Set srcDb directly so the [srcDb] useEffect fires and consumes the ref.
-          setSrcDb(job.sourceMeta.database);
+          // Same connection already selected — trigger multi-DB reload
+          setSrcDbsSelected(jobSrcDbs);
         } else {
           setSrcConnId(srcMatch.id);
         }
@@ -947,7 +1042,8 @@ export default function Migration() {
       ];
       job.tables.forEach((map, i) => {
         const status = map.include ? '✓' : '✗';
-        const tgtTable = map.target.table ? `${map.target.schema}.${map.target.table}` : '(unassigned)';
+        const resolvedTable = map.targetAlias?.trim() || map.target.table;
+        const tgtTable = resolvedTable ? `${map.target.schema}.${resolvedTable}` : '(unassigned)';
         lines.push(`### ${i + 1}. \`${map.source.schema}.${map.source.table}\` → \`${tgtTable}\` [${status}]`);
         if (map.truncateBeforeMigrate) lines.push('> ⚠ Truncate target before migrate');
         if (map.syncMode === 'incremental') {
@@ -1003,6 +1099,30 @@ export default function Migration() {
         } catch { /* ignore */ }
       },
     });
+  };
+
+  const handleOpenInSchemaStudio = async (jobId: string) => {
+    try {
+      const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${jobId}`);
+      const { targetMeta, tables: jobTables } = data.job;
+      const match = connections.find(c =>
+        c.host === targetMeta.host &&
+        c.port === targetMeta.port &&
+        c.username === targetMeta.username &&
+        (targetMeta.type === 'postgresql' ? c.db_type === 'postgres' : c.db_type === 'mysql')
+      );
+      if (!match) {
+        showWarning({
+          title: 'Connection not found',
+          description: `Target connection (${targetMeta.host}:${targetMeta.port} / ${targetMeta.username}) tidak ada dalam saved connections. Tambah connection ke Settings terlebih dahulu.`,
+          confirmLabel: 'OK',
+          onConfirm: () => {},
+        });
+        return;
+      }
+      const schema = jobTables.find(t => t.include)?.target.schema ?? 'public';
+      void router.push(`/schema-studio?connId=${match.id}&database=${encodeURIComponent(targetMeta.database)}&schema=${encodeURIComponent(schema)}`);
+    } catch { /* ignore */ }
   };
 
   const handleRemoveTableFromJob = (jobId: string, tableId: string, tableLabel: string) => {
@@ -1140,13 +1260,14 @@ export default function Migration() {
 
   // Returns the source conn for a given tableMap, respecting per-table sourceDatabase
   const srcConnForMap = useCallback((map: TableMap | null): MigConn => {
+    if (!srcConn.host) return srcConn;
     if (!map?.sourceDatabase || map.sourceDatabase === srcConn.database) return srcConn;
     return { ...srcConn, database: map.sourceDatabase };
   }, [srcConn]);
 
   // ── Auto-fetch inline records on table selection ──────────────────────────────
   useEffect(() => {
-    if (!selectedMap || !srcConnected) {
+    if (!selectedMap || !srcConnected || !srcConn.host) {
       setSrcPreviewCols([]); setSrcPreviewRows([]); return;
     }
     setSrcPreviewLoading(true); setSrcPreviewCols([]); setSrcPreviewRows([]);
@@ -1162,6 +1283,9 @@ export default function Migration() {
       setTgtPreviewCols([]); setTgtPreviewRows([]); return;
     }
     const tgtKey = `${selectedMap.target.schema}.${selectedMap.target.table}`;
+    const tgtTableExists = tgtTables.some(
+      t => t.schema === selectedMap.target.schema && t.name === selectedMap.target.table
+    );
     // Fetch target columns if not cached
     if (!tgtColsCache[tgtKey]) {
       void axios.post<{ columns: MigColumnInfo[] }>(
@@ -1169,12 +1293,14 @@ export default function Migration() {
       ).then(({ data }) => setTgtColsCache(prev => ({ ...prev, [tgtKey]: data.columns })))
        .catch(() => {});
     }
-    // Fetch target preview
-    setTgtPreviewLoading(true); setTgtPreviewCols([]); setTgtPreviewRows([]);
-    void axios.post<{ columns: string[]; rows: Record<string, unknown>[] }>(
-      '/api/migv2/preview', { conn: tgtConn, tableKey: tgtKey }
-    ).then(({ data }) => { setTgtPreviewCols(data.columns); setTgtPreviewRows(data.rows); })
-     .catch(() => {}).finally(() => setTgtPreviewLoading(false));
+    // Fetch target preview only if target table exists
+    if (tgtTableExists) {
+      setTgtPreviewLoading(true); setTgtPreviewCols([]); setTgtPreviewRows([]);
+      void axios.post<{ columns: string[]; rows: Record<string, unknown>[] }>(
+        '/api/migv2/preview', { conn: tgtConn, tableKey: tgtKey }
+      ).then(({ data }) => { setTgtPreviewCols(data.columns); setTgtPreviewRows(data.rows); })
+       .catch(() => {}).finally(() => setTgtPreviewLoading(false));
+    }
   }, [selectedMapId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { setFkPickerIdx(null); }, [selectedMapId]);
@@ -1353,13 +1479,13 @@ export default function Migration() {
                           onChange={id => setSrcConnId(id)} onNew={() => void router.push('/settings')} accent="blue" />
                         <div className="flex items-center gap-1.5">
                           {srcConnId && (srcLoadingDbs
-                            ? <Loader2 size={11} className="animate-spin text-gray-400" />
-                            : (
-                              <select value={srcDb} onChange={e => setSrcDb(e.target.value)}
-                                className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer font-mono">
-                                {!srcDb && <option value="">— select db —</option>}
-                                {srcDbs.map(d => <option key={d} value={d}>{d}</option>)}
-                              </select>
+                            ? <div className="flex items-center gap-1.5"><Loader2 size={11} className="animate-spin text-gray-400" /><span className="text-[10px] text-gray-400">Loading databases…</span></div>
+                            : srcDbs.length > 0 && (
+                              <DbMultiSelect
+                                dbs={srcDbs}
+                                selected={srcDbsSelected}
+                                onChange={setSrcDbsSelected}
+                              />
                             )
                           )}
                           {srcConnected && srcIsPg && srcSchemaList.length > 0 && (
@@ -1400,32 +1526,50 @@ export default function Migration() {
                         </div>
                       ) : filteredSrcTables.length === 0 ? (
                         <div className="flex items-center justify-center h-full text-[11px] text-gray-400 dark:text-slate-500 italic">No tables found</div>
-                      ) : filteredSrcTables.map(t => {
-                        const included = isTableIncluded(t.schema, t.name);
-                        const mapEntry = tableMaps.find(m => m.source.schema === t.schema && m.source.table === t.name);
-                        const isSelected = mapEntry?.id === selectedMapId;
-                        const isMigrated = migratedTableKeys.has(`${t.schema}.${t.name}`);
-                        return (
-                          <div key={`${t.schema}.${t.name}`}
-                            className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-50 dark:border-slate-800/40 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
-                            onClick={() => {
-                              if (mapEntry) setSelectedMapId(mapEntry.id);
-                              else void toggleTable(t.schema, t.name);
-                            }}>
-                            <input type="checkbox" checked={included}
-                              disabled={isMigrated && included}
-                              onChange={e => { e.stopPropagation(); void toggleTable(t.schema, t.name); }}
-                              onClick={e => e.stopPropagation()}
-                              className="shrink-0 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed" />
-                            <Table2 size={10} className={`shrink-0 ${isMigrated ? 'text-emerald-400 dark:text-emerald-600' : 'text-gray-400'}`} />
-                            <span className={`text-[11px] font-mono flex-1 truncate ${isMigrated ? 'line-through text-gray-400 dark:text-slate-600' : isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-slate-300'}`}>
-                              <span className="text-[9px] font-normal">{t.schema}.</span>{t.name}
-                            </span>
-                            {isMigrated && <span className="text-[9px] text-emerald-500 dark:text-emerald-600 shrink-0">✓</span>}
-                            <span className="text-[10px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
+                      ) : (() => {
+                        const renderTableRow = (t: MigTableInfo) => {
+                          const included = isTableIncluded(t.schema, t.name, t.database);
+                          const mapEntry = tableMaps.find(m => m.source.schema === t.schema && m.source.table === t.name && m.sourceDatabase === t.database);
+                          const isSelected = mapEntry?.id === selectedMapId;
+                          const isMigrated = migratedTableKeys.has(`${t.schema}.${t.name}`);
+                          return (
+                            <div key={`${t.database}.${t.schema}.${t.name}`}
+                              className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-50 dark:border-slate-800/40 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
+                              onClick={() => {
+                                if (mapEntry) setSelectedMapId(mapEntry.id);
+                                else void toggleTable(t);
+                              }}>
+                              <input type="checkbox" checked={included}
+                                disabled={isMigrated && included}
+                                onChange={e => { e.stopPropagation(); void toggleTable(t); }}
+                                onClick={e => e.stopPropagation()}
+                                className="shrink-0 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed" />
+                              <Table2 size={10} className={`shrink-0 ${isMigrated ? 'text-emerald-400 dark:text-emerald-600' : 'text-gray-400'}`} />
+                              <span className={`text-[11px] font-mono flex-1 truncate ${isMigrated ? 'line-through text-gray-400 dark:text-slate-600' : isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-slate-300'}`}>
+                                <span className="text-[9px] font-normal">{t.schema}.</span>{t.name}
+                              </span>
+                              {isMigrated && <span className="text-[9px] text-emerald-500 dark:text-emerald-600 shrink-0">✓</span>}
+                              <span className="text-[10px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
+                            </div>
+                          );
+                        };
+                        if (srcDbsSelected.length <= 1) {
+                          return filteredSrcTables.map(renderTableRow);
+                        }
+                        const byDb = srcDbsSelected.map(db => ({
+                          db,
+                          tables: filteredSrcTables.filter(t => t.database === db),
+                        }));
+                        return byDb.map(({ db, tables }) => tables.length === 0 ? null : (
+                          <div key={db}>
+                            <div className="sticky top-0 z-10 px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 bg-blue-50/80 dark:bg-blue-950/30 border-b border-blue-100 dark:border-blue-900/40 flex items-center gap-1">
+                              <Database size={8} className="shrink-0" />{db}
+                              <span className="ml-auto font-normal text-blue-400 dark:text-blue-600">{tables.length}</span>
+                            </div>
+                            {tables.map(renderTableRow)}
                           </div>
-                        );
-                      })}
+                        ));
+                      })()}
                     </div>
                   </div>
                 </Panel>
@@ -1642,13 +1786,27 @@ export default function Migration() {
                       <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate max-w-[200px]">
                         {selectedMap.source.schema}.{selectedMap.source.table}
                         <span className="text-gray-300 dark:text-slate-600 mx-1">→</span>
-                        {selectedMap.target.schema}.{selectedMap.target.table}
+                        {selectedMap.target.schema}.{selectedMap.targetAlias?.trim() || selectedMap.target.table}
                       </span>
                       {selectedMap.sourceDatabase && (
                         <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-mono bg-blue-50 dark:bg-blue-950/30 text-blue-500 dark:text-blue-400 border border-blue-200 dark:border-blue-800 shrink-0">
                           <Database size={8} />{selectedMap.sourceDatabase}
                         </span>
                       )}
+                      {/* Target table alias override */}
+                      <input
+                        type="text"
+                        placeholder={selectedMap.target.table}
+                        value={selectedMap.targetAlias ?? ''}
+                        disabled={!!selectedMap.lastSyncedValue}
+                        title={selectedMap.lastSyncedValue ? 'Table sudah migrated — rollback dulu sebelum rename' : 'Override nama target table'}
+                        onChange={e => updateTableMap(selectedMap.id, { targetAlias: e.target.value || null })}
+                        className={`px-1.5 py-0.5 text-[10px] rounded border font-mono w-24 transition-colors ${
+                          selectedMap.lastSyncedValue
+                            ? 'border-gray-100 dark:border-slate-700 text-gray-300 dark:text-slate-600 bg-gray-50 dark:bg-slate-900 cursor-not-allowed'
+                            : 'border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:border-violet-400 focus:outline-none'
+                        }`}
+                      />
                       <div className="h-3 w-px bg-gray-200 dark:bg-slate-700" />
                       <label className="inline-flex items-center gap-1 text-[10px] text-gray-500 dark:text-slate-400">
                         <input type="checkbox" checked={selectedMap.truncateBeforeMigrate}
@@ -1789,7 +1947,7 @@ export default function Migration() {
                                     </div>
                                   </td>
                                   <td className="px-2 py-1.5 font-mono text-[10px] text-gray-400 dark:text-slate-500">
-                                    {colsCache[`${selectedMap.source.schema}.${selectedMap.source.table}`]?.find(c => c.name === col.sourceCol)?.rawType ?? '—'}
+                                    {colsCache[`${selectedMap.sourceDatabase ?? ''}.${selectedMap.source.schema}.${selectedMap.source.table}`]?.find(c => c.name === col.sourceCol)?.rawType ?? '—'}
                                   </td>
                                   <td className="px-1 text-[10px] text-gray-300">→</td>
                                   <td className="px-2 py-1">
@@ -1955,7 +2113,7 @@ export default function Migration() {
                                                     setFkManualInput('');
                                                   }
                                                 }}
-                                                placeholder="schema.table (Enter to set)"
+                                                placeholder={srcIsPg ? 'db.schema.table (Enter to set)' : 'db.table (Enter to set)'}
                                                 className="flex-1 px-1.5 py-0.5 text-[10px] font-mono rounded border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder:text-gray-300 dark:placeholder:text-slate-600"
                                               />
                                               {fkManualInput.trim() && (
@@ -1980,33 +2138,37 @@ export default function Migration() {
                                                 className="w-full px-2.5 py-1 text-left text-[10px] text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800 italic">
                                                 — clear —
                                               </button>
-                                              {[...new Set(srcTables.map(t => t.schema))].sort().map(schema => {
-                                                const tables = srcTables.filter(t => t.schema === schema);
-                                                if (!tables.length) return null;
-                                                return (
-                                                  <div key={schema}>
-                                                    <div className="px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500 bg-gray-50 dark:bg-slate-800/60 sticky top-0">
-                                                      {schema}
+                                              {srcDbsSelected.map(db => {
+                                                const dbTables = srcTables.filter(t => t.database === db);
+                                                const schemas = [...new Set(dbTables.map(t => t.schema))].sort();
+                                                return schemas.map(schema => {
+                                                  const tables = dbTables.filter(t => t.schema === schema);
+                                                  if (!tables.length) return null;
+                                                  return (
+                                                    <div key={`${db}.${schema}`}>
+                                                      <div className="px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500 bg-gray-50 dark:bg-slate-800/60 sticky top-0">
+                                                        {srcDbsSelected.length > 1 ? `${db} · ${schema}` : schema}
+                                                      </div>
+                                                      {tables.map(t => {
+                                                        const fkKey = srcIsPg ? `${t.database}.${t.schema}.${t.name}` : `${t.database}.${t.name}`;
+                                                        return (
+                                                          <button key={`${t.database}.${t.schema}.${t.name}`}
+                                                            onClick={() => {
+                                                              updateColumn(selectedMap.id, idx, {
+                                                                fkRef: fkKey,
+                                                                ...(tgtConn.type === 'postgresql' ? { targetType: 'UUID' } : {}),
+                                                              });
+                                                              setFkPickerIdx(null);
+                                                            }}
+                                                            className="w-full px-2.5 py-1.5 text-left hover:bg-blue-50 dark:hover:bg-blue-950/30 border-b border-gray-50 dark:border-slate-800/50 last:border-0">
+                                                            <div className="text-[10px] font-mono font-medium text-gray-700 dark:text-slate-200">{t.name}</div>
+                                                            <div className="text-[9px] text-gray-400 dark:text-slate-500 mt-0.5">{t.rowCount.toLocaleString()} rows · {fkKey}</div>
+                                                          </button>
+                                                        );
+                                                      })}
                                                     </div>
-                                                    {tables.map(t => {
-                                                      const srcKey = `${t.schema}.${t.name}`;
-                                                      return (
-                                                        <button key={srcKey}
-                                                          onClick={() => {
-                                                            updateColumn(selectedMap.id, idx, {
-                                                              fkRef: srcKey,
-                                                              ...(tgtConn.type === 'postgresql' ? { targetType: 'UUID' } : {}),
-                                                            });
-                                                            setFkPickerIdx(null);
-                                                          }}
-                                                          className="w-full px-2.5 py-1.5 text-left hover:bg-blue-50 dark:hover:bg-blue-950/30 border-b border-gray-50 dark:border-slate-800/50 last:border-0">
-                                                          <div className="text-[10px] font-mono font-medium text-gray-700 dark:text-slate-200">{t.name}</div>
-                                                          <div className="text-[9px] text-gray-400 dark:text-slate-500 mt-0.5">{t.rowCount.toLocaleString()} rows</div>
-                                                        </button>
-                                                      );
-                                                    })}
-                                                  </div>
-                                                );
+                                                  );
+                                                });
                                               })}
                                             </div>
                                           </div>
@@ -2196,7 +2358,10 @@ export default function Migration() {
                             <span className="text-[10px] text-gray-600 dark:text-slate-300 flex-1 truncate min-w-0">
                               <span className="text-gray-400">{t.source.schema}.</span>{t.source.table}
                               <span className="text-gray-300 dark:text-slate-600 mx-1">→</span>
-                              <span className="text-gray-400">{t.target.schema}.</span>{t.target.table}
+                              <span className="text-gray-400">{t.target.schema}.</span>{t.targetAlias?.trim() || t.target.table}
+                              {t.targetAlias?.trim() && t.targetAlias.trim() !== t.target.table && (
+                                <span className="text-violet-400 ml-0.5 italic text-[9px]"> ✎</span>
+                              )}
                             </span>
                             {t.sourceDatabase && (
                               <span className="shrink-0 px-1 py-0.5 rounded text-[9px] font-mono bg-blue-50 dark:bg-blue-950/30 text-blue-400 dark:text-blue-500 border border-blue-100 dark:border-blue-900">{t.sourceDatabase}</span>
@@ -2217,27 +2382,39 @@ export default function Migration() {
                         <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>
                       )}
                       <button onClick={() => void handleLoadJob(job.id)}
-                        className="ml-auto px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors">
+                        className="ml-auto px-3 py-1 rounded text-[10px] font-medium bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors">
                         Load
                       </button>
-                      <button onClick={() => void handleExportJobSql(job.id)}
-                        title="Export DDL SQL"
-                        className="p-1 rounded text-gray-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
-                        <FileCode size={11} />
-                      </button>
-                      <button onClick={() => void handleExportJobMd(job.id)}
-                        title="Export Markdown"
-                        className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
-                        <FileText size={11} />
-                      </button>
-                      <button onClick={() => { setRenamingJobId(job.id); setRenameJobVal(job.name); }}
-                        className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
-                        <Pencil size={11} />
-                      </button>
-                      <button onClick={() => handleDeleteJob(job.id, job.name)}
-                        className="p-1 rounded text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
-                        <Trash2 size={11} />
-                      </button>
+                      <Tooltip content="Analyze in Schema Studio" side="top">
+                        <button onClick={() => void handleOpenInSchemaStudio(job.id)}
+                          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
+                          <ExternalLink size={12} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Export DDL SQL" side="top">
+                        <button onClick={() => void handleExportJobSql(job.id)}
+                          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
+                          <FileCode size={12} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Export Markdown" side="top">
+                        <button onClick={() => void handleExportJobMd(job.id)}
+                          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
+                          <FileText size={12} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Rename job" side="top">
+                        <button onClick={() => { setRenamingJobId(job.id); setRenameJobVal(job.name); }}
+                          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
+                          <Pencil size={12} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Delete job" side="top">
+                        <button onClick={() => handleDeleteJob(job.id, job.name)}
+                          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
+                          <Trash2 size={12} />
+                        </button>
+                      </Tooltip>
                     </div>
                   </div>
                 ))}
