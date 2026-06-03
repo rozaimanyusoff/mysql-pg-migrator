@@ -852,18 +852,25 @@ export default function Migration() {
       setActiveJobId(id);
       setSaveJobName(job.name); setSaveJobDesc(job.description); setDirty(false);
 
-      // Restore migrated table keys + most recent run for this job
+      // Restore migrated table keys + most recent run for this job.
+      // Runs are sorted latest-first — use the latest status per table so a
+      // table rolled back in run N is not re-added by an older completed run.
       void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status')
         .then(({ data: runData }) => {
-          const keys = new Set<string>();
+          const tableLatestStatus = new Map<string, string>();
           let latestJobRun: MigRun | null = null;
           for (const run of runData.runs) {
             if (run.jobId !== id) continue;
             if (!latestJobRun) latestJobRun = run;
-            if (run.status !== 'completed') continue;
             for (const ts of run.tableStates) {
-              if (ts.status === 'completed') keys.add(ts.sourceKey);
+              if (!tableLatestStatus.has(ts.sourceKey)) {
+                tableLatestStatus.set(ts.sourceKey, ts.status);
+              }
             }
+          }
+          const keys = new Set<string>();
+          for (const [sourceKey, status] of tableLatestStatus) {
+            if (status === 'completed') keys.add(sourceKey);
           }
           setMigratedTableKeys(keys);
           if (latestJobRun) setCurrentRun(latestJobRun);
