@@ -339,6 +339,7 @@ export default function Migration() {
   const [polling, setPolling] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
   const [rollingBackTableId, setRollingBackTableId] = useState<string | null>(null);
+  const [rollbackPrompt, setRollbackPrompt] = useState<{ tableId: string; tableKey: string; drop: boolean } | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pendingRestoreRef = useRef<MigJob | null>(null);
   const pendingTgtRef = useRef<{ database: string; schema: string } | null>(null);
@@ -1082,15 +1083,21 @@ export default function Migration() {
     } catch { /* ignore */ } finally { setRollingBack(false); }
   };
 
-  const handleRollbackTable = async (tableId: string) => {
+  const openRollbackPrompt = (tableId: string) => {
+    const ts = currentRun?.tableStates.find(t => t.id === tableId);
+    if (!ts) return;
+    setRollbackPrompt({ tableId, tableKey: ts.sourceKey, drop: false });
+  };
+
+  const handleRollbackTable = async (tableId: string, drop = false) => {
     if (!currentRun) return;
+    setRollbackPrompt(null);
     setRollingBackTableId(tableId);
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/rollback-table',
-        { runId: currentRun.id, tableId, target: tgtConn });
+        { runId: currentRun.id, tableId, target: tgtConn, dropTable: drop });
       setCurrentRun(data.run);
       reloadTgtTables();
-      // Remove only this table's key from migrated set
       const ts = data.run.tableStates.find(t => t.id === tableId);
       if (ts) {
         setMigratedTableKeys(prev => { const n = new Set(prev); n.delete(ts.sourceKey); return n; });
@@ -1172,6 +1179,47 @@ export default function Migration() {
   return (
     <>
       <Head><title>Migration</title></Head>
+
+      {/* Rollback confirm dialog */}
+      {rollbackPrompt && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4">
+            <div>
+              <p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Rollback table?</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 font-mono">{rollbackPrompt.tableKey}</p>
+            </div>
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rollbackPrompt.drop}
+                onChange={e => setRollbackPrompt(p => p ? { ...p, drop: e.target.checked } : p)}
+                className="mt-0.5 accent-rose-500"
+              />
+              <span className="text-xs text-gray-700 dark:text-slate-300">
+                Also <span className="font-semibold text-rose-600 dark:text-rose-400">DROP</span> the target table after rollback
+                <span className="block text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">
+                  Runs <code className="font-mono">DROP TABLE … CASCADE</code> — cannot be undone.
+                </span>
+              </span>
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setRollbackPrompt(null)}
+                className="px-3 py-1.5 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleRollbackTable(rollbackPrompt.tableId, rollbackPrompt.drop)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium text-white transition-colors ${rollbackPrompt.drop ? 'bg-rose-600 hover:bg-rose-700' : 'bg-amber-500 hover:bg-amber-600'}`}
+              >
+                {rollbackPrompt.drop ? 'Rollback & Drop' : 'Rollback'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-50 dark:bg-slate-950 overflow-hidden">
 
         {/* Header */}
@@ -2197,7 +2245,7 @@ export default function Migration() {
                             </div>
                             {canRollback && (
                               <button
-                                onClick={e => { e.stopPropagation(); void handleRollbackTable(ts.id); }}
+                                onClick={e => { e.stopPropagation(); openRollbackPrompt(ts.id); }}
                                 disabled={!!rollingBackTableId}
                                 title={`Rollback ${ts.sourceKey}`}
                                 className="shrink-0 p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-40 transition-colors"
@@ -2259,7 +2307,7 @@ export default function Migration() {
                         <StatusBadge status={ts.status} />
                         {canRollbackThis && (
                           <button
-                            onClick={() => void handleRollbackTable(ts.id)}
+                            onClick={() => openRollbackPrompt(ts.id)}
                             disabled={!!rollingBackTableId}
                             title={`Rollback ${ts.sourceKey}`}
                             className="shrink-0 p-0.5 rounded text-gray-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-40 transition-colors"

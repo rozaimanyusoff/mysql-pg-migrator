@@ -2,6 +2,13 @@
 
 ---
 
+## 2026-06-04
+- **implement** — Migration per-table rollback: prompt with optional DROP TABLE
+  - `src/lib/migv2/runner.ts` — `rollbackTable` accepts new `dropTable` param; after DELETE/TRUNCATE runs `DROP TABLE IF EXISTS … CASCADE` when flag is true
+  - `src/pages/api/migv2/run/rollback-table.ts` — passes `dropTable` from request body
+  - `src/pages/migration.tsx` — rollback button now calls `openRollbackPrompt` → shows modal with table name, checkbox "Also DROP the target table", Cancel + Rollback / Rollback & Drop buttons; button turns rose-red when DROP is checked
+  - Status: done
+
 ## 2026-06-03
 - **implement** — Schema Studio saved jobs: Export SQL / Markdown / ORM per card
   - `src/pages/schema-studio.tsx` — added `downloadBlob` + `generateSchemaMd` module-level helpers; `JobGroupCard` gets an "Export ▾" dropdown button (shown when `schema_sql` exists); SQL always available; Markdown + Drizzle/Prisma/TypeORM shown for DDL jobs only (hidden for ALTER-only refactor jobs); ORM tables built inline from `parseSqlToTables` + `generateOrm`
