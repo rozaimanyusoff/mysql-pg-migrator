@@ -3,6 +3,10 @@
 ---
 
 ## 2026-06-03
+- **fix** — Schema Studio: schema not auto-loaded after job restore
+  - `src/pages/schema-studio.tsx` — `loadRefactorSchema` now accepts optional `schemaOverride` param to bypass stale closure on `refactorSchema`; added `pendingAutoLoad` ref (stores target schema across async chain); `handleLoadJob` extracts schema from first `ALTER/CREATE TABLE "schema"."table"` pattern in saved SQL (falls back to `public`); new `useEffect` watching `refactorSchemas` consumes the ref and fires `loadRefactorSchema(schemaToLoad)` automatically once schemas list is ready
+  - Status: done
+
 - **fix** — Schema Studio: connection not restored on saved job load
   - `src/pages/schema-studio.tsx` — `handleLoadJob` now matches `job.connection_label` against loaded connections and restores `refactorConnId`; `job.target_database` is stored in a `pendingRefactorDb` ref (consumed by the database-load useEffect) so the correct database is selected after the async connection→database chain resolves
   - Status: done

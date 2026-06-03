@@ -2493,7 +2493,8 @@ function SchemaDesignerInner() {
   const importDbConn = connections.find(c => c.id === importDbConnId) ?? null;
 
   // ── Refactor mode state ───────────────────────────────────────────────────────
-  const pendingRefactorDb = useRef<string | null>(null); // set by handleLoadJob to survive the async db-load
+  const pendingRefactorDb = useRef<string | null>(null);     // set by handleLoadJob to survive async db-load
+  const pendingAutoLoad  = useRef<string | null>(null);     // schema name to auto-load once schemas are available
   const [originalTables, setOriginalTables] = useState<DesignerTable[]>([]);
   const [refactorConnId, setRefactorConnId] = useState<number | null>(null);
   const [refactorDbs, setRefactorDbs] = useState<string[]>([]);
@@ -2554,11 +2555,21 @@ function SchemaDesignerInner() {
     }).catch(() => {});
   }, [refactorConnId, refactorDatabase]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadRefactorSchema = async () => {
+  // Auto-load schema tables after a job restore once the schema list is ready
+  useEffect(() => {
+    const pending = pendingAutoLoad.current;
+    if (!pending || !refactorSchemas.length) return;
+    pendingAutoLoad.current = null;
+    const schemaToLoad = refactorSchemas.includes(pending) ? pending : (refactorSchemas[0] ?? 'public');
+    setRefactorSchema(schemaToLoad);
+    void loadRefactorSchema(schemaToLoad);
+  }, [refactorSchemas]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadRefactorSchema = async (schemaOverride?: string) => {
     if (!refactorConnId || !refactorDatabase) return;
     const row = connections.find(c => c.id === refactorConnId);
     if (!row) return;
-    const dbType: DbType = 'postgresql';
+    const schema = schemaOverride ?? refactorSchema;
     const explorerConn = connToExplorerConn(row, refactorDatabase);
     setRefactorLoading(true);
     setRefactorLoaded(false);
@@ -2566,16 +2577,16 @@ function SchemaDesignerInner() {
     try {
       // 1. Fetch tables in the chosen schema
       const { data: tablesData } = await axios.post<{ tables: TableInfo[] }>(
-        '/api/schema-explorer/tables', { conn: explorerConn, schema: refactorSchema }
+        '/api/schema-explorer/tables', { conn: explorerConn, schema }
       );
       // 2. For each table, fetch columns + constraint names in parallel
       const loaded: DesignerTable[] = await Promise.all(
         tablesData.tables.map(async (ti) => {
-          const tableKey = `${refactorSchema}.${ti.name}`;
+          const tableKey = `${schema}.${ti.name}`;
           const [colsRes, constraintsRes] = await Promise.all([
             axios.post<{ columns: ColumnInfo[] }>('/api/schema-explorer/columns', { conn: explorerConn, tableKey }),
             axios.post<import('./api/schema-designer/constraints').ColumnConstraints>(
-              '/api/schema-designer/constraints', { conn: explorerConn, schema: refactorSchema, table: ti.name }
+              '/api/schema-designer/constraints', { conn: explorerConn, schema, table: ti.name }
             ).catch(() => ({ data: { fkConstraints: [], uniqueConstraints: [], checkConstraints: [] } })),
           ]);
           const fkMap = new Map(constraintsRes.data.fkConstraints.map(f => [f.colName, f.constraintName]));
@@ -2602,7 +2613,7 @@ function SchemaDesignerInner() {
           });
           const dt: DesignerTable = {
             id: crypto.randomUUID(),
-            schema: refactorSchema,
+            schema,
             name: ti.name,
             _originalName: ti.name,
             columns: cols,
@@ -3059,11 +3070,14 @@ function SchemaDesignerInner() {
     setLoadedJob(job);
     setIsDirty(false);
 
-    // Restore connection + database from saved job metadata
+    // Restore connection + database + schema from saved job metadata
     if (job.connection_label) {
       const matched = connections.find(c => c.label === job.connection_label);
       if (matched) {
         if (job.target_database) pendingRefactorDb.current = job.target_database;
+        // Infer schema: first "schema"."table" pattern in the saved SQL, or 'public'
+        const schemaMatch = job.schema_sql?.match(/(?:ALTER TABLE|CREATE TABLE(?: IF NOT EXISTS)?)\s+"([^"]+)"\./i);
+        pendingAutoLoad.current = schemaMatch?.[1] ?? 'public';
         setRefactorConnId(matched.id);
       }
     }
