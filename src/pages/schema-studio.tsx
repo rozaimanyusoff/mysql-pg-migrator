@@ -2493,6 +2493,7 @@ function SchemaDesignerInner() {
   const importDbConn = connections.find(c => c.id === importDbConnId) ?? null;
 
   // ── Refactor mode state ───────────────────────────────────────────────────────
+  const pendingRefactorDb = useRef<string | null>(null); // set by handleLoadJob to survive the async db-load
   const [originalTables, setOriginalTables] = useState<DesignerTable[]>([]);
   const [refactorConnId, setRefactorConnId] = useState<number | null>(null);
   const [refactorDbs, setRefactorDbs] = useState<string[]>([]);
@@ -2529,7 +2530,12 @@ function SchemaDesignerInner() {
       { type: 'postgresql', host: row.host, port: row.port, username: row.username, password: row.password_enc ?? '' }
     ).then(({ data }) => {
       setRefactorDbs(data.databases);
-      setRefactorDatabase(data.databases.includes(row.database_name) ? row.database_name : data.databases[0] ?? '');
+      const pending = pendingRefactorDb.current;
+      pendingRefactorDb.current = null;
+      const wanted = (pending && data.databases.includes(pending)) ? pending
+        : data.databases.includes(row.database_name) ? row.database_name
+        : data.databases[0] ?? '';
+      setRefactorDatabase(wanted);
     }).catch(() => {}).finally(() => setRefactorLoadingDbs(false));
   }, [refactorConnId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3052,6 +3058,15 @@ function SchemaDesignerInner() {
     setSeedSql(job.seed_sql ?? '');
     setLoadedJob(job);
     setIsDirty(false);
+
+    // Restore connection + database from saved job metadata
+    if (job.connection_label) {
+      const matched = connections.find(c => c.label === job.connection_label);
+      if (matched) {
+        if (job.target_database) pendingRefactorDb.current = job.target_database;
+        setRefactorConnId(matched.id);
+      }
+    }
   };
 
   return (

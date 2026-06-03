@@ -3,6 +3,10 @@
 ---
 
 ## 2026-06-03
+- **fix** — Schema Studio: connection not restored on saved job load
+  - `src/pages/schema-studio.tsx` — `handleLoadJob` now matches `job.connection_label` against loaded connections and restores `refactorConnId`; `job.target_database` is stored in a `pendingRefactorDb` ref (consumed by the database-load useEffect) so the correct database is selected after the async connection→database chain resolves
+  - Status: done
+
 - **fix** — Schema Studio analyzer: `could not create unique index "uq_*"` on apply
   - `src/pages/api/schema-studio/analyze.ts` — unique-column detection now also queries `pg_index` to catch unique indexes created via `CREATE UNIQUE INDEX` (invisible to `information_schema.table_constraints`); added duplicate-value check before emitting `missing_unique` suggestion — if dupes exist, `alterSql` is omitted and message warns to clean duplicates first
   - Status: done
