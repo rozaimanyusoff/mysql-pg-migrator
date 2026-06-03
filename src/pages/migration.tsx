@@ -545,9 +545,15 @@ export default function Migration() {
   const toggleTable = async (schema: string, table: string) => {
     const existing = tableMaps.find(m => m.source.schema === schema && m.source.table === table);
     if (existing) {
+      const willExclude = existing.include;
       setTableMaps(prev => prev.map(m =>
         m.source.schema === schema && m.source.table === table ? { ...m, include: !m.include } : m
       ));
+      if (willExclude) {
+        const key = `${schema}.${table}`;
+        setMigratedTableKeys(prev => { const n = new Set(prev); n.delete(key); return n; });
+        setSavedMigratedSources(prev => { const n = new Set(prev); n.delete(key); return n; });
+      }
       setDirty(true);
       return;
     }
