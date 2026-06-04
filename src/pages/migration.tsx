@@ -1022,10 +1022,18 @@ export default function Migration() {
         .catch(() => setMigratedTableKeys(new Set()));
 
       const srcMatch = connections.find(c =>
+        c.host === job.sourceMeta.host && c.port === job.sourceMeta.port &&
+        c.username === job.sourceMeta.username &&
+        c.db_type === (job.sourceMeta.type === 'postgresql' ? 'postgres' : 'mysql')
+      ) ?? connections.find(c =>
         c.host === job.sourceMeta.host && c.username === job.sourceMeta.username &&
         c.db_type === (job.sourceMeta.type === 'postgresql' ? 'postgres' : 'mysql')
       );
       const tgtMatch = connections.find(c =>
+        c.host === job.targetMeta.host && c.port === job.targetMeta.port &&
+        c.username === job.targetMeta.username &&
+        c.db_type === (job.targetMeta.type === 'postgresql' ? 'postgres' : 'mysql')
+      ) ?? connections.find(c =>
         c.host === job.targetMeta.host && c.username === job.targetMeta.username &&
         c.db_type === (job.targetMeta.type === 'postgresql' ? 'postgres' : 'mysql')
       );
@@ -1051,6 +1059,11 @@ export default function Migration() {
         } else {
           setSrcConnId(srcMatch.id);
         }
+      } else {
+        // Connection not found — restore tables directly so mapping is not lost
+        setTableMaps(job.tables);
+        setSelectedMapId(firstIncluded?.id ?? null);
+        if (firstIncluded) setSrcSchema(firstIncluded.source.schema);
       }
 
       // Target: if same connection+db already active, just set schema; otherwise use ref cascade
@@ -2477,14 +2490,17 @@ export default function Migration() {
                         ))}
                       </div>
                     )}
-                    <div className="flex items-center gap-1">
-                      {activeJobId === job.id && (
-                        <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>
-                      )}
-                      <button onClick={() => void handleLoadJob(job.id)}
-                        className="ml-auto px-3 py-1 rounded text-[10px] font-medium bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors">
-                        Load
-                      </button>
+                    <div className="flex items-center justify-between gap-1 mt-0.5">
+                      <div className="flex items-center gap-1 min-w-0">
+                        {activeJobId === job.id && (
+                          <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium shrink-0">active</span>
+                        )}
+                        <button onClick={() => void handleLoadJob(job.id)}
+                          className="shrink-0 px-3 py-1 rounded text-[10px] font-medium bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors">
+                          Load
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0">
                       <Tooltip content="Analyze in Schema Studio" side="top">
                         <button onClick={() => void handleOpenInSchemaStudio(job.id)}
                           className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
@@ -2497,7 +2513,7 @@ export default function Migration() {
                           <FileCode size={12} />
                         </button>
                       </Tooltip>
-                      <Tooltip content="Export Python migration script (CLI runner)" side="top">
+                      <Tooltip content="Export CLI script" side="top">
                         <button onClick={() => void handleExportJobScript(job.id)}
                           className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
                           <Terminal size={12} />
@@ -2521,6 +2537,7 @@ export default function Migration() {
                           <Trash2 size={12} />
                         </button>
                       </Tooltip>
+                      </div>
                     </div>
                   </div>
                 ))}
