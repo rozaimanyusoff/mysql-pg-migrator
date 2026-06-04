@@ -38,6 +38,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       rowsSource: 0,
       rowsMigrated: 0,
       rowsSkipped: 0,
+      rowsErrored: 0,
       offset: 0,
       hasMore: true,
       error: null,

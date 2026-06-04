@@ -272,17 +272,26 @@ function transformRow(
 
 // ── Row insertion ─────────────────────────────────────────────────────────────
 
-interface InsertResult { pks: string[]; inserted: number; }
+interface InsertResult {
+  pks: string[];
+  inserted: number;
+  conflictSkipped: number; // rowCount=0 from ON CONFLICT DO NOTHING — intentional
+  errored: number;         // exceptions — type errors, FK violations, etc.
+  firstError: string | null;
+}
 
 async function insertRows(
   conn: MigConn, schema: string, table: string,
   rows: Record<string, unknown>[], targetPkCol: string | null,
   upsert = false
 ): Promise<InsertResult> {
-  if (!rows.length) return { pks: [], inserted: 0 };
+  if (!rows.length) return { pks: [], inserted: 0, conflictSkipped: 0, errored: 0, firstError: null };
   const cols = Object.keys(rows[0]);
   const insertedPks: string[] = [];
   let actualInserted = 0;
+  let conflictSkipped = 0;
+  let errored = 0;
+  let firstError: string | null = null;
   const updateCols = cols.filter(c => c !== targetPkCol);
 
   if (conn.type === 'postgresql') {
@@ -301,11 +310,18 @@ async function insertRows(
         try {
           const result = await c.query(sql, values);
           const written = result.rowCount ?? 0;
-          actualInserted += written;
-          if (written > 0 && targetPkCol && row[targetPkCol] != null) {
-            insertedPks.push(String(row[targetPkCol]));
+          if (written > 0) {
+            actualInserted += written;
+            if (targetPkCol && row[targetPkCol] != null) {
+              insertedPks.push(String(row[targetPkCol]));
+            }
+          } else {
+            conflictSkipped++;
           }
-        } catch { /* skip rows that error */ }
+        } catch (err) {
+          errored++;
+          if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+        }
       }
     });
   } else {
@@ -324,18 +340,23 @@ async function insertRows(
         try {
           const [result] = await c.query(sql, values);
           const written = (result as { affectedRows?: number }).affectedRows ?? 0;
-          // ON DUPLICATE KEY UPDATE: affectedRows=2 for update, 1 for insert, 0 for no-op
-          const wasWritten = written > 0;
-          actualInserted += wasWritten ? 1 : 0;
-          if (wasWritten && targetPkCol && row[targetPkCol] != null) {
-            insertedPks.push(String(row[targetPkCol]));
+          if (written > 0) {
+            actualInserted++;
+            if (targetPkCol && row[targetPkCol] != null) {
+              insertedPks.push(String(row[targetPkCol]));
+            }
+          } else {
+            conflictSkipped++;
           }
-        } catch { /* skip rows that error */ }
+        } catch (err) {
+          errored++;
+          if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+        }
       }
     });
   }
 
-  return { pks: insertedPks, inserted: actualInserted };
+  return { pks: insertedPks, inserted: actualInserted, conflictSkipped, errored, firstError };
 }
 
 // ── Ensure target schema + table exist ───────────────────────────────────────
@@ -478,14 +499,18 @@ export async function advanceRun(
         }
       }
 
-      const skippedThisChunk = chunk.length - insertResult.inserted;
       ts.offset += chunk.length;
       ts.rowsMigrated += insertResult.inserted;
-      ts.rowsSkipped += skippedThisChunk;
+      ts.rowsSkipped  += insertResult.conflictSkipped;
+      ts.rowsErrored  += insertResult.errored;
       run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
-      if (skippedThisChunk > 0) {
-        log(`[${ts.sourceKey}] ${insertResult.inserted} written, ${skippedThisChunk} skipped (already exist)`);
-      }
+
+      const parts: string[] = [];
+      if (insertResult.inserted > 0)        parts.push(`${insertResult.inserted} written`);
+      if (insertResult.conflictSkipped > 0)  parts.push(`${insertResult.conflictSkipped} skipped (already exist)`);
+      if (insertResult.errored > 0)          parts.push(`${insertResult.errored} errors`);
+      if (parts.length > 1 || insertResult.errored > 0) log(`[${ts.sourceKey}] ${parts.join(', ')}`);
+      if (insertResult.firstError) log(`[${ts.sourceKey}] ERROR: ${insertResult.firstError}`);
 
       if (chunk.length < CHUNK_SIZE) {
         ts.hasMore = false;

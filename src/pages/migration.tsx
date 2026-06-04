@@ -2595,6 +2595,7 @@ export default function Migration() {
                               <p className="text-[9px] text-gray-400 dark:text-slate-500">
                                 {ts.rowsMigrated.toLocaleString()} written
                                 {(ts.rowsSkipped ?? 0) > 0 && <span className="ml-1 text-amber-500 dark:text-amber-400">{ts.rowsSkipped.toLocaleString()} skipped</span>}
+                                {(ts.rowsErrored ?? 0) > 0 && <span className="ml-1 text-rose-500 dark:text-rose-400">{ts.rowsErrored.toLocaleString()} errors</span>}
                               </p>
                             </div>
                             {canRollback && (
@@ -2682,6 +2683,9 @@ export default function Migration() {
                         <span className="text-[9px] text-gray-400">{ts.rowsMigrated.toLocaleString()} written</span>
                         {(ts.rowsSkipped ?? 0) > 0 && (
                           <span className="text-[9px] text-amber-500 dark:text-amber-400">{ts.rowsSkipped.toLocaleString()} skipped</span>
+                        )}
+                        {(ts.rowsErrored ?? 0) > 0 && (
+                          <span className="text-[9px] text-rose-500 dark:text-rose-400">{ts.rowsErrored.toLocaleString()} errors</span>
                         )}
                       </div>
                       {ts.error && <p className="text-[10px] text-rose-500 mt-0.5 truncate">{ts.error}</p>}

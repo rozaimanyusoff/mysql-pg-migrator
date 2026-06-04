@@ -105,7 +105,8 @@ export interface MigRunTableState {
   status: TableRunStatus;
   rowsSource: number;
   rowsMigrated: number;  // rows actually written to target
-  rowsSkipped: number;   // rows silently skipped (ON CONFLICT DO NOTHING)
+  rowsSkipped: number;   // rows skipped by ON CONFLICT DO NOTHING (already exist)
+  rowsErrored: number;   // rows that failed with a DB error (type mismatch, FK violation, etc.)
   offset: number;
   hasMore: boolean;
   error: string | null;
