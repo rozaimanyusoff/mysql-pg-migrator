@@ -104,7 +104,8 @@ export interface MigRunTableState {
   targetKey: string;
   status: TableRunStatus;
   rowsSource: number;
-  rowsMigrated: number;
+  rowsMigrated: number;  // rows actually written to target
+  rowsSkipped: number;   // rows silently skipped (ON CONFLICT DO NOTHING)
   offset: number;
   hasMore: boolean;
   error: string | null;

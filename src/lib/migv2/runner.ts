@@ -272,15 +272,17 @@ function transformRow(
 
 // ── Row insertion ─────────────────────────────────────────────────────────────
 
+interface InsertResult { pks: string[]; inserted: number; }
+
 async function insertRows(
   conn: MigConn, schema: string, table: string,
   rows: Record<string, unknown>[], targetPkCol: string | null,
   upsert = false
-): Promise<string[]> {
-  if (!rows.length) return [];
+): Promise<InsertResult> {
+  if (!rows.length) return { pks: [], inserted: 0 };
   const cols = Object.keys(rows[0]);
   const insertedPks: string[] = [];
-  // Columns to update on conflict (exclude PK)
+  let actualInserted = 0;
   const updateCols = cols.filter(c => c !== targetPkCol);
 
   if (conn.type === 'postgresql') {
@@ -297,11 +299,13 @@ async function insertRows(
           sql = `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`;
         }
         try {
-          await c.query(sql, values);
-          if (targetPkCol && row[targetPkCol] != null) {
+          const result = await c.query(sql, values);
+          const written = result.rowCount ?? 0;
+          actualInserted += written;
+          if (written > 0 && targetPkCol && row[targetPkCol] != null) {
             insertedPks.push(String(row[targetPkCol]));
           }
-        } catch { /* skip conflicting rows */ }
+        } catch { /* skip rows that error */ }
       }
     });
   } else {
@@ -318,16 +322,20 @@ async function insertRows(
           sql = `INSERT IGNORE INTO \`${schema}\`.\`${table}\` (${colList}) VALUES (${placeholders})`;
         }
         try {
-          await c.query(sql, values);
-          if (targetPkCol && row[targetPkCol] != null) {
+          const [result] = await c.query(sql, values);
+          const written = (result as { affectedRows?: number }).affectedRows ?? 0;
+          // ON DUPLICATE KEY UPDATE: affectedRows=2 for update, 1 for insert, 0 for no-op
+          const wasWritten = written > 0;
+          actualInserted += wasWritten ? 1 : 0;
+          if (wasWritten && targetPkCol && row[targetPkCol] != null) {
             insertedPks.push(String(row[targetPkCol]));
           }
-        } catch { /* skip conflicting rows */ }
+        } catch { /* skip rows that error */ }
       }
     });
   }
 
-  return insertedPks;
+  return { pks: insertedPks, inserted: actualInserted };
 }
 
 // ── Ensure target schema + table exist ───────────────────────────────────────
@@ -454,25 +462,30 @@ export async function advanceRun(
       const transformed = chunk.map(row => transformRow(row, tableMap));
 
       // Insert into target (upsert when incremental by timestamp)
-      const pks = await insertRows(
+      const insertResult = await insertRows(
         target, tableMap.target.schema, resolveTargetTable(tableMap),
         transformed, ts.targetPkCol, useUpsert
       );
 
-      // Accumulate rollback PKs (up to cap)
+      // Accumulate rollback PKs (up to cap) — only actually-inserted rows
       if (!ts.pkOverflow) {
         const space = MAX_ROLLBACK_PKS - ts.insertedPks.length;
         if (space > 0) {
-          ts.insertedPks.push(...pks.slice(0, space));
+          ts.insertedPks.push(...insertResult.pks.slice(0, space));
         }
-        if (ts.insertedPks.length >= MAX_ROLLBACK_PKS && pks.length > space) {
+        if (ts.insertedPks.length >= MAX_ROLLBACK_PKS && insertResult.pks.length > space) {
           ts.pkOverflow = true;
         }
       }
 
+      const skippedThisChunk = chunk.length - insertResult.inserted;
       ts.offset += chunk.length;
-      ts.rowsMigrated += chunk.length;
+      ts.rowsMigrated += insertResult.inserted;
+      ts.rowsSkipped += skippedThisChunk;
       run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
+      if (skippedThisChunk > 0) {
+        log(`[${ts.sourceKey}] ${insertResult.inserted} written, ${skippedThisChunk} skipped (already exist)`);
+      }
 
       if (chunk.length < CHUNK_SIZE) {
         ts.hasMore = false;

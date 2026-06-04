@@ -2592,7 +2592,10 @@ export default function Migration() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-[10px] text-gray-700 dark:text-slate-300 truncate font-mono">{ts.sourceKey}</p>
-                              <p className="text-[9px] text-gray-400 dark:text-slate-500">{ts.rowsMigrated.toLocaleString()} rows</p>
+                              <p className="text-[9px] text-gray-400 dark:text-slate-500">
+                                {ts.rowsMigrated.toLocaleString()} written
+                                {(ts.rowsSkipped ?? 0) > 0 && <span className="ml-1 text-amber-500 dark:text-amber-400">{ts.rowsSkipped.toLocaleString()} skipped</span>}
+                              </p>
                             </div>
                             {canRollback && (
                               <button
@@ -2648,7 +2651,8 @@ export default function Migration() {
               {/* Per-table progress */}
               <div className="shrink-0 w-56 border-r border-gray-100 dark:border-slate-800 overflow-auto panel-scroll p-2 space-y-2">
                 {currentRun.tableStates.map(ts => {
-                  const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(ts.rowsMigrated / ts.rowsSource * 100)) : 0;
+                  const totalProcessed = ts.rowsMigrated + (ts.rowsSkipped ?? 0);
+                  const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(totalProcessed / ts.rowsSource * 100)) : 0;
                   const isRollingBackThis = rollingBackTableId === ts.id;
                   const canRollbackThis = (ts.status === 'completed' || ts.status === 'failed') && !polling;
                   return (
@@ -2674,6 +2678,12 @@ export default function Migration() {
                         </div>
                         <span className="text-[10px] text-gray-400 shrink-0">{pct}%</span>
                       </div>
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        <span className="text-[9px] text-gray-400">{ts.rowsMigrated.toLocaleString()} written</span>
+                        {(ts.rowsSkipped ?? 0) > 0 && (
+                          <span className="text-[9px] text-amber-500 dark:text-amber-400">{ts.rowsSkipped.toLocaleString()} skipped</span>
+                        )}
+                      </div>
                       {ts.error && <p className="text-[10px] text-rose-500 mt-0.5 truncate">{ts.error}</p>}
                     </div>
                   );
@@ -2682,7 +2692,7 @@ export default function Migration() {
               {/* Live logs */}
               <div className="flex-1 overflow-auto panel-scroll bg-gray-900 dark:bg-black p-3 font-mono text-[11px] text-gray-300">
                 {currentRun.logs.map((line, i) => (
-                  <div key={i} className={`leading-5 ${line.includes('ERROR') ? 'text-rose-400' : line.includes('completed') ? 'text-emerald-400' : line.includes('ROLLBACK') ? 'text-amber-400' : ''}`}>
+                  <div key={i} className={`leading-5 ${line.includes('ERROR') ? 'text-rose-400' : line.includes('completed') ? 'text-emerald-400' : line.includes('ROLLBACK') ? 'text-amber-400' : line.includes('skipped') ? 'text-amber-400' : ''}`}>
                     {line}
                   </div>
                 ))}
