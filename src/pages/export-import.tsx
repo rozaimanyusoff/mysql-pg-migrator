@@ -928,7 +928,8 @@ export default function ExportImportPage() {
   const [tgtConnId, setTgtConnId] = useState<number | ''>('');
 
   // Export options
-  const [include, setInclude]       = useState<ExportInclude>('both');
+  const [exportInclude, setExportInclude] = useState<ExportInclude>('both');
+  const [syncInclude, setSyncInclude]     = useState<ExportInclude>('both');
   const [format, setFormat]         = useState<ExportFormat>('sql');
   const [whereClause, setWhere]     = useState('');
   const [showFilter, setShowFilter] = useState(false);
@@ -1009,7 +1010,7 @@ export default function ExportImportPage() {
     const tablesToExport = selectedTables === 'all' ? 'all' : selectedTables.map(t => t.split('.').pop() ?? t);
     try {
       const { data } = await axios.post('/api/export-import/export',
-        { cfg: connToCfg(conn, database), tables: tablesToExport, include, format, whereClause: whereClause.trim() || undefined });
+        { cfg: connToCfg(conn, database), tables: tablesToExport, include: exportInclude, format, whereClause: whereClause.trim() || undefined });
 
       if (format === 'csv') {
         const csvData = data as { csvFiles: { table: string; csv: string }[]; tables: string[] };
@@ -1021,7 +1022,7 @@ export default function ExportImportPage() {
         a.href = url; a.download = `${database}_${new Date().toISOString().slice(0, 10)}.zip`; a.click();
         URL.revokeObjectURL(url);
         setRunStatus('success');
-        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: csvData.tables.length, include, format: 'csv', where_clause: whereClause.trim() || undefined, status: 'success' });
+        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: csvData.tables.length, include: exportInclude, format: 'csv', where_clause: whereClause.trim() || undefined, status: 'success' });
       } else {
         const sqlData = data as { sql: string; tables: string[] };
         setExportResult(sqlData); setRunStatus('success');
@@ -1031,12 +1032,12 @@ export default function ExportImportPage() {
         const a = document.createElement('a');
         a.href = url; a.download = `${database}_${schema || 'public'}_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.sql`; a.click();
         URL.revokeObjectURL(url);
-        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: sqlData.tables.length, include, format: 'sql', where_clause: whereClause.trim() || undefined, status: 'success' });
+        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: sqlData.tables.length, include: exportInclude, format: 'sql', where_clause: whereClause.trim() || undefined, status: 'success' });
       }
     } catch (err: unknown) {
       const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err);
       setError(msg); setRunStatus('failed');
-      await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: 0, include, format, status: 'failed' });
+      await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: 0, include: exportInclude, format, status: 'failed' });
     } finally { setRunning(false); setJobsRefreshKey(k => k + 1); }
   };
 
@@ -1074,7 +1075,7 @@ export default function ExportImportPage() {
       setSyncProgress({ current: i, total, label: table });
       try {
         const { data } = await axios.post('/api/export-import/sync',
-          { source: connToCfg(conn, database), target: connToCfg(tgtConn, database), tables: [table], include, conflict });
+          { source: connToCfg(conn, database), target: connToCfg(tgtConn, database), tables: [table], include: syncInclude, conflict });
         const d = data as { success: boolean; log: LogLine[] };
         allLog.push(...d.log);
         if (!d.success) allOk = false;
@@ -1088,7 +1089,7 @@ export default function ExportImportPage() {
     setLog(allLog);
     setRunStatus(allOk ? 'success' : 'failed');
     setSyncProgress(null);
-    await saveHistory({ operation: 'sync', source_label: conn.label, source_db: database, target_label: tgtConn.label, target_db: database, tables_count: tables.length, include, conflict, status: allOk ? 'success' : 'failed' });
+    await saveHistory({ operation: 'sync', source_label: conn.label, source_db: database, target_label: tgtConn.label, target_db: database, tables_count: tables.length, include: syncInclude, conflict, status: allOk ? 'success' : 'failed' });
     setRunning(false);
     setJobsRefreshKey(k => k + 1);
   };
@@ -1191,7 +1192,7 @@ export default function ExportImportPage() {
                   { v: 'data'   as ExportInclude, label: 'Data',   tip: 'Data only — INSERT statements, no DDL'          },
                 ]).map(({ v, label, tip }) => (
                   <BtnTip key={v} tip={tip}>
-                    <button onClick={() => setInclude(v)} className={seg(include === v)}>{label}</button>
+                    <button onClick={() => setExportInclude(v)} className={seg(exportInclude === v)}>{label}</button>
                   </BtnTip>
                 ))}
               </div>
@@ -1236,7 +1237,7 @@ export default function ExportImportPage() {
                   { v: 'data'   as ExportInclude, label: 'Data',   tip: 'Data only — INSERT statements, no DDL' },
                 ]).map(({ v, label, tip }) => (
                   <BtnTip key={v} tip={tip}>
-                    <button onClick={() => setInclude(v)} className={seg(include === v)}>{label}</button>
+                    <button onClick={() => setSyncInclude(v)} className={seg(syncInclude === v)}>{label}</button>
                   </BtnTip>
                 ))}
               </div>

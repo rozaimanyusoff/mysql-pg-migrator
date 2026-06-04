@@ -8,7 +8,7 @@ import {
   ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
   Database, ExternalLink, FileCode, FileText, Layers, Loader2,
   Pencil, Play, Plus, Undo2, Save, Search,
-  Table2, Trash2, X, AlertTriangle, CheckCircle2, Clock,
+  Table2, Terminal, Trash2, X, AlertTriangle, CheckCircle2, Clock,
   Network,
 } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
@@ -195,6 +195,23 @@ const MIGRATION_GUIDE_SECTIONS = [
       'Phase 3 — Cutover: stop writes to the source (put app in maintenance mode or pause writes), run one final incremental sync to capture the last few rows, verify row counts match, then switch the app connection to PostgreSQL.',
       'Reset watermark — click the ✕ next to the watermark value to force a full re-sync on the next run. Use this if rows were updated retroactively and the timestamp strategy may have missed them.',
       'Strategy choice — use "by ID" when rows are only ever inserted (never updated). Use "by Timestamp" when rows can be updated after insert; this will UPSERT on conflict using the target PK.',
+    ],
+  },
+  {
+    title: 'CLI script — large migrations (1000+ tables)',
+    icon: '⑨',
+    color: 'text-amber-600 dark:text-amber-400',
+    body: [
+      'For databases with hundreds or thousands of tables, the web runner can be resource-constrained (browser polling, server memory, long-lived HTTP). The CLI script runs the same migration logic directly on any machine — no browser, no server process needed.',
+      'Export — save the job first, then click the terminal (⌨) icon in the Jobs panel. A standalone Python 3 script is downloaded as migrate_<jobname>.py. The script embeds all connection config and column mappings from the saved job.',
+      'Install dependencies (once): pip install psycopg2-binary mysql-connector-python',
+      'Run — supply passwords via env vars to avoid interactive prompts: SRC_PASSWORD=... TGT_PASSWORD=... python3 migrate_myjob.py',
+      '--batch START-END — process only a slice of tables (1-based). Split a 1000-table job into manageable runs: --batch 1-100, then --batch 101-200, etc. Each batch runs independently and can be parallelised across machines.',
+      '--chunk-size N — rows per INSERT batch. Default is 500 (same as the web runner). Raise to 1000–5000 for CLI runs on fast networks to improve throughput.',
+      '--dry-run — counts source rows and applies all transforms but writes nothing to the target. Use to verify connectivity and estimate run time before committing.',
+      '--reset — ignores the saved state file and restarts all tables from offset 0.',
+      'Resume — after every chunk, progress is written to <jobId>_state.json. If the script is interrupted, re-running it skips completed tables and resumes from the last saved offset. Keep this file alongside the script.',
+      'Passwords — never stored in the script. Supply via SRC_PASSWORD / TGT_PASSWORD environment variables, or the script will prompt interactively. For scheduled/automated runs, inject via your CI/CD secrets or a .env file sourced before execution.',
     ],
   },
 ] as const;
@@ -630,6 +647,42 @@ export default function Migration() {
   // ── Table toggle ──────────────────────────────────────────────────────────────
   const isTableIncluded = (schema: string, table: string, database?: string) =>
     tableMaps.some(m => m.source.schema === schema && m.source.table === table && m.include && (!database || m.sourceDatabase === database));
+
+  const handleCheckAll = () => {
+    const toAdd: typeof tableMaps = [];
+    for (const t of filteredSrcTables) {
+      const existing = tableMaps.find(m => m.source.schema === t.schema && m.source.table === t.name && m.sourceDatabase === t.database);
+      if (!existing) {
+        const existsInTarget = tgtConnected && tgtTables.some(
+          tgt => tgt.schema === (tgtDefaultSchema || 'public') && tgt.name === t.name
+        );
+        toAdd.push({
+          id: newId(), include: true,
+          source: { schema: t.schema, table: t.name },
+          sourceDatabase: t.database,
+          target: { schema: tgtDefaultSchema || '', table: existsInTarget ? '' : t.name },
+          columns: [], // lazy — fetched when table is selected
+          truncateBeforeMigrate: false,
+        });
+      }
+    }
+    setTableMaps(prev => {
+      const updated = prev.map(m => {
+        const inFiltered = filteredSrcTables.some(t => t.schema === m.source.schema && t.name === m.source.table && t.database === m.sourceDatabase);
+        return inFiltered ? { ...m, include: true } : m;
+      });
+      return [...updated, ...toAdd];
+    });
+    setDirty(true);
+  };
+
+  const handleUncheckAll = () => {
+    setTableMaps(prev => prev.map(m => {
+      const inFiltered = filteredSrcTables.some(t => t.schema === m.source.schema && t.name === m.source.table && t.database === m.sourceDatabase);
+      return inFiltered ? { ...m, include: false } : m;
+    }));
+    setDirty(true);
+  };
 
   const toggleTable = async (t: MigTableInfo) => {
     const { schema, name: table, database } = t;
@@ -1086,6 +1139,21 @@ export default function Migration() {
     } catch { showError('Export SQL failed', 'Could not download SQL file.'); }
   };
 
+  const handleExportJobScript = async (jobId: string) => {
+    try {
+      const res = await fetch(`/api/migv2/jobs/export-script?id=${jobId}`);
+      if (!res.ok) { showError('Export Script failed', await res.text()); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match?.[1] ?? `migrate-${jobId.slice(0, 8)}.py`;
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch { showError('Export Script failed', 'Could not download Python script.'); }
+  };
+
   const handleDeleteJob = (id: string, name: string) => {
     showWarning({
       title: `Delete "${name}"?`,
@@ -1509,11 +1577,27 @@ export default function Migration() {
                         )}
                         {loadingCols && <Loader2 size={10} className="animate-spin text-gray-400" />}
                       </div>
-                      <div className="relative">
-                        <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input value={srcSearch} onChange={e => setSrcSearch(e.target.value)}
-                          placeholder="Filter tables…"
-                          className="w-full pl-6 pr-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      <div className="flex items-center gap-1.5">
+                        {filteredSrcTables.length > 0 && (() => {
+                          const allChecked = filteredSrcTables.every(t => isTableIncluded(t.schema, t.name, t.database));
+                          const someChecked = !allChecked && filteredSrcTables.some(t => isTableIncluded(t.schema, t.name, t.database));
+                          return (
+                            <input
+                              type="checkbox"
+                              checked={allChecked}
+                              ref={el => { if (el) el.indeterminate = someChecked; }}
+                              onChange={() => allChecked ? handleUncheckAll() : handleCheckAll()}
+                              title={allChecked ? 'Uncheck all' : 'Check all'}
+                              className="shrink-0 accent-blue-500 cursor-pointer"
+                            />
+                          );
+                        })()}
+                        <div className="relative flex-1">
+                          <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input value={srcSearch} onChange={e => setSrcSearch(e.target.value)}
+                            placeholder="Filter tables…"
+                            className="w-full pl-6 pr-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        </div>
                       </div>
                     </div>
 
@@ -1895,8 +1979,8 @@ export default function Migration() {
                               { label: 'Src Col', tip: 'Source Column', desc: 'Column name from the source database table.\nExample: user_id, created_at' },
                               { label: 'Src Type', tip: 'Source Type', desc: 'Original data type in the source database.\nExample: INT, VARCHAR(255), DATETIME' },
                               { label: '', tip: null, desc: null },
-                              { label: 'Tgt Col', tip: 'Target Column', desc: 'Column in the target table this source column maps to. Select "— none —" to skip it.\nAlready-assigned columns show ✓ srcCol → tgtCol.' },
-                              { label: 'Tgt Name', tip: 'Target Name', desc: 'Override the column name written in the migration output.\n• keep — use the same name as Tgt Col\n• rename — type a custom column name\nExample: rename user_id → member_id' },
+                              { label: 'Tgt Col', tip: 'Target Column', desc: 'Column name in the target table. Pick from the dropdown suggestions or type a new name directly.\nTyping a name not in the list creates a new column.' },
+                              { label: 'Mapping', tip: 'Mapping Type', desc: 'Whether the target column is new (does not exist yet) or existing (already present in the target table).\n• new — column will be created\n• existing — column already exists and will be populated' },
                               { label: 'Tgt Type', tip: 'Target Type', desc: 'Data type inferred for the target column. Auto-set when you pick a Tgt Col or change Conv.\nExample: BIGINT, TEXT, TIMESTAMPTZ' },
                               { label: 'Conv', tip: 'Conversion', desc: 'Datatype cast or transformation applied during migration.\n• keep — copy value as-is\n• →UUID — serial int → UUID v4\n• →TEXT, →INT, →BIGINT, →NUMERIC, →BOOL, →TIMESTAMPTZ, →DATE, →JSONB — cast to that PG type' },
                               { label: 'Keep Orig', tip: 'Keep Original ID', desc: 'Only for →UUID conversion. Stores the original MySQL serial integer in a separate BIGINT column.\nSet a column name (e.g. legacy_id) to enable.\nUseful when other tables still reference the old serial integer as a FK.' },
@@ -1950,63 +2034,79 @@ export default function Migration() {
                                     {colsCache[`${selectedMap.sourceDatabase ?? ''}.${selectedMap.source.schema}.${selectedMap.source.table}`]?.find(c => c.name === col.sourceCol)?.rawType ?? '—'}
                                   </td>
                                   <td className="px-1 text-[10px] text-gray-300">→</td>
+                                  {/* TGT COL — select existing or switch to custom name input */}
                                   <td className="px-2 py-1">
-                                    {tgtColsForSelected.length > 0 ? (
-                                      <select value={col.targetCol}
-                                        onChange={e => {
-                                          const tgtCol = tgtColsForSelected.find(c => c.name === e.target.value);
-                                          updateColumn(selectedMap.id, idx, {
-                                            targetCol: e.target.value,
-                                            ...(tgtCol ? { targetType: tgtCol.rawType.toUpperCase() } : {}),
-                                          });
-                                        }}
-                                        className="max-w-[110px] px-1.5 py-0.5 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono focus:outline-none focus:border-violet-400">
-                                        {!tgtColsForSelected.find(c => c.name === col.targetCol) && col.targetCol && (
-                                          <option value={col.targetCol}>{col.targetCol}</option>
-                                        )}
-                                        <option value="">— none —</option>
-                                        {tgtColsForSelected.map(c => {
-                                          const assignedTo = selectedMap.columns.find(
-                                            (r, rIdx) => rIdx !== idx && r.targetCol === c.name
-                                          );
-                                          return (
-                                            <option key={c.name} value={c.name}>
-                                              {assignedTo
-                                                ? `✓ ${assignedTo.sourceCol ?? '(new)'} → ${c.name}`
-                                                : c.name}
-                                            </option>
-                                          );
-                                        })}
-                                      </select>
-                                    ) : (
-                                      <input value={col.targetCol}
-                                        onChange={e => updateColumn(selectedMap.id, idx, { targetCol: e.target.value })}
-                                        className="w-24 px-1.5 py-0.5 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono" />
-                                    )}
-                                  </td>
-                                  {/* TGT NAME */}
-                                  <td className="px-2 py-1">
-                                    {col.targetName !== null ? (
-                                      <div className="flex items-center gap-1">
+                                    {(() => {
+                                      const currentVal = col.targetName ?? col.targetCol;
+                                      const isCustom = tgtColsForSelected.length > 0 && !!currentVal && !tgtColsForSelected.find(c => c.name === currentVal);
+                                      if (isCustom) {
+                                        return (
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              value={currentVal}
+                                              onChange={e => updateColumn(selectedMap.id, idx, { targetCol: e.target.value, targetName: null })}
+                                              className="w-24 px-1.5 py-0.5 text-[11px] rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 font-mono focus:outline-none focus:border-amber-500"
+                                              autoFocus
+                                            />
+                                            <button
+                                              onClick={() => updateColumn(selectedMap.id, idx, { targetCol: '', targetName: null })}
+                                              className="text-gray-300 dark:text-slate-600 hover:text-violet-500 transition-colors"
+                                              title="Back to list">
+                                              <X size={10} />
+                                            </button>
+                                          </div>
+                                        );
+                                      }
+                                      if (tgtColsForSelected.length > 0) {
+                                        return (
+                                          <select
+                                            value={currentVal}
+                                            onChange={e => {
+                                              const val = e.target.value;
+                                              if (val === '__custom__') {
+                                                updateColumn(selectedMap.id, idx, { targetCol: '', targetName: null });
+                                                return;
+                                              }
+                                              const matched = tgtColsForSelected.find(c => c.name === val);
+                                              updateColumn(selectedMap.id, idx, {
+                                                targetCol: val,
+                                                targetName: null,
+                                                ...(matched ? { targetType: matched.rawType.toUpperCase() } : {}),
+                                              });
+                                            }}
+                                            className="max-w-[120px] px-1.5 py-0.5 text-[11px] rounded border border-violet-200 dark:border-violet-800 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono focus:outline-none focus:border-violet-400">
+                                            <option value="">— none —</option>
+                                            <option value="__custom__">✎ new name…</option>
+                                            {tgtColsForSelected.map(c => {
+                                              const assignedTo = selectedMap.columns.find((r, rIdx) => rIdx !== idx && r.targetCol === c.name);
+                                              return (
+                                                <option key={c.name} value={c.name}>
+                                                  {assignedTo ? `✓ ${assignedTo.sourceCol ?? '(new)'} → ${c.name}` : c.name}
+                                                </option>
+                                              );
+                                            })}
+                                          </select>
+                                        );
+                                      }
+                                      return (
                                         <input
-                                          value={col.targetName}
-                                          onChange={e => updateColumn(selectedMap.id, idx, { targetName: e.target.value || null })}
-                                          placeholder="new name"
-                                          className="w-24 px-1.5 py-0.5 text-[11px] rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 font-mono focus:outline-none focus:border-amber-500"
+                                          value={currentVal}
+                                          onChange={e => updateColumn(selectedMap.id, idx, { targetCol: e.target.value, targetName: null })}
+                                          className="w-24 px-1.5 py-0.5 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono"
                                         />
-                                        <button
-                                          onClick={() => updateColumn(selectedMap.id, idx, { targetName: null })}
-                                          className="text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors"
-                                          title="Revert to keep">
-                                          <X size={10} />
-                                        </button>
-                                      </div>
+                                      );
+                                    })()}
+                                  </td>
+                                  {/* MAPPING — new vs existing */}
+                                  <td className="px-2 py-1">
+                                    {(col.targetName ?? col.targetCol) ? (
+                                      tgtColsForSelected.length > 0 && tgtColsForSelected.find(c => c.name === (col.targetName ?? col.targetCol)) ? (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold uppercase tracking-wide">existing</span>
+                                      ) : (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-semibold uppercase tracking-wide">new</span>
+                                      )
                                     ) : (
-                                      <button
-                                        onClick={() => updateColumn(selectedMap.id, idx, { targetName: col.targetCol || '' })}
-                                        className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 font-mono transition-colors">
-                                        keep
-                                      </button>
+                                      <span className="text-[9px] text-gray-300 dark:text-slate-600">—</span>
                                     )}
                                   </td>
                                   {/* TGT TYPE — label only */}
@@ -2395,6 +2495,12 @@ export default function Migration() {
                         <button onClick={() => void handleExportJobSql(job.id)}
                           className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
                           <FileCode size={12} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Export Python migration script (CLI runner)" side="top">
+                        <button onClick={() => void handleExportJobScript(job.id)}
+                          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
+                          <Terminal size={12} />
                         </button>
                       </Tooltip>
                       <Tooltip content="Export Markdown" side="top">

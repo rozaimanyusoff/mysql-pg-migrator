@@ -2,6 +2,38 @@
 
 ---
 
+## 2026-06-04
+- **fix** — Export/Import: export menghasilkan schema sahaja tanpa data
+  - Root cause: `include` state dikongsi antara Export tab dan Sync tab — kalau user set Sync ke `'schema'` kemudian switch ke Export tab, state kekal `'schema'` dan export hanya DDL tanpa INSERT
+  - Fix: pisahkan kepada `exportInclude` (default `'both'`) dan `syncInclude` (default `'both'`) — dua state bebas, tab tidak saling mempengaruhi
+  - Kemaskini semua references: `handleExport`, `handleSync`, `saveHistory` calls, kedua-dua toggle segment UI
+  - Affects: `src/pages/export-import.tsx`
+  - Status: done
+
+- **implement** — Migration: Check All / Uncheck All on source table list
+  - Added `handleCheckAll` and `handleUncheckAll`; bulk-adds all `filteredSrcTables` without per-table column API calls — new entries use `columns: []` (lazy-loaded on select)
+  - Tri-state checkbox in the Tables bar header: checked = all filtered included, indeterminate = some, unchecked = none; `ref` callback sets native `indeterminate` property
+  - Check-all respects the current search filter — only affects visible tables
+  - Affects: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Migration: Export Python CLI script from saved job
+  - New `src/lib/migv2/script-gen.ts` — generates a self-contained Python 3 migration script from a `MigJob`; faithfully ports all runner.ts logic: `seqToUUID` (SHA-256 hash, identical byte layout), all `IdConversion` coercions, `transformRow`, `keepLegacyAs`, incremental/upsert mode, `CREATE TABLE IF NOT EXISTS` DDL, `ON CONFLICT DO NOTHING` / `ON DUPLICATE KEY UPDATE`
+  - New API route `GET /api/migv2/jobs/export-script?id=` — loads job, generates script, downloads as `migrate_<name>.py`
+  - Script features: `--batch START-END` for splitting 1000-table jobs into smaller runs; `--dry-run`; `--chunk-size` override (default 500); `--reset` to clear resume state; passwords via `SRC_PASSWORD`/`TGT_PASSWORD` env vars or interactive prompt; per-DB source connection cache avoids reconnecting for tables in the same source database
+  - Resume: state saved to `<jobId>_state.json` after every chunk; completed tables auto-skipped on re-run
+  - UI: added `<Terminal>` icon button in Jobs panel (amber, beside Export DDL SQL); `handleExportJobScript` handler in migration.tsx
+  - Affects: `src/lib/migv2/script-gen.ts` (new), `src/pages/api/migv2/jobs/export-script.ts` (new), `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration: column mapping table — remove TGT NAME, add MAPPING badge, TGT COL combobox
+  - Removed `Tgt Name` column from the column mapping table (header + `<td>` cell); rename functionality is now handled directly in TGT COL
+  - TGT COL changed from a `<select>` dropdown to a combobox (`<input>` + `<datalist>`): user can either pick an existing column from suggestions or type a new name directly
+  - Backward compat: input shows `col.targetName ?? col.targetCol` so existing jobs with a `targetName` override still display correctly; on edit, `targetName` is cleared and `targetCol` becomes the source of truth
+  - Added `Mapping` column (between TGT COL and TGT TYPE): shows green `new` badge when typed name is not in target table columns, blue `existing` badge when it matches an existing column, `—` when empty
+  - Affects: `src/pages/migration.tsx` — column headers array, TGT COL `<td>`, TGT NAME `<td>` removed, MAPPING `<td>` added
+  - Status: done
+
 ## 2026-06-05
 - **fix** — Export-Import: SQL export auto-downloads + Jobs panel restyled
   - Bug: SQL export set `exportResult` state and saved history but never triggered file download; user had to click Download manually in the preview panel; fix: immediately create Blob + anchor click after receiving SQL data — same pattern as CSV export
