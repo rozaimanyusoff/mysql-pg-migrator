@@ -362,18 +362,51 @@ async function insertRows(
 // ── Ensure target schema + table exist ───────────────────────────────────────
 
 async function ensureTargetTable(conn: MigConn, tableMap: TableMap): Promise<void> {
-  const ddl = buildCreateTableSQL(tableMap, conn.type);
+  const schema = tableMap.target.schema;
+  const table  = resolveTargetTable(tableMap);
+  const ddl    = buildCreateTableSQL(tableMap, conn.type);
+
+  // Columns that must exist but won't be in CREATE TABLE IF NOT EXISTS when the
+  // table already exists: keepLegacyAs BIGINT columns and target-only new columns.
+  const extraCols: { name: string; type: string; nullable: boolean }[] = [];
+  for (const c of tableMap.columns.filter(col => col.include)) {
+    if (c.keepLegacyAs && c.conversion === 'serial_to_uuid') {
+      extraCols.push({ name: c.keepLegacyAs, type: 'BIGINT', nullable: true });
+    }
+    if (c.sourceCol === null) {
+      // target-only column — may not exist in an existing table
+      extraCols.push({ name: tgtCol(c), type: c.targetType || 'TEXT', nullable: c.nullable });
+    }
+  }
+
   if (conn.type === 'postgresql') {
     await withPg(conn, async c => {
-      // Run schema + table creation separately
       const stmts = ddl.split(';\n').map(s => s.trim()).filter(Boolean);
       for (const s of stmts) {
         await c.query(s);
+      }
+      // Ensure extra columns exist (ADD COLUMN IF NOT EXISTS — PG 9.6+)
+      for (const col of extraCols) {
+        const nn = col.nullable ? '' : ' NOT NULL';
+        await c.query(
+          `ALTER TABLE "${schema}"."${table}" ADD COLUMN IF NOT EXISTS "${col.name}" ${col.type}${nn}`
+        );
       }
     });
   } else {
     await withMysql(conn, async c => {
       await c.query(ddl);
+      // MySQL: ADD COLUMN IF NOT EXISTS (8.0.3+); fall back to silent ignore on duplicate
+      for (const col of extraCols) {
+        const nn = col.nullable ? '' : ' NOT NULL';
+        try {
+          await c.query(
+            `ALTER TABLE \`${schema}\`.\`${table}\` ADD COLUMN IF NOT EXISTS \`${col.name}\` ${col.type}${nn}`
+          );
+        } catch {
+          // MySQL < 8.0.3 doesn't support IF NOT EXISTS — ignore duplicate column error (1060)
+        }
+      }
     });
   }
 }
