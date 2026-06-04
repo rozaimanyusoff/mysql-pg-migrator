@@ -2,6 +2,100 @@
 
 ---
 
+## 2026-06-05
+- **fix** — Export-Import: SQL export auto-downloads + Jobs panel restyled
+  - Bug: SQL export set `exportResult` state and saved history but never triggered file download; user had to click Download manually in the preview panel; fix: immediately create Blob + anchor click after receiving SQL data — same pattern as CSV export
+  - Jobs panel: restyled `SavedJobsPanel` history cards to match migration/schema studio style — status badge + format badge + time in row 1, connection label as primary text, database in monospace row 3, meta pills (tables count, include mode, WHERE clause, conflict) in row 4; card border matches status color; delete button right-aligned in row 1
+  - Affects: `src/pages/export-import.tsx` → `handleExport`, `SavedJobsPanel`
+  - Status: done
+- **improve** — Export-Import: Saved Jobs panel matches migration/schema studio layout
+  - Replaced left-notch + right-content pattern with header-toggle pattern (same as migration `w-9`/`w-60` transition, toggle arrow in header row)
+  - Extracted `HistoryCard` component with migration-style 4-row structure: name + status badge, DB path, count + date + expand toggle, actions row (delete)
+  - Expand reveals detail panel: format, include mode, conflict mode, WHERE clause
+  - Added `ChevronUp`, `ChevronDown`, `Save` to lucide imports
+  - Affects: `src/pages/export-import.tsx` → `SavedJobsPanel`, new `HistoryCard`
+  - Status: done
+
+## 2026-06-04
+- **fix** — Schema Studio: export dropdown still clipped by overflow ancestors
+  - Root cause: CSS `overflow: hidden/auto` clips absolutely-positioned children regardless of z-index — previous `relative z-10` fix only addressed stacking context, not the clipping
+  - Fix: extracted `ExportDropdown` component using React `createPortal` to mount the dropdown on `document.body`; position computed via `getBoundingClientRect()` → `position: fixed`; dropdown now fully escapes all `overflow-hidden` / `overflow-auto` ancestors
+  - Click-outside handler added via `useEffect` + `mousedown` on `document` with `data-export-portal` attribute guard
+  - Affects: `src/pages/schema-studio.tsx` → new `ExportDropdown` component, `JobGroupCard`
+  - Status: done
+- **improve** — Schema Studio export: JSON export + Drizzle pgSchema fix + ALTER job hint
+  - `src/lib/orm-generator.ts` — `generateDrizzle`: non-public schemas now emit `pgSchema('name')` declaration and use `schemaVar.table(...)` syntax instead of bare `pgTable`; adds `pgSchema` to imports automatically
+  - `src/pages/schema-studio.tsx` — added `generateJsonSchema()` function: exports structured JSON (`job`, `generated`, `tables[]` with columns, types, FK references) suitable for AI consumption
+  - Jobs Export dropdown: added JSON option (amber badge, always shown for DDL jobs); ORM exports (drizzle/prisma/typeorm) now grouped below a divider; for ALTER/refactor jobs, ORM options replaced with "Load into designer for ORM export" hint instead of silently hidden
+  - DDL Preview panel toolbar: added JSON button (amber, between ORM buttons and download icon)
+  - Status: done
+- **fix** — Schema Studio: job status stays `pending` after ALTER apply
+  - Root cause: `applyAlterDDL` executed ALTER SQL against live DB but never wrote a new run record — job status was never updated from `pending`
+  - Fix: after `applyAlterDDL` completes, POST a new run record to `/api/schema-generator/jobs` with `status: 'success'`/`'failed'` matching execution log, then call `loadJobs()` to refresh sidebar
+  - Affects: `src/pages/schema-studio.tsx` → `applyAlterDDL`
+  - Status: done
+- **implement** — Schema Studio: job sync/verify against live DB
+  - Added Verify button (RefreshCw icon) on each `JobGroupCard` — visible only when job has `connection_label` + `target_database`
+  - On click: queries `/api/schema-explorer/tables` using the saved connection; compares expected tables (parsed from `schema_sql`) against actual tables in live DB
+  - DDL jobs: parses `CREATE TABLE` statements for expected tables; ALTER jobs: extracts schema.table pairs from `ALTER TABLE` statements
+  - Inline result row below action buttons: green `N tables verified in DB`, amber `M/N found — X missing`, red `Connection failed`
+  - `connections` prop added to `JobGroupCard`; passed at all sidebar render sites; not passed in `ExecutePanel` so verify is hidden there
+  - Affects: `src/pages/schema-studio.tsx` → `JobGroupCard`, `SyncResult` type
+  - Status: done
+- **improve** — Schema Studio: deep verification (columns, FK, constraints) + auto-update status on pass
+  - Previous verify only checked table existence; now performs full deep scan: columns present, type match (normalized: bigserial→int8, timestamptz, varchar/character varying, etc.), nullable match, FK constraints present in DB
+  - `TableSyncIssue` type added; `SyncResult` extended with `issues: TableSyncIssue[]`; `normalizeColType()` helper maps designer/PG types to canonical form
+  - On full pass (all tables, columns, FK match) → calls `onVerifyPass(jobName)` callback; parent `handleVerifyPass` creates a new run record with `status: 'success'` and log entry → job badge changes from `pending` to `success` automatically
+  - UI: summary line stays for quick reading; click to expand detailed issue panel showing per-table problem list (missing columns, type mismatches, missing FK constraints)
+  - `onVerifyPass` prop passed at both sidebar render sites
+  - Affects: `src/pages/schema-studio.tsx` → `JobGroupCard`, `handleVerifyPass`, `normalizeColType`
+  - Status: done
+- **fix** — Schema Studio: column types become BIGSERIAL on job load
+  - Root cause A: `handleLoadJob` called `setRefactorConnId` even for DDL jobs → triggered `loadRefactorSchema` which overwrote correctly-parsed DDL tables with live-DB data
+  - Root cause B: `loadRefactorSchema` mapped PG udt_names (int8, int4, int2, bool, bpchar) that are NOT in `PG_TYPES` → `<select>` showed first option (BIGSERIAL) for all unrecognised types
+  - Fix A: `handleLoadJob` now only sets `refactorConnId` (triggering live-DB load) for ALTER jobs; DDL jobs use parsed tables only
+  - Fix B: `loadRefactorSchema` adds explicit replacements: `INT8→BIGINT`, `INT4→INTEGER`, `INT2→SMALLINT`, `BOOL→BOOLEAN`, `BPCHAR→CHAR`, `FLOAT4→REAL`
+  - Affects: `src/pages/schema-studio.tsx` → `handleLoadJob`, `loadRefactorSchema`
+  - Status: done
+- **implement** — Schema Studio: "Save to existing job" picker in SaveJobModal
+  - `SaveJobModal` now accepts `existingNames?: string[]` prop — shows clickable job name chips above the input
+  - Current loaded job shown first (highlighted if selected); other existing job names shown as secondary chips
+  - Button label changes: "Save Revision" when saving to an existing name, "Save New" for a new job name
+  - Parent passes `[...new Set(jobs.map(j => j.job_name))]` to the modal
+  - Affects: `src/pages/schema-studio.tsx` → `SaveJobModal`
+  - Status: done
+- **implement** — Schema Studio: pre-load migrated schema from migration module
+  - `migration.tsx` → `handleOpenInSchemaStudio`: adds `migJobId=${jobId}` to the `/schema-studio` navigation URL alongside existing `connId`, `database`, `schema` params
+  - `schema-studio.tsx` → `urlParamsApplied` useEffect: detects `migJobId` query param; fetches DDL from `/api/migv2/jobs/export-sql?id=...` as text; parses with `parseSqlToTables`; sets tables in design mode (NOT refactor mode — avoids overwriting with live DB data)
+  - Shows dismissable violet notice banner: "N tables loaded from migration job — review, then Save Job."
+  - Existing `connId`+`database`-only path unchanged (opens in refactor mode as before)
+  - Affects: `src/pages/migration.tsx` → `handleOpenInSchemaStudio`, `src/pages/schema-studio.tsx` → URL params effect, `migNotice` state
+  - Status: superseded — see revision below
+- **revision** — Schema Studio: migration link opens in live-DB refactor mode (not static DDL)
+  - Previous approach (load DDL from export-sql into designer as static tables) was wrong — tables/rows already migrated to target DB; Schema Studio should connect live, not load from localStorage-like snapshot
+  - Removed `migJobId` DDL loading block; reverted URL params effect to standard refactor mode flow: `connId` + `database` + `schema` → `loadRefactorSchema` pulls actual live DB state
+  - `migJobId` retained in URL only for the notice banner (fetches migration job name via `/api/migv2/jobs/${migJobId}` and shows "Schema Studio linked to target DB from migration job X")
+  - Dirty tracking, suggestions, ALTER flow all work correctly since we're in proper refactor mode
+  - Affects: `src/pages/schema-studio.tsx` → `urlParamsApplied` useEffect
+  - Status: done
+- **fix** — Schema Studio: export dropdown hidden behind middle panel + Jobs as default tab
+  - Dropdown fix: right panel wrapper had no stacking context — absolute dropdown inside it rendered behind the middle panel's painting layer; added `relative z-10` to right panel wrapper so its stacking context sits above the middle panel
+  - Default tab: `setRightPanelTab('suggest')` in URL params effect was overriding the `'jobs'` default on every migration navigation; removed the override — Jobs tab is now always the default active tab
+  - Status: done
+- **fix** — Schema Studio: `parseSqlToTables` captures only first character of column type
+  - Root cause: `parseOneCol` regex `/([\w ]+?)/` uses lazy quantifier — captures minimum chars, always returning a single character ("U" for UUID, "V" for VARCHAR, "T" for TEXT)
+  - Type single-char is not in `PG_TYPES` → `<select>` shows first option = BIGSERIAL for all columns
+  - Fix: replace lazy pattern with greedy pattern using negative lookahead to stop before SQL constraint keywords (`NOT`, `NULL`, `DEFAULT`, `PRIMARY`, `UNIQUE`, `REFERENCES`, `CHECK`, `AUTO_INCREMENT`)
+  - New regex: `/([\w]+(?:\s+(?!NOT\b|NULL\b|DEFAULT\b|...)[\w]+)*)(?:\s*\(([^)]+)\))?/` — correctly captures `UUID`, `VARCHAR(255)`, `TIMESTAMP WITH TIME ZONE`, `CHARACTER VARYING` etc.
+  - Affects all load paths: saved DDL jobs, migration schema import, SQL paste import
+  - Affects: `src/pages/schema-studio.tsx` → `parseOneCol`
+  - Status: done
+- **fix** — Schema Studio: migration-loaded schema — no suggestions + no dirty tracking
+  - Issue 1 (no suggestions): `migJobId` load stayed in design mode without setting `refactorConnId`/`refactorDatabase`/`refactorSchema` → Suggest tab not rendered; fix: after loading tables, set `pendingRefactorDb`, `refactorConnId`, `refactorSchema` from URL params, switch to `'refactor'` mode + `'suggest'` tab. Crucially `pendingAutoLoad` is NOT set → `loadRefactorSchema` is not triggered → parsed tables not overwritten
+  - Issue 2 (no dirty tracking): `loadedJob` was `null` after migration load → dirty useEffect always returned `isDirty = false`; fix: set a synthetic `loadedJob` with `schema_sql = generateDDL(parsed)` as baseline — dirty tracking now compares current DDL vs migration baseline correctly
+  - Affects: `src/pages/schema-studio.tsx` → `migJobId` URL params handler
+  - Status: done
+
 ## 2026-06-03
 - **implement** — Schema Studio ERD: canvas control panel + orientation + hide refs + hide nodes
   - `src/pages/schema-studio.tsx` — `computeDesignerErdLayout`: added `orientation: 'LR' | 'TB'` param; TB mode stacks levels along Y axis with nodes arranged horizontally per level

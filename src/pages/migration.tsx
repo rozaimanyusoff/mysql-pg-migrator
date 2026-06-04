@@ -1121,7 +1121,7 @@ export default function Migration() {
         return;
       }
       const schema = jobTables.find(t => t.include)?.target.schema ?? 'public';
-      void router.push(`/schema-studio?connId=${match.id}&database=${encodeURIComponent(targetMeta.database)}&schema=${encodeURIComponent(schema)}`);
+      void router.push(`/schema-studio?migJobId=${jobId}&connId=${match.id}&database=${encodeURIComponent(targetMeta.database)}&schema=${encodeURIComponent(schema)}`);
     } catch { /* ignore */ }
   };
 

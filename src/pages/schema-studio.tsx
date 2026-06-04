@@ -3,13 +3,14 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
   ArrowLeft, ArrowRight, Database, Plus, Trash2, Table2, Upload, Play, Copy,
   Check, RefreshCw, FileSpreadsheet, FileCode2, FileText, CheckCircle2,
   XCircle, Loader2, X, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Download,
   Columns, Sprout, Save, Clock,
-  FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info, HelpCircle, BookOpen,
+  FolderOpen, KeyRound, Link2, Fingerprint, Hash, Layers, Info, HelpCircle, BookOpen, Braces,
   Network, Pencil, Zap, AlertTriangle,
 } from 'lucide-react';
 import {
@@ -142,7 +143,8 @@ function parseOneCol(s: string, pkSet: Set<string>, uqSet: Set<string>, fkMap: R
   if (!nm) return null;
   const name = nm[1];
   const rest = nm[2];
-  const tm = /^([\w ]+?)(?:\(([^)]+)\))?\s*(.*)/is.exec(rest);
+  // Greedy type capture — stops before constraint keywords; supports multi-word types (e.g. TIMESTAMP WITH TIME ZONE)
+  const tm = /^([\w]+(?:\s+(?!NOT\b|NULL\b|DEFAULT\b|PRIMARY\b|UNIQUE\b|REFERENCES\b|CHECK\b|AUTO_INCREMENT\b)[\w]+)*)(?:\s*\(([^)]+)\))?\s*(.*)/is.exec(rest);
   if (!tm) return null;
   let type = tm[1].trim().toUpperCase().replace(/\s+/g, ' ');
   const length = tm[2]?.trim() ?? '';
@@ -495,6 +497,34 @@ function generateSchemaMd(tables: DesignerTable[], jobName: string): string {
   return lines.join('\n');
 }
 
+function generateJsonSchema(tables: DesignerTable[], jobName: string): string {
+  return JSON.stringify({
+    job: jobName,
+    generated: new Date().toISOString().slice(0, 10),
+    tables: tables.map(t => ({
+      schema: t.schema || 'public',
+      name: t.name,
+      columns: t.columns.map(c => ({
+        name: c.name,
+        type: c.length ? `${c.type}(${c.length})` : c.type,
+        nullable: c.nullable,
+        primaryKey: c.isPk,
+        unique: c.isUnique,
+        autoIncrement: c.isAutoIncrement,
+        default: c.defaultValue || null,
+        foreignKey: c.fkRef || null,
+        comment: c.comment || null,
+      })),
+      foreignKeys: t.columns
+        .filter(c => c.fkRef)
+        .map(c => {
+          const parts = c.fkRef.split('.');
+          return { column: c.name, referencedTable: parts.slice(0, -1).join('.'), referencedColumn: parts[parts.length - 1] };
+        }),
+    })),
+  }, null, 2);
+}
+
 function groupJobs(jobs: SchemaJob[]): JobGroup[] {
   const map = new Map<string, SchemaJob[]>();
   for (const j of jobs) {
@@ -590,20 +620,224 @@ function JobRunCard({ job }: { job: SchemaJob }) {
   );
 }
 
-function JobGroupCard({ group, onLoad, onRename, onDelete, isActive }: {
+// ─── Export Dropdown (portal — escapes overflow-hidden ancestors) ─────────────
+
+function ExportDropdown({ showExport, onToggle, onClose, isDdl, slug, onSql, onMd, onJson, onOrm }: {
+  showExport: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  isDdl: boolean;
+  tables?: DesignerTable[];
+  slug: string;
+  onSql: () => void;
+  onMd: () => void;
+  onJson: () => void;
+  onOrm: (t: OrmTarget) => void;
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+
+  useEffect(() => {
+    if (showExport && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    }
+  }, [showExport]);
+
+  useEffect(() => {
+    if (!showExport) return;
+    const handle = (e: MouseEvent) => {
+      if (btnRef.current && !btnRef.current.closest('[data-export-portal]') && !(e.target as Element)?.closest('[data-export-portal]')) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [showExport, onClose]);
+
+  return (
+    <div className="ml-auto shrink-0">
+      <button
+        ref={btnRef}
+        onClick={onToggle}
+        className="flex items-center gap-0.5 px-2 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
+      >
+        <Download size={9} /> Export
+      </button>
+      {showExport && pos && typeof document !== 'undefined' && createPortal(
+        <div
+          data-export-portal
+          style={{ position: 'fixed', top: pos.top, right: pos.right, zIndex: 9999 }}
+          className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden min-w-[140px]"
+        >
+          <button onClick={onSql} className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+            <FileCode2 size={10} className="text-emerald-500" /> SQL
+          </button>
+          {isDdl ? (
+            <>
+              <button onClick={onMd} className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                <FileText size={10} className="text-blue-500" /> Markdown
+              </button>
+              <button onClick={onJson} className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                <Braces size={10} className="text-amber-500" /> JSON
+              </button>
+              <div className="border-t border-gray-100 dark:border-slate-700 my-0.5" />
+              {(['drizzle', 'prisma', 'typeorm'] as OrmTarget[]).map(t => (
+                <button key={t} onClick={() => onOrm(t)} className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors capitalize">
+                  <Layers size={10} className="text-violet-500" /> {t}
+                </button>
+              ))}
+            </>
+          ) : (
+            <div className="px-3 py-1.5 text-[10px] text-gray-400 dark:text-slate-500 italic">
+              Load into designer for ORM export
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+type TableSyncIssue = { table: string; problems: string[] };
+type SyncResult = { ok: boolean; matched: number; total: number; missing: string[]; issues: TableSyncIssue[] };
+
+// Maps designer/PG udt_name to a canonical type string for comparison
+function normalizeColType(t: string): string {
+  const map: Record<string, string> = {
+    'varchar': 'varchar', 'character varying': 'varchar',
+    'char': 'bpchar', 'bpchar': 'bpchar', 'character': 'bpchar',
+    'text': 'text',
+    'integer': 'int4', 'int4': 'int4', 'int': 'int4',
+    'bigint': 'int8', 'int8': 'int8',
+    'smallint': 'int2', 'int2': 'int2',
+    'boolean': 'bool', 'bool': 'bool',
+    'uuid': 'uuid',
+    'jsonb': 'jsonb', 'json': 'json',
+    'timestamp': 'timestamp',
+    'timestamptz': 'timestamptz', 'timestamp with time zone': 'timestamptz',
+    'date': 'date', 'time': 'time', 'timetz': 'timetz',
+    'float8': 'float8', 'double precision': 'float8',
+    'float4': 'float4', 'real': 'float4',
+    'numeric': 'numeric', 'decimal': 'numeric',
+    'bytea': 'bytea',
+    // serial types → their base integer in DB
+    'bigserial': 'int8', 'serial': 'int4', 'smallserial': 'int2',
+  };
+  return map[t.toLowerCase()] ?? t.toLowerCase();
+}
+
+function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections, onVerifyPass }: {
   group: JobGroup;
   onLoad: (j: SchemaJob) => void;
   onRename?: (oldName: string, newName: string) => void;
   onDelete?: (jobName: string) => void;
   isActive?: boolean;
+  connections?: ConnectionRow[];
+  onVerifyPass?: (jobName: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState('');
   const [showExport, setShowExport] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [syncExpanded, setSyncExpanded] = useState(false);
   const latest = group.runs[0];
   const hasFailure = group.runs.some(r => r.status === 'failed');
   const allSuccess = group.runs.every(r => r.status === 'success');
+
+  const canVerify = !!(latest.connection_label && latest.target_database && connections?.length);
+
+  const handleVerify = async () => {
+    if (!canVerify || !latest.schema_sql) return;
+    const conn = connections!.find(c => c.label === latest.connection_label);
+    if (!conn) { setSyncResult({ ok: false, matched: -1, total: 0, missing: [], issues: [] }); return; }
+    setVerifying(true);
+    setSyncResult(null);
+    setSyncExpanded(false);
+    try {
+      const explorerConn = connToExplorerConn(conn, latest.target_database!);
+      const isDdl = !latest.schema_sql.trim().toUpperCase().startsWith('ALTER');
+
+      // Build expected table list
+      let expected: { schema: string; name: string; columns: DesignerColumn[] }[];
+      if (isDdl) {
+        expected = parseSqlToTables(latest.schema_sql).map(t => ({ schema: t.schema || 'public', name: t.name, columns: t.columns }));
+      } else {
+        const re = /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?\."?(\w+)"?/gi;
+        const seen = new Set<string>();
+        expected = [];
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(latest.schema_sql)) !== null) {
+          const key = `${m[1]}.${m[2]}`;
+          if (!seen.has(key)) { seen.add(key); expected.push({ schema: m[1], name: m[2], columns: [] }); }
+        }
+        if (expected.length === 0) {
+          const re2 = /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?(?!\s*\.)/gi;
+          while ((m = re2.exec(latest.schema_sql)) !== null) {
+            const key = `public.${m[1]}`;
+            if (!seen.has(key)) { seen.add(key); expected.push({ schema: 'public', name: m[1], columns: [] }); }
+          }
+        }
+      }
+      if (expected.length === 0) { setSyncResult({ ok: true, matched: 0, total: 0, missing: [], issues: [] }); return; }
+
+      // Step 1: Check table existence
+      const schemas = [...new Set(expected.map(t => t.schema))];
+      const { data: tablesData } = await axios.post<{ tables: TableInfo[] }>('/api/schema-explorer/tables', { conn: explorerConn, schemas });
+      const actualTableSet = new Set(tablesData.tables.map(t => `${t.schema}.${t.name}`));
+      const missing = expected.filter(t => !actualTableSet.has(`${t.schema}.${t.name}`)).map(t => t.name);
+      const existing = expected.filter(t => actualTableSet.has(`${t.schema}.${t.name}`));
+
+      // Step 2: Deep check — columns + FK constraints for each existing table (DDL only)
+      const issues: TableSyncIssue[] = [];
+      if (isDdl && existing.length > 0) {
+        await Promise.all(existing.map(async (t) => {
+          const tableKey = `${t.schema}.${t.name}`;
+          const [colsRes, consRes] = await Promise.all([
+            axios.post<TableColumnsResult>('/api/schema-explorer/columns', { conn: explorerConn, tableKey }),
+            axios.post<import('./api/schema-designer/constraints').ColumnConstraints>('/api/schema-designer/constraints', { conn: explorerConn, schema: t.schema, table: t.name }),
+          ]);
+          const actualCols = colsRes.data.columns;
+          const actualFks = consRes.data.fkConstraints;
+          const problems: string[] = [];
+
+          for (const ec of t.columns) {
+            const ac = actualCols.find(a => a.name === ec.name);
+            if (!ac) { problems.push(`column "${ec.name}" not found`); continue; }
+
+            // Type check
+            const expType = normalizeColType(ec.type);
+            const actType = normalizeColType(ac.fullType.split('(')[0]);
+            if (expType !== actType) problems.push(`"${ec.name}": type mismatch (expected ${ec.type.toLowerCase()}, got ${ac.fullType})`);
+
+            // Nullable check (skip for PKs — DB may enforce NOT NULL implicitly)
+            if (!ec.isPk && ec.nullable !== ac.nullable) {
+              problems.push(`"${ec.name}": nullable mismatch (expected ${ec.nullable ? 'NULL' : 'NOT NULL'}, got ${ac.nullable ? 'NULL' : 'NOT NULL'})`);
+            }
+
+            // FK check
+            if (ec.fkRef) {
+              const fkParts = ec.fkRef.split('.');
+              const expFkTable = fkParts.length >= 2 ? fkParts[fkParts.length - 2] : null;
+              const expFkCol = fkParts[fkParts.length - 1];
+              const fkFound = actualFks.some(fk => fk.colName === ec.name && fk.toTable === expFkTable && fk.toCol === expFkCol);
+              if (!fkFound) problems.push(`"${ec.name}": FK → ${ec.fkRef} not in DB`);
+            }
+          }
+          if (problems.length > 0) issues.push({ table: t.name, problems });
+        }));
+      }
+
+      const ok = missing.length === 0 && issues.length === 0;
+      setSyncResult({ ok, matched: existing.length, total: expected.length, missing, issues });
+      if (ok) onVerifyPass?.(group.job_name);
+    } catch {
+      setSyncResult({ ok: false, matched: -1, total: 0, missing: [], issues: [] });
+    } finally { setVerifying(false); }
+  };
 
   const commitRename = () => {
     if (renameVal.trim() && renameVal.trim() !== group.job_name) onRename?.(group.job_name, renameVal.trim());
@@ -687,69 +921,54 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive }: {
           <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>
         )}
 
-        {/* Export dropdown */}
-        {latest.schema_sql && (
-          <div className="relative ml-auto">
-            <button
-              onClick={() => setShowExport(v => !v)}
-              className="flex items-center gap-0.5 px-2 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
-            >
-              <Download size={9} /> Export
-            </button>
-            {showExport && (() => {
-              const isDdl = !latest.schema_sql!.trim().toUpperCase().startsWith('ALTER');
-              const tables = isDdl ? parseSqlToTables(latest.schema_sql!) : [];
-              const slug = latest.job_name.replace(/\s+/g, '-').toLowerCase();
-              const exportOrm = (target: OrmTarget) => {
-                const ormTables: OrmTableDef[] = tables.map(t => ({
-                  schema: t.schema || 'public', table: t.name,
-                  columns: t.columns.map(c => {
-                    const fkParts = c.fkRef ? c.fkRef.split('.') : [];
-                    const rawType = c.type.toLowerCase();
-                    const lenNum = c.length ? Number(c.length.split(',')[0]) : null;
-                    const scaleNum = c.length?.includes(',') ? Number(c.length.split(',')[1]) : null;
-                    return {
-                      name: c.name, rawType,
-                      maxLength: ['varchar','char'].includes(rawType) ? lenNum : null,
-                      numericPrecision: rawType === 'numeric' ? lenNum : null,
-                      numericScale: rawType === 'numeric' ? scaleNum : null,
-                      fullType: c.length ? `${c.type}(${c.length})` : c.type,
-                      nullable: c.nullable, defaultValue: c.defaultValue || null,
-                      isPk: c.isPk, isUnique: c.isUnique, isAutoIncrement: c.isAutoIncrement,
-                      comment: c.comment || null,
-                      fkToTable: fkParts.length >= 2 ? fkParts[fkParts.length - 2] : null,
-                      fkToCol: fkParts.length >= 1 ? fkParts[fkParts.length - 1] : null,
-                    };
-                  }),
-                }));
-                const code = generateOrm(ormTables, 'postgresql', target);
-                const filename = target === 'prisma' ? `${slug}.prisma` : `${slug}-${target}.ts`;
-                downloadBlob(code, filename);
-                setShowExport(false);
+        {/* Export dropdown — portal-rendered to escape overflow-hidden ancestors */}
+        {latest.schema_sql && (() => {
+          const exportBtnRef = { current: null as HTMLButtonElement | null };
+          const isDdl = !latest.schema_sql!.trim().toUpperCase().startsWith('ALTER');
+          const tables = isDdl ? parseSqlToTables(latest.schema_sql!) : [];
+          const slug = latest.job_name.replace(/\s+/g, '-').toLowerCase();
+          const toOrmTables = (tbls: DesignerTable[]): OrmTableDef[] => tbls.map(t => ({
+            schema: t.schema || 'public', table: t.name,
+            columns: t.columns.map(c => {
+              const fkParts = c.fkRef ? c.fkRef.split('.') : [];
+              const rawType = c.type.toLowerCase();
+              const lenNum = c.length ? Number(c.length.split(',')[0]) : null;
+              const scaleNum = c.length?.includes(',') ? Number(c.length.split(',')[1]) : null;
+              return {
+                name: c.name, rawType,
+                maxLength: ['varchar','char'].includes(rawType) ? lenNum : null,
+                numericPrecision: rawType === 'numeric' ? lenNum : null,
+                numericScale: rawType === 'numeric' ? scaleNum : null,
+                fullType: c.length ? `${c.type}(${c.length})` : c.type,
+                nullable: c.nullable, defaultValue: c.defaultValue || null,
+                isPk: c.isPk, isUnique: c.isUnique, isAutoIncrement: c.isAutoIncrement,
+                comment: c.comment || null,
+                fkToTable: fkParts.length >= 2 ? fkParts[fkParts.length - 2] : null,
+                fkToCol: fkParts.length >= 1 ? fkParts[fkParts.length - 1] : null,
               };
-              return (
-                <div className="absolute bottom-full right-0 mb-1 z-50 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg overflow-hidden min-w-[120px]">
-                  <button onClick={() => { downloadBlob(latest.schema_sql!, `${slug}.sql`, 'text/sql'); setShowExport(false); }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
-                    <FileCode2 size={10} className="text-emerald-500" /> SQL
-                  </button>
-                  {isDdl && (
-                    <button onClick={() => { downloadBlob(generateSchemaMd(tables, latest.job_name), `${slug}.md`); setShowExport(false); }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
-                      <FileText size={10} className="text-blue-500" /> Markdown
-                    </button>
-                  )}
-                  {isDdl && (['drizzle','prisma','typeorm'] as OrmTarget[]).map(t => (
-                    <button key={t} onClick={() => exportOrm(t)}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors capitalize">
-                      <Layers size={10} className="text-violet-500" /> {t}
-                    </button>
-                  ))}
-                </div>
-              );
-            })()}
-          </div>
-        )}
+            }),
+          }));
+          const exportOrm = (target: OrmTarget) => {
+            const code = generateOrm(toOrmTables(tables), 'postgresql', target);
+            const filename = target === 'prisma' ? `${slug}.prisma` : `${slug}-${target}.ts`;
+            downloadBlob(code, filename);
+            setShowExport(false);
+          };
+          return (
+            <ExportDropdown
+              showExport={showExport}
+              onToggle={() => setShowExport(v => !v)}
+              onClose={() => setShowExport(false)}
+              isDdl={isDdl}
+              tables={tables}
+              slug={slug}
+              onSql={() => { downloadBlob(latest.schema_sql!, `${slug}.sql`, 'text/sql'); setShowExport(false); }}
+              onMd={() => { downloadBlob(generateSchemaMd(tables, latest.job_name), `${slug}.md`); setShowExport(false); }}
+              onJson={() => { downloadBlob(generateJsonSchema(tables, latest.job_name), `${slug}.schema.json`, 'application/json'); setShowExport(false); }}
+              onOrm={exportOrm}
+            />
+          );
+        })()}
 
         <button
           onClick={() => onLoad(latest)}
@@ -758,6 +977,16 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive }: {
         >
           Load
         </button>
+        {canVerify && (
+          <button
+            onClick={() => void handleVerify()}
+            disabled={verifying}
+            title="Verify schema against live DB"
+            className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50 transition-colors"
+          >
+            {verifying ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+          </button>
+        )}
         {onRename && (
           <button
             onClick={() => { setRenameVal(group.job_name); setRenaming(true); }}
@@ -777,23 +1006,73 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive }: {
           </button>
         )}
       </div>
+      {/* Sync result */}
+      {syncResult && (
+        <div className="mt-1 space-y-0.5">
+          <button
+            onClick={() => { if (syncResult.missing.length > 0 || syncResult.issues.length > 0) setSyncExpanded(v => !v); }}
+            className={`w-full flex items-center gap-1 text-[10px] px-0.5 text-left ${
+              syncResult.matched === -1 ? 'text-rose-500 dark:text-rose-400' :
+              syncResult.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+            }`}
+          >
+            {syncResult.matched === -1 ? (
+              <><XCircle size={9} className="shrink-0" /> Connection failed</>
+            ) : syncResult.ok ? (
+              <><CheckCircle2 size={9} className="shrink-0" /> {syncResult.total} tables — columns, FK, constraints verified</>
+            ) : (
+              <>
+                <AlertTriangle size={9} className="shrink-0" />
+                {syncResult.missing.length > 0 && <span>{syncResult.missing.length} table{syncResult.missing.length > 1 ? 's' : ''} missing</span>}
+                {syncResult.missing.length > 0 && syncResult.issues.length > 0 && <span>·</span>}
+                {syncResult.issues.length > 0 && <span>{syncResult.issues.length} table{syncResult.issues.length > 1 ? 's' : ''} with issues</span>}
+                {(syncResult.missing.length > 0 || syncResult.issues.length > 0) && (
+                  <span className="ml-auto opacity-60">{syncExpanded ? '▲' : '▼'}</span>
+                )}
+              </>
+            )}
+          </button>
+          {syncExpanded && (
+            <div className="rounded border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 px-2 py-1.5 space-y-1.5">
+              {syncResult.missing.map(t => (
+                <div key={t} className="flex items-center gap-1 text-[10px] text-rose-600 dark:text-rose-400">
+                  <XCircle size={8} className="shrink-0" /> table <span className="font-mono">{t}</span> not in DB
+                </div>
+              ))}
+              {syncResult.issues.map(({ table, problems }) => (
+                <div key={table} className="space-y-0.5">
+                  <div className="text-[10px] font-medium text-amber-700 dark:text-amber-400 font-mono">{table}</div>
+                  {problems.map((p, i) => (
+                    <div key={i} className="flex items-start gap-1 text-[10px] text-amber-700 dark:text-amber-400 pl-2">
+                      <span className="shrink-0 mt-0.5">·</span> {p}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Save Job Modal ───────────────────────────────────────────────────────────
 
-function SaveJobModal({ onSave, onSkip, defaultName, defaultDesc }: {
+function SaveJobModal({ onSave, onSkip, defaultName, defaultDesc, existingNames }: {
   onSave: (name: string, desc: string) => void;
   onSkip: () => void;
   defaultName?: string;
   defaultDesc?: string;
+  existingNames?: string[];
 }) {
   const [name, setName] = useState(defaultName ?? '');
   const [desc, setDesc] = useState(defaultDesc ?? '');
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
-  const isUpdate = !!defaultName && name.trim() === defaultName.trim();
+  const isRevision = !!existingNames?.includes(name.trim());
+  const others = existingNames?.filter(n => n !== defaultName) ?? [];
+
   return (
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl">
@@ -802,10 +1081,27 @@ function SaveJobModal({ onSave, onSkip, defaultName, defaultDesc }: {
           <button onClick={onSkip} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
         </div>
         <div className="p-5 space-y-4">
-          {defaultName && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-400">
-              <FolderOpen size={12} />
-              <span>Loaded from <strong>{defaultName}</strong> — saving with the same name adds a new revision.</span>
+          {/* Existing job picker */}
+          {(defaultName || others.length > 0) && (
+            <div>
+              <p className="text-[10px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">Save to existing job</p>
+              <div className="flex flex-wrap gap-1.5">
+                {defaultName && (
+                  <button
+                    onClick={() => setName(defaultName)}
+                    className={`px-2 py-1 text-[11px] rounded-lg border transition-colors ${name.trim() === defaultName ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                  >
+                    <FolderOpen size={9} className="inline mr-1" />{defaultName}
+                  </button>
+                )}
+                {others.map(n => (
+                  <button key={n} onClick={() => setName(n)}
+                    className={`px-2 py-1 text-[11px] rounded-lg border transition-colors ${name.trim() === n ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           <div>
@@ -815,7 +1111,9 @@ function SaveJobModal({ onSave, onSkip, defaultName, defaultDesc }: {
               placeholder="e.g. Initial schema — project_x"
               className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
-            <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1">Same name as a previous job groups runs together in history.</p>
+            <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1">
+              {isRevision ? 'New revision will be added under this job.' : 'New job name — creates a separate job group.'}
+            </p>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Description (optional)</label>
@@ -828,7 +1126,7 @@ function SaveJobModal({ onSave, onSkip, defaultName, defaultDesc }: {
           <button onClick={onSkip} className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">Skip</button>
           <button onClick={() => name.trim() && onSave(name.trim(), desc.trim())} disabled={!name.trim()}
             className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors">
-            <Save size={13} /> {isUpdate ? 'Save Revision' : 'Save'}
+            <Save size={13} /> {isRevision ? 'Save Revision' : 'Save New'}
           </button>
         </div>
       </div>
@@ -2076,6 +2374,13 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
                 </button>
               ))}
               <div className="w-px h-4 bg-gray-200 dark:bg-slate-700" />
+              <button
+                onClick={() => downloadBlob(generateJsonSchema(tables, 'schema'), 'schema.json', 'application/json')}
+                disabled={!ddlText} title="Export JSON schema (AI-friendly)"
+                className="px-2 py-1 text-[10px] font-medium rounded-lg border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-30 transition-colors">
+                JSON
+              </button>
+              <div className="w-px h-4 bg-gray-200 dark:bg-slate-700" />
               <button onClick={downloadDdl} disabled={!ddlText} title="Download .sql"
                 className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 transition-colors">
                 <Download size={13} />
@@ -2150,7 +2455,7 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
             </div>
           ) : groupedJobs.map(g => (
             <JobGroupCard key={g.job_name} group={g} onLoad={onLoadJob} />
-          ))}
+          ))}  {/* ExecutePanel: no connections passed — verify button hidden */}
         </div>
       </div>
     </div>
@@ -2657,6 +2962,9 @@ function SchemaDesignerInner() {
   // Dirty tracking: amber Save when loaded job has unsaved changes
   const [isDirty, setIsDirty] = useState(false);
 
+  // Pre-load notice: shown when schema is imported from migration module
+  const [migNotice, setMigNotice] = useState<string | null>(null);
+
   // Execute job modal
   const [showExecModal, setShowExecModal] = useState(false);
   const [execModalJob, setExecModalJob] = useState<SchemaJob | null>(null);
@@ -2804,7 +3112,14 @@ function SchemaDesignerInner() {
           const fkMap = new Map(constraintsRes.data.fkConstraints.map(f => [f.colName, f.constraintName]));
           const uqMap = new Map(constraintsRes.data.uniqueConstraints.map(u => [u.colName, u.constraintName]));
           const cols: DesignerColumn[] = colsRes.data.columns.map(c => {
-            const rawType = c.fullType.toUpperCase().replace(/\bCHARACTER VARYING\b/, 'VARCHAR').replace(/\bINTEGER\b/, 'INTEGER');
+            const rawType = c.fullType.toUpperCase()
+              .replace(/\bCHARACTER VARYING\b/g, 'VARCHAR')
+              .replace(/\bBPCHAR\b/g, 'CHAR')
+              .replace(/\bINT8\b/g, 'BIGINT')
+              .replace(/\bINT4\b/g, 'INTEGER')
+              .replace(/\bINT2\b/g, 'SMALLINT')
+              .replace(/\bBOOL\b/g, 'BOOLEAN')
+              .replace(/\bFLOAT4\b/g, 'REAL');
             const typeMatch = rawType.match(/^([A-Z0-9_ ]+?)(?:\((\d+(?:,\d+)?)\))?$/);
             return {
               id: crypto.randomUUID(),
@@ -2860,9 +3175,24 @@ function SchemaDesignerInner() {
       setAlterLog(data.log);
       setExecConsoleLog(data.log);
       setTimeout(() => execLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
-      if (data.log.every(l => l.ok)) {
+      const allOk = data.log.every(l => l.ok);
+      const status = allOk ? 'success' : 'failed';
+      if (loadedJob) {
+        await axios.post('/api/schema-generator/jobs', {
+          job_name: loadedJob.job_name,
+          description: loadedJob.description,
+          schema_sql: alterText,
+          seed_sql: loadedJob.seed_sql,
+          target_database: refactorDatabase || loadedJob.target_database,
+          connection_label: refactorConn.label,
+          status,
+          log: data.log.map((l, i) => ({ step: i + 1, ok: l.ok, text: l.text })),
+        });
+        void loadJobs();
+      }
+      if (allOk) {
         await loadRefactorSchema();
-        void rescanSuggestions(); // auto-rescan after successful apply
+        void rescanSuggestions();
       }
     } catch { showError('Apply failed'); } finally { setAlterApplying(false); }
   };
@@ -3054,18 +3384,26 @@ function SchemaDesignerInner() {
       .catch(() => { });
   }, []);
 
-  // Auto-load from Migration module: /schema-studio?connId=X&database=Y&schema=Z
+  // Auto-load from Migration module or direct link: /schema-studio?connId=X&database=Y&schema=Z[&migJobId=Z]
   const urlParamsApplied = useRef(false);
   useEffect(() => {
     if (urlParamsApplied.current || !connections.length || !router.isReady) return;
-    const { connId, database, schema } = router.query as Record<string, string | undefined>;
+    const { connId, database, schema, migJobId } = router.query as Record<string, string | undefined>;
     if (!connId || !database) return;
     urlParamsApplied.current = true;
+
+    // Open in refactor mode — loads schema from live DB
     pendingRefactorDb.current = database;
     if (schema) pendingAutoLoad.current = schema;
     setRefactorConnId(Number(connId));
     setDesignerMode('refactor');
-    setRightPanelTab('suggest');
+
+    // If navigated from migration module, show a contextual notice
+    if (migJobId) {
+      axios.get<{ job: { name: string } }>(`/api/migv2/jobs/${migJobId}`)
+        .then(({ data }) => setMigNotice(`Schema Studio linked to target DB from migration job "${data.job.name}".`))
+        .catch(() => setMigNotice('Schema Studio linked to migration target DB.'));
+    }
   }, [connections, router.isReady, router.query]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAddSchema = (name: string) => {
@@ -3211,6 +3549,24 @@ function SchemaDesignerInner() {
     } catch { /* ignore */ } finally { setLoadingJobs(false); }
   }, []);
 
+  const handleVerifyPass = useCallback(async (jobName: string) => {
+    const job = jobs.find(j => j.job_name === jobName);
+    if (!job) return;
+    try {
+      await axios.post('/api/schema-generator/jobs', {
+        job_name: job.job_name,
+        description: job.description,
+        schema_sql: job.schema_sql,
+        seed_sql: job.seed_sql,
+        target_database: job.target_database,
+        connection_label: job.connection_label,
+        status: 'success',
+        log: [{ step: 1, ok: true, text: 'Schema verified — all tables, columns, FK, and constraints match live DB.' }],
+      });
+      void loadJobs();
+    } catch { /* ignore */ }
+  }, [jobs, loadJobs]);
+
   useEffect(() => { void loadJobs(); }, [loadJobs]);
 
   const handleSaveClick = () => {
@@ -3280,9 +3636,11 @@ function SchemaDesignerInner() {
   };
 
   const handleLoadJob = (job: SchemaJob) => {
-    // Jobs saved in refactor mode have ALTER SQL — show it but don't parse as tables
-    // Jobs saved with DDL have CREATE TABLE — parse back to tables
-    const parsedTables = job.schema_sql && !job.schema_sql.trim().startsWith('ALTER')
+    const isAlterJob = !!job.schema_sql?.trim().toUpperCase().startsWith('ALTER');
+
+    // DDL jobs: parse CREATE TABLE back to designer tables
+    // ALTER jobs: tables will be loaded from live DB via loadRefactorSchema
+    const parsedTables = !isAlterJob && job.schema_sql
       ? parseSqlToTables(job.schema_sql)
       : [];
     const schemas = [...new Set(parsedTables.map(t => t.schema || 'public'))];
@@ -3296,13 +3654,13 @@ function SchemaDesignerInner() {
     setLoadedJob(job);
     setIsDirty(false);
 
-    // Restore connection + database + schema from saved job metadata
-    if (job.connection_label) {
+    // Only trigger refactor/live-DB mode for ALTER jobs
+    // DDL jobs: connection is only used by the Execute modal — don't overwrite parsed tables
+    if (job.connection_label && isAlterJob) {
       const matched = connections.find(c => c.label === job.connection_label);
       if (matched) {
         if (job.target_database) pendingRefactorDb.current = job.target_database;
-        // Infer schema: first "schema"."table" pattern in the saved SQL, or 'public'
-        const schemaMatch = job.schema_sql?.match(/(?:ALTER TABLE|CREATE TABLE(?: IF NOT EXISTS)?)\s+"([^"]+)"\./i);
+        const schemaMatch = job.schema_sql?.match(/ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?"([^"]+)"\./i);
         pendingAutoLoad.current = schemaMatch?.[1] ?? 'public';
         setRefactorConnId(matched.id);
       }
@@ -3312,6 +3670,15 @@ function SchemaDesignerInner() {
   return (
     <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-50 dark:bg-slate-950 overflow-hidden">
       <Head><title>Schema Studio — DB Tools</title></Head>
+
+      {/* ── Migration pre-load notice ── */}
+      {migNotice && (
+        <div className="shrink-0 flex items-center gap-2 px-5 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-800 text-xs text-violet-700 dark:text-violet-400">
+          <Layers size={12} className="shrink-0" />
+          <span className="flex-1">{migNotice}</span>
+          <button onClick={() => setMigNotice(null)} className="p-0.5 hover:text-violet-900 dark:hover:text-violet-200 transition-colors"><X size={12} /></button>
+        </div>
+      )}
 
       {/* ── Toolbar ── */}
       <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-1.5">
@@ -3762,7 +4129,7 @@ function SchemaDesignerInner() {
             </div>
 
             {/* ── Right: Saved Jobs / ALTER SQL (collapsible) ── */}
-            <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${rightPanelOpen ? 'w-64' : 'w-9'}`}>
+            <div className={`relative z-10 shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${rightPanelOpen ? 'w-64' : 'w-9'}`}>
 
               {/* Header row — always visible, contains toggle */}
               <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
@@ -3900,7 +4267,7 @@ function SchemaDesignerInner() {
                       <p className="text-[11px] text-gray-400 dark:text-slate-500">No saved jobs</p>
                     </div>
                   ) : groupedJobs.map(g => (
-                    <JobGroupCard key={g.job_name} group={g} onLoad={handleLoadJob} onRename={handleRenameGroup} onDelete={handleDeleteJobGroup} isActive={loadedJob?.job_name === g.job_name} />
+                    <JobGroupCard key={g.job_name} group={g} onLoad={handleLoadJob} onRename={handleRenameGroup} onDelete={handleDeleteJobGroup} isActive={loadedJob?.job_name === g.job_name} connections={connections} onVerifyPass={handleVerifyPass} />
                   ))}
                 </div>
               ) : rightPanelOpen && designerMode === 'refactor' ? (
@@ -3981,6 +4348,8 @@ function SchemaDesignerInner() {
                       onRename={handleRenameGroup}
                       onDelete={handleDeleteJobGroup}
                       isActive={loadedJob?.job_name === g.job_name}
+                      connections={connections}
+                      onVerifyPass={handleVerifyPass}
                     />
                   ))}
                 </div>
@@ -4055,6 +4424,7 @@ function SchemaDesignerInner() {
           onSkip={() => setShowSaveModal(false)}
           defaultName={loadedJob?.job_name}
           defaultDesc={loadedJob?.description ?? undefined}
+          existingNames={[...new Set(jobs.map(j => j.job_name))]}
         />
       )}
       {showExecModal && execModalJob && (

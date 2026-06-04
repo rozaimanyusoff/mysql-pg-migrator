@@ -7,8 +7,8 @@ import JSZip from 'jszip';
 import {
   ChevronRight, UploadCloud, Download, RefreshCw, Play, CheckCircle2,
   XCircle, Loader2, Database, Server, FileCode2, ArrowRightLeft,
-  AlertCircle, Table2, Copy, Check, ChevronLeft,
-  Info, FileSpreadsheet, Filter, Clock, Trash2,
+  AlertCircle, Table2, Copy, Check, ChevronLeft, ChevronUp, ChevronDown,
+  Info, FileSpreadsheet, Filter, Clock, Trash2, Save,
   Eye, ShieldAlert, Plus, HelpCircle, BookOpen, X,
 } from 'lucide-react';
 import type { ConnectionRow } from './api/connections/index';
@@ -792,6 +792,66 @@ function SchemaPanel({ conn, database, value, onChange }: {
 
 // ── Panel 5: Saved Jobs (collapsible) ─────────────────────────────────────────
 
+function HistoryCard({ h, onDelete }: { h: HistoryEntry; onDelete: (id: number) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const connLabel = h.source_label ?? h.target_label;
+  const db = h.source_db ?? h.target_db;
+  const statusCls = h.status === 'success'
+    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+    : h.status === 'failed'
+    ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400'
+    : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400';
+
+  return (
+    <div className={`rounded-lg border p-2 transition-colors bg-white dark:bg-slate-800/50 ${
+      h.status === 'success' ? 'border-emerald-200 dark:border-emerald-800/50'
+      : h.status === 'failed' ? 'border-rose-200 dark:border-rose-800/50'
+      : 'border-gray-200 dark:border-slate-700'
+    }`}>
+      {/* Row 1: name + status */}
+      <div className="flex items-start gap-1 mb-0.5">
+        <p className="text-[11px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">
+          {connLabel ?? h.operation}
+        </p>
+        <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusCls}`}>{h.status}</span>
+      </div>
+      {/* Row 2: db path */}
+      {db && (
+        <p className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate mb-0.5">
+          {db}{h.target_db && h.source_db ? <> → {h.target_db}</> : null}
+        </p>
+      )}
+      {/* Row 3: count + date + expand */}
+      <div className="flex items-center gap-1 mb-1">
+        <p className="text-[10px] text-gray-400 dark:text-slate-500 flex-1">
+          {h.tables_count > 0 ? `${h.tables_count} table${h.tables_count !== 1 ? 's' : ''}` : h.operation}
+          {' · '}{timeAgo(h.created_at)}
+        </p>
+        <button onClick={() => setExpanded(v => !v)}
+          className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
+          {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+        </button>
+      </div>
+      {/* Expanded: meta detail */}
+      {expanded && (
+        <div className="mb-1.5 border border-gray-100 dark:border-slate-700 rounded px-2 py-1.5 space-y-0.5">
+          {h.format && <p className="text-[10px] text-gray-500 dark:text-slate-400">Format: <span className="font-medium uppercase">{h.format}</span></p>}
+          {h.include && <p className="text-[10px] text-gray-500 dark:text-slate-400">Include: {h.include.replace(/_/g, ' ')}</p>}
+          {h.conflict && h.conflict !== 'insert_only' && <p className="text-[10px] text-gray-500 dark:text-slate-400">Conflict: {h.conflict.replace(/_/g, ' ')}</p>}
+          {h.where_clause && <p className="text-[10px] font-mono text-gray-500 dark:text-slate-400 truncate" title={h.where_clause}>WHERE {h.where_clause}</p>}
+        </div>
+      )}
+      {/* Row 4: actions */}
+      <div className="flex items-center gap-1">
+        <button type="button" onClick={() => onDelete(h.id)}
+          className="ml-auto p-1 rounded text-gray-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
+          <Trash2 size={11} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SavedJobsPanel({ tab, collapsed, onToggle, refreshKey }: {
   tab: Tab; collapsed: boolean; onToggle: () => void; refreshKey: number;
 }) {
@@ -819,78 +879,28 @@ function SavedJobsPanel({ tab, collapsed, onToggle, refreshKey }: {
   const filtered = history.filter(h => h.operation === tab);
 
   return (
-    <div className={`shrink-0 border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex transition-all duration-200 ${collapsed ? 'w-6' : 'w-64'}`}>
-      {/* Notch */}
-      <button
-        onClick={onToggle}
-        className="w-6 shrink-0 flex items-center justify-center text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
-        title={collapsed ? 'Expand Saved Jobs' : 'Collapse Saved Jobs'}
-      >
-        {collapsed ? <ChevronLeft size={13} /> : <ChevronRight size={13} />}
-      </button>
+    <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${collapsed ? 'w-9' : 'w-60'}`}>
+      {/* Header — always visible */}
+      <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
+        {!collapsed && <Save size={11} className="text-gray-400 shrink-0" />}
+        {!collapsed && <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">Saved Jobs</span>}
+        {!collapsed && filtered.length > 0 && <span className="text-[10px] text-gray-400 shrink-0">{filtered.length}</span>}
+        <button onClick={onToggle}
+          className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ml-auto">
+          {collapsed ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
+        </button>
+      </div>
 
       {!collapsed && (
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
-            <Clock size={12} className="text-gray-400 shrink-0" />
-            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Saved Jobs</span>
-            <div className="ml-auto flex items-center gap-1">
-              {filtered.length > 0 && (
-                <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500">{filtered.length}</span>
-              )}
-              <button type="button" onClick={() => void load()} disabled={loading}
-                className="p-0.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
-                {loading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-              </button>
+        <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
+          {filtered.length === 0 && !loading ? (
+            <div className="py-8 text-center">
+              <Save size={22} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">No {tab} jobs yet.</p>
             </div>
-          </div>
-
-          <div className="flex-1 sidebar-scroll overflow-y-auto p-2 space-y-1.5">
-            {filtered.length === 0 && !loading ? (
-              <div className="text-center py-8 border border-dashed border-gray-200 dark:border-slate-700 rounded-xl text-[11px] text-gray-400 dark:text-slate-500">
-                No {tab} jobs yet.
-              </div>
-            ) : (
-              filtered.map(h => (
-                <div key={h.id} className={`rounded-xl border text-xs overflow-hidden ${
-                  h.status === 'success' ? 'border-emerald-200 dark:border-emerald-800/60'
-                  : h.status === 'failed' ? 'border-rose-200 dark:border-rose-800/60'
-                  : 'border-gray-200 dark:border-slate-700'
-                }`}>
-                  <div className="flex items-start gap-2 px-3 py-2.5 bg-white dark:bg-slate-900/60">
-                    <div className="flex-1 min-w-0 space-y-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                          h.status === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
-                          : h.status === 'failed' ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400'
-                          : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'
-                        }`}>{h.status}</span>
-                        <span className="flex items-center gap-0.5 text-gray-400 dark:text-slate-500 text-[10px]">
-                          <Clock size={9} />{timeAgo(h.created_at)}
-                        </span>
-                      </div>
-                      {h.source_db && (
-                        <p className="text-gray-600 dark:text-slate-400 truncate text-[10px]">
-                          <span className="opacity-60">from</span> <span className="font-mono">{h.source_db}</span>
-                          {h.target_db && <> → <span className="font-mono">{h.target_db}</span></>}
-                        </p>
-                      )}
-                      <div className="flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-slate-500 flex-wrap">
-                        {h.tables_count > 0 && <span>{h.tables_count} table{h.tables_count !== 1 ? 's' : ''}</span>}
-                        {h.include && <span>{h.include}</span>}
-                        {h.format && h.format !== 'sql' && <span>{h.format.toUpperCase()}</span>}
-                        {h.conflict && h.conflict !== 'insert_only' && <span>{h.conflict.replace('_', ' ')}</span>}
-                      </div>
-                    </div>
-                    <button type="button" onClick={() => void handleDelete(h.id)}
-                      className="shrink-0 p-1 text-gray-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
-                      <Trash2 size={11} />
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+          ) : filtered.map(h => (
+            <HistoryCard key={h.id} h={h} onDelete={id => void handleDelete(id)} />
+          ))}
         </div>
       )}
     </div>
@@ -1015,6 +1025,12 @@ export default function ExportImportPage() {
       } else {
         const sqlData = data as { sql: string; tables: string[] };
         setExportResult(sqlData); setRunStatus('success');
+        // Auto-download immediately
+        const blob = new Blob([sqlData.sql], { type: 'text/sql' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `${database}_${schema || 'public'}_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.sql`; a.click();
+        URL.revokeObjectURL(url);
         await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: sqlData.tables.length, include, format: 'sql', where_clause: whereClause.trim() || undefined, status: 'success' });
       }
     } catch (err: unknown) {
@@ -1105,7 +1121,7 @@ export default function ExportImportPage() {
   const selectedArr = allSelected ? tableList.map(t => `${t.schema}.${t.name}`) : selectedTables;
   const hasLarge = tableList.some(t => t.rowCount > 50_000);
 
-  const exportFilename = `${database}_${include}_${new Date().toISOString().slice(0, 10)}.sql`;
+  const exportFilename = `${database}_${schema || 'public'}_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.sql`;
 
   // Segmented control style
   const seg = (active: boolean) =>
