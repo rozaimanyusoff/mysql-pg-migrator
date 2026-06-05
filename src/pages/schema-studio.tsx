@@ -31,6 +31,14 @@ import type { SchemaJob } from './api/schema-generator/jobs';
 import { parseExcelFile } from '../lib/excel-parser';
 import { generateOrm, type OrmTarget, type OrmTableDef, type OrmColDef } from '../lib/orm-generator';
 
+function genId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DbType = 'postgresql'; // Schema Studio is PostgreSQL-only
@@ -111,17 +119,17 @@ function connToExplorerConn(conn: ConnectionRow, database: string): ExplorerConn
 }
 
 function mkCol(): DesignerColumn {
-  return { id: crypto.randomUUID(), name: 'column_name', type: 'TEXT', length: '', nullable: true, isPk: false, isUnique: false, isAutoIncrement: false, defaultValue: '', comment: '', fkRef: '' };
+  return { id: genId(), name: 'column_name', type: 'TEXT', length: '', nullable: true, isPk: false, isUnique: false, isAutoIncrement: false, defaultValue: '', comment: '', fkRef: '' };
 }
 
 function mkTable(name: string, schema: string, _dbType?: DbType): DesignerTable {
   const idCol: DesignerColumn = {
-    id: crypto.randomUUID(), name: 'id',
+    id: genId(), name: 'id',
     type: 'BIGSERIAL',
     length: '', nullable: false, isPk: true, isUnique: true, isAutoIncrement: true,
     defaultValue: '', comment: '', fkRef: '',
   };
-  return { id: crypto.randomUUID(), schema, name, columns: [idCol] };
+  return { id: genId(), schema, name, columns: [idCol] };
 }
 
 // ─── SQL Parser ───────────────────────────────────────────────────────────────
@@ -167,7 +175,7 @@ function parseOneCol(s: string, pkSet: Set<string>, uqSet: Set<string>, fkMap: R
   let fkRef = fkMap[name] ?? '';
   const rm = /\bREFERENCES\s+["`\[]?(\w+)["`\]]?\s*\(["`\[]?(\w+)["`\]]?\)/i.exec(flags);
   if (rm) fkRef = `${rm[1]}.${rm[2]}`;
-  return { id: crypto.randomUUID(), name, type, length, nullable: !notNull && !isPk, isPk, isUnique, isAutoIncrement, defaultValue, comment: '', fkRef };
+  return { id: genId(), name, type, length, nullable: !notNull && !isPk, isPk, isUnique, isAutoIncrement, defaultValue, comment: '', fkRef };
 }
 
 function parseSqlToTables(sql: string): DesignerTable[] {
@@ -192,7 +200,7 @@ function parseSqlToTables(sql: string): DesignerTable[] {
       const col = parseOneCol(p.trim(), pkSet, uqSet, fkMap);
       if (col) columns.push(col);
     }
-    out.push({ id: crypto.randomUUID(), schema, name, columns });
+    out.push({ id: genId(), schema, name, columns });
   }
   return out;
 }
@@ -226,15 +234,15 @@ function parseCsvRow(line: string): string[] {
 
 function parseCsvToTable(csv: string, tableName: string): DesignerTable {
   const lines = csv.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return { id: crypto.randomUUID(), schema: 'public', name: sanitizeName(tableName), columns: [] };
+  if (lines.length < 2) return { id: genId(), schema: 'public', name: sanitizeName(tableName), columns: [] };
   const headers = parseCsvRow(lines[0]);
   const rows = lines.slice(1, 101).map(parseCsvRow);
   const columns: DesignerColumn[] = headers.map((h, i) => {
     const vals = rows.map(r => r[i]?.trim() ?? '');
     const type = inferType(vals);
-    return { id: crypto.randomUUID(), name: sanitizeName(h.trim()) || `col_${i}`, type, length: type === 'VARCHAR' ? '255' : '', nullable: vals.some(v => !v), isPk: false, isUnique: false, isAutoIncrement: false, defaultValue: '', comment: '', fkRef: '' };
+    return { id: genId(), name: sanitizeName(h.trim()) || `col_${i}`, type, length: type === 'VARCHAR' ? '255' : '', nullable: vals.some(v => !v), isPk: false, isUnique: false, isAutoIncrement: false, defaultValue: '', comment: '', fkRef: '' };
   });
-  return { id: crypto.randomUUID(), schema: 'public', name: sanitizeName(tableName) || 'imported', columns };
+  return { id: genId(), schema: 'public', name: sanitizeName(tableName) || 'imported', columns };
 }
 
 // ─── ColumnInfo → DesignerColumn ─────────────────────────────────────────────
@@ -244,7 +252,7 @@ function colInfoToDesigner(c: ColumnInfo): DesignerColumn {
   const fkRef = fkParts.length >= 2 ? `${fkParts[fkParts.length - 2]}.${fkParts[fkParts.length - 1]}` : '';
   const type = (c.dataType || 'TEXT').toUpperCase().replace(/\s+/g, ' ');
   return {
-    id: crypto.randomUUID(), name: c.name, type, length: c.maxLength ? String(c.maxLength) : '',
+    id: genId(), name: c.name, type, length: c.maxLength ? String(c.maxLength) : '',
     nullable: c.nullable, isPk: c.isPk, isUnique: c.isUnique,
     isAutoIncrement: /serial/i.test(c.dataType) || /nextval/i.test(c.defaultValue ?? ''),
     defaultValue: c.defaultValue?.replace(/^'(.*)'::.*$/, '$1').replace(/^nextval\(.*\)$/, '') ?? '',
@@ -1970,9 +1978,9 @@ function ImportPanel({ connections, onMerge }: {
     try {
       const pts = await parseExcelFile(file);
       setXlsxParsed(pts.map(pt => ({
-        id: crypto.randomUUID(), schema: 'public', name: pt.name,
+        id: genId(), schema: 'public', name: pt.name,
         columns: pt.columns.map(c => ({
-          id: crypto.randomUUID(), name: c.name, type: c.type, length: c.type === 'VARCHAR' ? '255' : '',
+          id: genId(), name: c.name, type: c.type, length: c.type === 'VARCHAR' ? '255' : '',
           nullable: c.nullable, isPk: false, isUnique: false, isAutoIncrement: false, defaultValue: '', comment: '', fkRef: '',
         })),
       })));
@@ -2065,7 +2073,7 @@ function ImportPanel({ connections, onMerge }: {
       try {
         const { data } = await axios.post<TableColumnsResult>('/api/schema-explorer/columns', { conn: explorerConn, tableKey: key });
         const [schema, name] = key.includes('.') ? key.split('.', 2) : ['public', key];
-        imported.push({ id: crypto.randomUUID(), schema, name, columns: data.columns.map(colInfoToDesigner) });
+        imported.push({ id: genId(), schema, name, columns: data.columns.map(colInfoToDesigner) });
       } catch { /* ignore */ }
     }
     if (imported.length) { onMerge(imported); setDbSelected(new Set()); }
@@ -3122,7 +3130,7 @@ function SchemaDesignerInner() {
               .replace(/\bFLOAT4\b/g, 'REAL');
             const typeMatch = rawType.match(/^([A-Z0-9_ ]+?)(?:\((\d+(?:,\d+)?)\))?$/);
             return {
-              id: crypto.randomUUID(),
+              id: genId(),
               name: c.name,
               _originalName: c.name,
               type: typeMatch?.[1]?.trim() ?? rawType,
@@ -3139,7 +3147,7 @@ function SchemaDesignerInner() {
             };
           });
           const dt: DesignerTable = {
-            id: crypto.randomUUID(),
+            id: genId(),
             schema,
             name: ti.name,
             _originalName: ti.name,
@@ -3278,9 +3286,9 @@ function SchemaDesignerInner() {
     try {
       const pts = await parseExcelFile(file);
       setImportParsed(pts.map(pt => ({
-        id: crypto.randomUUID(), schema: 'public', name: pt.name,
+        id: genId(), schema: 'public', name: pt.name,
         columns: pt.columns.map(c => ({
-          id: crypto.randomUUID(), name: c.name, type: c.type,
+          id: genId(), name: c.name, type: c.type,
           length: c.type === 'VARCHAR' ? '255' : '',
           nullable: c.nullable, isPk: false, isUnique: false,
           isAutoIncrement: false, defaultValue: '', comment: '', fkRef: '',
@@ -3356,7 +3364,7 @@ function SchemaDesignerInner() {
       try {
         const { data } = await axios.post<TableColumnsResult>('/api/schema-explorer/columns', { conn: ec, tableKey: key });
         const [schema, name] = key.includes('.') ? key.split('.', 2) : ['public', key];
-        imported.push({ id: crypto.randomUUID(), schema, name, columns: data.columns.map(colInfoToDesigner) });
+        imported.push({ id: genId(), schema, name, columns: data.columns.map(colInfoToDesigner) });
       } catch { /* ignore */ }
     }
     if (imported.length) {

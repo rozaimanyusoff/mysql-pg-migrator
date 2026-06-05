@@ -2,6 +2,12 @@
 
 ---
 
+## 2026-06-06
+- **fix** — Schema Studio: `crypto.randomUUID is not a function` on load schema
+  - Added `genId()` helper in `src/pages/schema-studio.tsx` that uses `crypto.randomUUID` when available, falls back to a manual RFC-4122 v4 UUID otherwise
+  - Replaced all 18 direct `crypto.randomUUID()` calls with `genId()`
+  - Status: done
+
 ## 2026-06-05
 - **implement** — Schema drag-to-transfer: move/copy schema to another database via drag-and-drop in Schema Explorer
   - New API: `src/pages/api/schema-explorer/transfer-schema.ts` — exports DDL+data from source schema, imports to target with `CREATE SCHEMA IF NOT EXISTS`, drops source on move; PG and MySQL supported; cross-type blocked
