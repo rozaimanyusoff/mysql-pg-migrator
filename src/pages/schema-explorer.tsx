@@ -20,7 +20,9 @@ import {
   ArrowRight, ArrowDown, ArrowLeft as ArrowLeftIcon, ArrowUp,
   AlignJustify, LayoutGrid, SortAsc, GitBranch, Minus, Hand, MousePointer2,
   AlertCircle, Wand2, CheckCircle2, Send,
+  GripVertical, Loader2, ArrowRightLeft, Copy,
 } from 'lucide-react';
+import type { ExportInclude } from '../lib/sql-exporter';
 import type { ConnectionRow } from './api/connections/index';
 import type { SchemaInfo } from './api/schema-explorer/schemas';
 import type { TableInfo } from './api/schema-explorer/tables';
@@ -647,6 +649,237 @@ function ERDInner({
   );
 }
 
+// ── Schema Transfer Modal ────────────────────────────────────────────────────
+
+function SchemaTransferModal({
+  schema, sourceConn, sourceDb, targetConn, onClose,
+}: {
+  schema: string;
+  sourceConn: ConnectionRow;
+  sourceDb: string;
+  targetConn: ConnectionRow;
+  onClose: () => void;
+}) {
+  const [dbs, setDbs] = useState<string[]>([]);
+  const [loadingDbs, setLoadingDbs] = useState(false);
+  const [targetDb, setTargetDb] = useState('');
+  const [targetSchema, setTargetSchema] = useState(schema);
+  const [mode, setMode] = useState<'copy' | 'move'>('copy');
+  const [include, setInclude] = useState<ExportInclude>('both');
+  const [running, setRunning] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
+  const [done, setDone] = useState(false);
+  const typeMismatch = sourceConn.db_type !== targetConn.db_type;
+
+  useEffect(() => {
+    setLoadingDbs(true);
+    const c = targetConn;
+    const req = c.db_type === 'postgres'
+      ? axios.post<{ databases: string[] }>('/api/pg-databases', {
+          host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '', ssl: c.ssl_enabled,
+        })
+      : axios.post<{ databases: string[] }>('/api/list-databases', {
+          host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '',
+        });
+    req.then(r => { setDbs(r.data.databases); setTargetDb(r.data.databases[0] ?? ''); })
+      .catch(() => { setDbs([c.database_name]); setTargetDb(c.database_name); })
+      .finally(() => setLoadingDbs(false));
+  }, [targetConn]);
+
+  const handleTransfer = async () => {
+    setRunning(true); setLog([]);
+    try {
+      const { data } = await axios.post<{ success: boolean; log: string[] }>(
+        '/api/schema-explorer/transfer-schema',
+        {
+          source: {
+            db_type: sourceConn.db_type, host: sourceConn.host, port: sourceConn.port,
+            user: sourceConn.username, password: sourceConn.password_enc ?? '',
+            database: sourceDb, ssl: sourceConn.ssl_enabled, schema,
+          },
+          target: {
+            db_type: targetConn.db_type, host: targetConn.host, port: targetConn.port,
+            user: targetConn.username, password: targetConn.password_enc ?? '',
+            database: targetDb, ssl: targetConn.ssl_enabled,
+            schema: targetConn.db_type === 'postgres' ? targetSchema : undefined,
+          },
+          mode, include,
+        },
+      );
+      setLog(data.log ?? []);
+      setDone(data.success);
+    } catch (err: unknown) {
+      const d = axios.isAxiosError(err) ? err.response?.data as { log?: string[] } | undefined : undefined;
+      setLog(d?.log ?? [`[ERROR] ${axios.isAxiosError(err) ? err.message : String(err)}`]);
+    } finally { setRunning(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+
+        {/* Header */}
+        <div className="shrink-0 flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+          <ArrowRightLeft size={15} className="text-blue-500 shrink-0" />
+          <p className="font-semibold text-sm text-gray-900 dark:text-slate-100 flex-1">Transfer Schema</p>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4 sidebar-scroll">
+
+          {/* Type mismatch */}
+          {typeMismatch && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              Cross-type transfer (MySQL ↔ PostgreSQL) is not supported. Use the Migration module instead.
+            </div>
+          )}
+
+          {/* Source */}
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Source</p>
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-xs">
+              <Database size={12} className="text-blue-500 shrink-0" />
+              <span className="font-medium text-gray-700 dark:text-slate-300">{sourceConn.label}</span>
+              <span className="text-gray-300 dark:text-slate-600">·</span>
+              <span className="font-mono text-gray-500 dark:text-slate-400">{sourceDb}</span>
+              <span className="text-gray-300 dark:text-slate-600">·</span>
+              <code className="font-mono font-semibold text-blue-600 dark:text-blue-400">&quot;{schema}&quot;</code>
+            </div>
+          </div>
+
+          {/* Target connection + database */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Target</p>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-xs">
+              <Database size={12} className="text-violet-500 shrink-0" />
+              <span className="font-medium text-gray-700 dark:text-slate-300">{targetConn.label}</span>
+              <span className={`ml-auto text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+                targetConn.db_type === 'mysql'
+                  ? 'bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-400'
+                  : 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400'
+              }`}>
+                {targetConn.db_type === 'mysql' ? 'MySQL' : 'PG'}
+              </span>
+            </div>
+            {loadingDbs ? (
+              <p className="text-[11px] text-gray-400 animate-pulse px-1">Loading databases…</p>
+            ) : (
+              <select value={targetDb} onChange={e => setTargetDb(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                {dbs.map(db => <option key={db} value={db}>{db}</option>)}
+              </select>
+            )}
+            {targetConn.db_type === 'postgres' && (
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-gray-500 dark:text-slate-400 shrink-0 w-24">Schema name:</label>
+                <input type="text" value={targetSchema} onChange={e => setTargetSchema(e.target.value)}
+                  className="flex-1 px-2 py-1 text-xs font-mono rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+              </div>
+            )}
+          </div>
+
+          {/* Include */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Include</p>
+            <div className="flex gap-1.5">
+              {([
+                { v: 'both'   as ExportInclude, label: 'Schema + Data' },
+                { v: 'schema' as ExportInclude, label: 'Schema only'   },
+                { v: 'data'   as ExportInclude, label: 'Data only'     },
+              ]).map(({ v, label }) => (
+                <button key={v} type="button" onClick={() => setInclude(v)}
+                  className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors ${
+                    include === v
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  }`}>{label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Mode */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Mode</p>
+            <div className="flex gap-1.5">
+              {([
+                { v: 'copy' as const, label: 'Copy', desc: 'Keep source intact', Icon: Copy },
+                { v: 'move' as const, label: 'Move', desc: 'Drop source after transfer', Icon: ArrowRightLeft },
+              ]).map(({ v, label, desc, Icon }) => (
+                <button key={v} type="button" onClick={() => setMode(v)}
+                  className={`flex-1 flex flex-col items-center gap-0.5 px-3 py-2.5 rounded-lg border transition-colors ${
+                    mode === v
+                      ? v === 'copy'
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                        : 'border-rose-500 bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'
+                      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  }`}>
+                  <Icon size={13} />
+                  <span className="text-[11px] font-semibold">{label}</span>
+                  <span className="text-[10px] opacity-70">{desc}</span>
+                </button>
+              ))}
+            </div>
+            {mode === 'move' && (
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
+                <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                <span>
+                  <strong>Warning:</strong> Schema <code className="font-mono bg-rose-100 dark:bg-rose-900/40 px-1 rounded">&quot;{schema}&quot;</code> will be
+                  {' '}<strong>permanently deleted</strong> from <em>{sourceConn.label} / {sourceDb}</em> after the transfer completes. This cannot be undone.
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Log */}
+          {log.length > 0 && (
+            <div className="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
+              <div className="px-3 py-1.5 bg-gray-50 dark:bg-slate-800/50 border-b border-gray-100 dark:border-slate-800">
+                <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Log</p>
+              </div>
+              <div className="p-3 space-y-0.5 font-mono text-[10px] max-h-36 overflow-y-auto sidebar-scroll">
+                {log.map((line, i) => (
+                  <div key={i} className={
+                    line.startsWith('[OK]') ? 'text-emerald-600 dark:text-emerald-400' :
+                    line.startsWith('[ERROR]') || line.startsWith('[FAIL]') ? 'text-rose-600 dark:text-rose-400' :
+                    line.startsWith('[WARN]') ? 'text-amber-600 dark:text-amber-400' :
+                    'text-gray-500 dark:text-slate-400'
+                  }>{line}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="shrink-0 flex items-center justify-between px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button type="button" onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">
+            {done ? 'Close' : 'Cancel'}
+          </button>
+          {!done ? (
+            <button type="button" onClick={() => void handleTransfer()}
+              disabled={running || typeMismatch || !targetDb || (targetConn.db_type === 'postgres' && !targetSchema.trim())}
+              className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-40 transition-colors ${
+                mode === 'move' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-blue-600 hover:bg-blue-700'
+              }`}>
+              {running ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={13} />}
+              {running ? 'Transferring…' : mode === 'move' ? 'Move Schema' : 'Copy Schema'}
+            </button>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
+              <CheckCircle2 size={14} /> Done
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function SchemaExplorer() {
@@ -736,6 +969,10 @@ export default function SchemaExplorer() {
   const [advisorAccepted, setAdvisorAccepted] = useState<Set<string>>(new Set());
   const [advisorManual, setAdvisorManual] = useState<Record<string, string>>({});
   const [sendingToDesigner, setSendingToDesigner] = useState(false);
+
+  // Schema drag-and-transfer
+  const [draggingSchema, setDraggingSchema] = useState<string | null>(null);
+  const [transferModal, setTransferModal] = useState<{ schema: string; targetConn: ConnectionRow } | null>(null);
 
   // Canvas capture (state lives here so Export tab can show/control it)
   const [paperSize, setPaperSize] = useState<PaperSize>('a4');
@@ -1201,13 +1438,29 @@ export default function SchemaExplorer() {
                 return (
                   <div key={s.schema}>
                     {/* Schema header */}
-                    <div className="flex items-center gap-1 px-2 py-1.5 bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-[38px] z-10">
+                    <div
+                      className="flex items-center gap-1 px-2 py-1.5 bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-[38px] z-10 group"
+                      draggable={connected}
+                      onDragStart={e => {
+                        setDraggingSchema(s.schema);
+                        e.dataTransfer.effectAllowed = 'copyMove';
+                        e.dataTransfer.setData('text/plain', s.schema);
+                      }}
+                      onDragEnd={() => setDraggingSchema(null)}
+                    >
+                      {connected && (
+                        <GripVertical
+                          size={11}
+                          className="shrink-0 text-gray-300 dark:text-slate-600 group-hover:text-gray-400 dark:group-hover:text-slate-500 cursor-grab"
+                        />
+                      )}
                       <input
                         type="checkbox"
                         checked={allChecked}
                         ref={el => { if (el) el.indeterminate = someChecked; }}
                         onChange={() => toggleSchemaErd(s.schema)}
                         onClick={e => e.stopPropagation()}
+                        onMouseDown={e => e.stopPropagation()}
                         className="shrink-0 accent-blue-600 cursor-pointer"
                         title={allChecked ? 'Uncheck all' : 'Check all'}
                       />
@@ -1268,7 +1521,51 @@ export default function SchemaExplorer() {
           </aside>
 
           {/* ── Right panel ────────────────────────────────────────────── */}
-          <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+
+            {/* ── Drag-to-transfer overlay ──────────────────────────────── */}
+            {draggingSchema && connections.length > 0 && (
+              <div className="absolute inset-0 z-40 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center gap-5 p-8 pointer-events-auto">
+                <div className="flex flex-col items-center gap-1">
+                  <ArrowRightLeft size={20} className="text-white/70" />
+                  <p className="text-white font-semibold text-sm">
+                    Drop schema <code className="bg-white/20 px-1.5 py-0.5 rounded font-mono">&quot;{draggingSchema}&quot;</code> onto a target connection
+                  </p>
+                  <p className="text-white/50 text-xs">Same DB type required — use Migration module for cross-type</p>
+                </div>
+                <div className="flex flex-wrap gap-3 justify-center max-w-2xl">
+                  {connections.map(conn => {
+                    const compatible = conn.db_type === selectedConn?.db_type;
+                    return (
+                      <div key={conn.id}
+                        onDragOver={e => { if (compatible) e.preventDefault(); }}
+                        onDrop={e => {
+                          e.preventDefault();
+                          if (!compatible) return;
+                          setDraggingSchema(null);
+                          setTransferModal({ schema: draggingSchema!, targetConn: conn });
+                        }}
+                        className={`flex flex-col items-center gap-1.5 px-5 py-4 rounded-xl border-2 min-w-[130px] transition-all select-none ${
+                          compatible
+                            ? 'border-white/40 bg-white/10 hover:bg-white/20 hover:border-white/70 cursor-copy'
+                            : 'border-white/10 bg-white/5 opacity-40 cursor-not-allowed'
+                        }`}>
+                        <Database size={18} className="text-white" />
+                        <p className="text-xs font-semibold text-white truncate max-w-[120px]">{conn.label}</p>
+                        <p className="text-[10px] text-white/50 font-mono truncate max-w-[120px]">{conn.host}:{conn.port}</p>
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                          conn.db_type === 'mysql'
+                            ? 'bg-orange-500/30 text-orange-200'
+                            : 'bg-blue-500/30 text-blue-200'
+                        }`}>{conn.db_type === 'mysql' ? 'MySQL' : 'PG'}</span>
+                        {!compatible && <span className="text-[9px] text-white/40">incompatible</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-white/40 text-[11px]">Press Escape or release outside a target to cancel</p>
+              </div>
+            )}
 
             {/* Tab bar */}
             <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
@@ -1866,6 +2163,17 @@ export default function SchemaExplorer() {
           </main>
         </div>
       </div>
+
+      {/* Schema transfer modal */}
+      {transferModal && selectedConn && (
+        <SchemaTransferModal
+          schema={transferModal.schema}
+          sourceConn={selectedConn}
+          sourceDb={selectedDb}
+          targetConn={transferModal.targetConn}
+          onClose={() => setTransferModal(null)}
+        />
+      )}
     </>
   );
 }

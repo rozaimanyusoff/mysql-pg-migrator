@@ -2,6 +2,32 @@
 
 ---
 
+## 2026-06-05
+- **implement** — Schema drag-to-transfer: move/copy schema to another database via drag-and-drop in Schema Explorer
+  - New API: `src/pages/api/schema-explorer/transfer-schema.ts` — exports DDL+data from source schema, imports to target with `CREATE SCHEMA IF NOT EXISTS`, drops source on move; PG and MySQL supported; cross-type blocked
+  - UI: schema headers in left panel are now draggable (grip icon appears on hover)
+  - Dragging a schema shows an overlay on the right panel listing all connections as drop targets; incompatible DB types grayed out
+  - Drop onto a connection → `SchemaTransferModal` opens: target DB picker, schema name (PG), include (Schema+Data/Schema/Data), mode (Copy/Move), destructive warning for Move, log output
+  - Added `GripVertical`, `Loader2`, `ArrowRightLeft`, `Copy` lucide imports + `ExportInclude` type to `schema-explorer.tsx`
+  - Status: done
+
+- **fix** — Data Maintenance: fix remaining old name references + header cleanup + context menu scope
+  - `src/pages/index.tsx`: updated module card title (`'Export & Import'` → `'Data Maintenance'`) and description
+  - `src/pages/export-import.tsx`: removed separate `<header>` row; moved module identity (icon + name + compact description) inline into the toolbar as a left-anchored compact block
+  - Fixed `GuidePopover` title: `'Export & Import Guide'` → `'Data Maintenance Guide'`
+  - Context menu now triggers on right-click in the Database panel (Panel 2) and Schema panel (Panel 3), not only on table rows — suppressed on Import tab where include/conflict don't apply
+  - Status: done
+
+- **update** — Rename Export & Import → Data Maintenance + replace Include toolbar buttons with right-click context menu
+  - Renamed module label in `Navbar.tsx` (`'/export-import': 'Data Maintenance'`)
+  - Updated page `<title>`, `<h1>`, and subtitle in `export-import.tsx`
+  - Removed Include segmented buttons (S+D / Schema / Data) from Export and Sync toolbar sections
+  - Added inline `incl: <value>` indicator in toolbar (hover shows "right-click any table to change")
+  - Added `ctxMenu` state + `ctxMenuRef`, `useEffect` to close on outside click or Escape
+  - Added `onContextMenu` handler on each table row label
+  - Rendered fixed-position context menu at cursor: Include options (Export/Sync), plus Conflict options section for Sync tab
+  - Status: done
+
 ## 2026-06-04
 - **fix** — Export/Import: export menghasilkan schema sahaja tanpa data
   - Root cause: `include` state dikongsi antara Export tab dan Sync tab — kalau user set Sync ke `'schema'` kemudian switch ke Export tab, state kekal `'schema'` dan export hanya DDL tanpa INSERT

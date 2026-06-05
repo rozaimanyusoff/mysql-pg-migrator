@@ -6,7 +6,7 @@ const MODULE_LABELS: Record<string, string> = {
   '/migration': 'Migration',
   '/schema-studio': 'Schema Studio',
   '/schema-generator': 'Schema Generator',
-  '/export-import': 'Export & Import',
+  '/export-import': 'Data Maintenance',
   '/schema-explorer': 'Schema Explorer',
   '/flow-designer': 'Flow Designer',
   '/normalizer': 'Normalizer',

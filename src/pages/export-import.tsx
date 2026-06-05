@@ -424,7 +424,7 @@ function GuidePopover() {
         <div className="absolute right-0 top-full mt-2 z-50 w-[420px] max-h-[74vh] flex flex-col bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden">
           <div className="shrink-0 flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 dark:border-slate-800">
             <BookOpen size={14} className="text-blue-500" />
-            <p className="flex-1 font-semibold text-sm text-gray-900 dark:text-slate-100">Export & Import Guide</p>
+            <p className="flex-1 font-semibold text-sm text-gray-900 dark:text-slate-100">Data Maintenance Guide</p>
             <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={14} /></button>
           </div>
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-[11px]">
@@ -958,8 +958,24 @@ export default function ExportImportPage() {
   const [jobsCollapsed, setJobsCollapsed] = useState(false);
   const [jobsRefreshKey, setJobsRefreshKey] = useState(0);
 
+  // Context menu (right-click on table rows)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const ctxMenuRef = useRef<HTMLDivElement>(null);
+
   const conn    = connections.find(c => c.id === connId) ?? null;
   const tgtConn = connections.find(c => c.id === tgtConnId) ?? null;
+
+  // Close context menu on outside click or Escape
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const onKey  = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtxMenu(null); };
+    const onDown = (e: MouseEvent) => {
+      if (ctxMenuRef.current && !ctxMenuRef.current.contains(e.target as Node)) setCtxMenu(null);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); };
+  }, [ctxMenu]);
 
   // Show alert when sync source/target DB types differ
   const typeMismatchRef = useRef(false);
@@ -1146,22 +1162,22 @@ export default function ExportImportPage() {
 
   return (
     <>
-      <Head><title>Export & Import — DB Maintenance Tools</title></Head>
+      <Head><title>Data Maintenance — DB Maintenance Tools</title></Head>
       <div className="h-[calc(100vh-48px)] flex flex-col bg-gray-50 dark:bg-slate-950 overflow-hidden">
-
-        {/* ── Header ── */}
-        <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-5 py-3 flex items-center gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <UploadCloud size={18} className="text-emerald-600 shrink-0" />
-            <div className="min-w-0">
-              <h1 className="font-bold text-gray-900 dark:text-slate-100 leading-none">Export & Import</h1>
-              <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">Export, import and sync database tables across connections</p>
-            </div>
-          </div>
-        </header>
 
         {/* ── Toolbar ── */}
         <div className="shrink-0 flex items-center gap-2 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-1.5 flex-wrap">
+
+          {/* Module identity (compact, replaces separate header) */}
+          <div className="flex items-center gap-1.5 mr-1 shrink-0">
+            <UploadCloud size={13} className="text-emerald-500 shrink-0" />
+            <div className="leading-none">
+              <p className="text-[11px] font-bold text-gray-800 dark:text-slate-100 leading-none">Data Maintenance</p>
+              <p className="text-[9px] text-gray-400 dark:text-slate-500 mt-0.5 leading-none">Backup · Import · Sync · Copy</p>
+            </div>
+          </div>
+
+          <div className="w-px h-6 bg-gray-200 dark:bg-slate-700 mx-1 shrink-0" />
 
           {/* Tab buttons */}
           {([
@@ -1184,18 +1200,13 @@ export default function ExportImportPage() {
           {/* Export options */}
           {tab === 'export' && (
             <>
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Include</span>
-                {([
-                  { v: 'both'   as ExportInclude, label: 'S+D',   tip: 'Schema + Data — DDL and all rows'               },
-                  { v: 'schema' as ExportInclude, label: 'Schema', tip: 'Schema only — DDL, no row data'                 },
-                  { v: 'data'   as ExportInclude, label: 'Data',   tip: 'Data only — INSERT statements, no DDL'          },
-                ]).map(({ v, label, tip }) => (
-                  <BtnTip key={v} tip={tip}>
-                    <button onClick={() => setExportInclude(v)} className={seg(exportInclude === v)}>{label}</button>
-                  </BtnTip>
-                ))}
-              </div>
+              <BtnTip tip="Right-click any table to change">
+                <span className="text-[10px] text-gray-400 dark:text-slate-500 cursor-default select-none">
+                  incl: <span className="font-medium text-blue-600 dark:text-blue-400">
+                    {exportInclude === 'both' ? 'Schema+Data' : exportInclude === 'schema' ? 'Schema' : 'Data'}
+                  </span>
+                </span>
+              </BtnTip>
               <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
               <div className="flex items-center gap-1">
                 <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Format</span>
@@ -1229,18 +1240,13 @@ export default function ExportImportPage() {
           {/* Sync options */}
           {tab === 'sync' && (
             <>
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Include</span>
-                {([
-                  { v: 'both'   as ExportInclude, label: 'S+D',   tip: 'Schema + Data — DDL and all rows'      },
-                  { v: 'schema' as ExportInclude, label: 'Schema', tip: 'Schema only — DDL, no row data'        },
-                  { v: 'data'   as ExportInclude, label: 'Data',   tip: 'Data only — INSERT statements, no DDL' },
-                ]).map(({ v, label, tip }) => (
-                  <BtnTip key={v} tip={tip}>
-                    <button onClick={() => setSyncInclude(v)} className={seg(syncInclude === v)}>{label}</button>
-                  </BtnTip>
-                ))}
-              </div>
+              <BtnTip tip="Right-click any table to change">
+                <span className="text-[10px] text-gray-400 dark:text-slate-500 cursor-default select-none">
+                  incl: <span className="font-medium text-violet-600 dark:text-violet-400">
+                    {syncInclude === 'both' ? 'Schema+Data' : syncInclude === 'schema' ? 'Schema' : 'Data'}
+                  </span>
+                </span>
+              </BtnTip>
               <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
               <div className="flex items-center gap-1">
                 <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Conflict</span>
@@ -1317,22 +1323,26 @@ export default function ExportImportPage() {
             <div className="flex-1 h-full overflow-hidden">
               <PanelGroup orientation="horizontal" className="h-full">
                 <Panel defaultSize={24} minSize={12}>
-                  <DatabasePanel
-                    conn={conn}
-                    value={database}
-                    onChange={db => { setDatabase(db); setSchema(''); setSelectedTables('all'); }}
-                    allowCreate={tab === 'import'}
-                    syncProgress={syncProgress}
-                  />
+                  <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); } }}>
+                    <DatabasePanel
+                      conn={conn}
+                      value={database}
+                      onChange={db => { setDatabase(db); setSchema(''); setSelectedTables('all'); }}
+                      allowCreate={tab === 'import'}
+                      syncProgress={syncProgress}
+                    />
+                  </div>
                 </Panel>
                 <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
                 <Panel defaultSize={18} minSize={8}>
-                  <SchemaPanel
-                    conn={tab === 'import' ? null : conn}
-                    database={database}
-                    value={schema}
-                    onChange={s => { setSchema(s); setSelectedTables('all'); }}
-                  />
+                  <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); } }}>
+                    <SchemaPanel
+                      conn={tab === 'import' ? null : conn}
+                      database={database}
+                      value={schema}
+                      onChange={s => { setSchema(s); setSelectedTables('all'); }}
+                    />
+                  </div>
                 </Panel>
                 <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
                 <Panel defaultSize={58} minSize={30}>
@@ -1389,7 +1399,8 @@ export default function ExportImportPage() {
                           const key = `${t.schema}.${t.name}`;
                           const isChecked = allSelected || selectedArr.includes(key);
                           return (
-                            <label key={key} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer">
+                            <label key={key} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer"
+                              onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}>
                               <input type="checkbox" checked={isChecked} className="accent-blue-600 shrink-0"
                                 onChange={e => {
                                   if (allSelected) {
@@ -1490,6 +1501,62 @@ export default function ExportImportPage() {
             onApply={s => { setImportSql(s); setImportMode('sql'); setExcelTables(null); }}
             onClose={() => setExcelTables(null)}
           />
+        )}
+
+        {/* Right-click context menu on table rows */}
+        {ctxMenu && (
+          <div ref={ctxMenuRef}
+            style={{ top: ctxMenu.y, left: ctxMenu.x }}
+            className="fixed z-[200] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl py-1.5 min-w-[210px]"
+            onContextMenu={e => e.preventDefault()}>
+            <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Include</p>
+            {([
+              { v: 'both'   as ExportInclude, label: 'Schema + Data', desc: 'DDL and all rows'  },
+              { v: 'schema' as ExportInclude, label: 'Schema only',   desc: 'DDL, no row data'  },
+              { v: 'data'   as ExportInclude, label: 'Data only',     desc: 'INSERTs, no DDL'   },
+            ]).map(({ v, label, desc }) => {
+              const current = tab === 'sync' ? syncInclude : exportInclude;
+              const setter  = tab === 'sync' ? setSyncInclude : setExportInclude;
+              const active  = current === v;
+              return (
+                <button key={v} type="button" onClick={() => { setter(v); setCtxMenu(null); }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>
+                  <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${active ? 'border-blue-500' : 'border-gray-300 dark:border-slate-600'}`}>
+                    {active && <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-medium">{label}</p>
+                    <p className="text-[10px] text-gray-400 dark:text-slate-500">{desc}</p>
+                  </div>
+                </button>
+              );
+            })}
+            {tab === 'sync' && (
+              <>
+                <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+                <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Conflict</p>
+                {([
+                  { v: 'insert_only'     as ConflictStrategy, label: 'Insert only',       desc: 'Fail if row exists'   },
+                  { v: 'truncate_insert' as ConflictStrategy, label: 'Truncate + Insert', desc: 'Clear table first'    },
+                  { v: 'upsert'          as ConflictStrategy, label: 'Upsert',            desc: 'Skip duplicates'      },
+                ]).map(({ v, label, desc }) => {
+                  const active = conflict === v;
+                  return (
+                    <button key={v} type="button" onClick={() => { setConflict(v); setCtxMenu(null); }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors ${active ? 'text-violet-600 dark:text-violet-400' : 'text-gray-700 dark:text-slate-300'}`}>
+                      <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${active ? 'border-violet-500' : 'border-gray-300 dark:border-slate-600'}`}>
+                        {active && <div className="w-1.5 h-1.5 rounded-full bg-violet-500" />}
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-medium">{label}</p>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500">{desc}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+          </div>
         )}
       </div>
     </>
