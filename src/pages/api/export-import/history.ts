@@ -4,7 +4,7 @@ import { getPool } from '../../../lib/db';
 export interface HistoryEntry {
   id: number;
   username: string;
-  operation: 'export' | 'import' | 'sync';
+  operation: 'export' | 'import' | 'sync' | 'replace';
   source_label: string | null;
   source_db: string | null;
   target_label: string | null;

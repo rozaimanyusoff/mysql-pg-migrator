@@ -9,11 +9,13 @@ import {
   XCircle, Loader2, Database, Server, FileCode2, ArrowRightLeft,
   AlertCircle, Table2, Copy, Check, ChevronLeft, ChevronUp, ChevronDown,
   Info, FileSpreadsheet, Filter, Clock, Trash2, Save,
-  Eye, ShieldAlert, Plus, HelpCircle, BookOpen, X,
+  Eye, ShieldAlert, Plus, HelpCircle, BookOpen, X, Replace,
 } from 'lucide-react';
+import { useAlert } from '../lib/alert-context';
 import type { ConnectionRow } from './api/connections/index';
 import type { ConnCfg, ExportInclude, ConflictStrategy } from '../lib/sql-exporter';
 import type { HistoryEntry } from './api/export-import/history';
+import type { AnalyseResult } from './api/export-import/analyse';
 import type { ExplorerConn } from '../lib/explorer-db';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import {
@@ -23,9 +25,9 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Tab = 'export' | 'import' | 'sync';
+type Tab = 'export' | 'import' | 'sync' | 'replace';
 type ExportFormat = 'sql' | 'csv';
-interface LogLine { step: string; ok: boolean; text: string }
+interface LogLine { step: string; ok: boolean; text: string; ts?: string }
 interface DryRunSummary {
   total: number; creates: number; inserts: number;
   drops: number; alters: number; truncates: number; updates: number;
@@ -278,26 +280,48 @@ function SqlImportField({ value, onChange }: { value: string; onChange: (v: stri
 
 // ── Log panel ──────────────────────────────────────────────────────────────────
 
-function LogPanel({ lines, running }: { lines: LogLine[]; running: boolean }) {
+function LogPanel({ lines, running, focusRange }: {
+  lines: LogLine[];
+  running: boolean;
+  focusRange?: [number, number] | null;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!focusRange || !scrollRef.current) return;
+    const el = scrollRef.current.querySelector<HTMLElement>(`[data-li="${focusRange[0]}"]`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [focusRange]);
+
   if (lines.length === 0 && !running) return null;
   return (
     <div className="shrink-0 border-t border-gray-200 dark:border-slate-800">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
         <FileCode2 size={12} className="text-gray-400" />
         <p className="text-[11px] font-medium text-gray-500 dark:text-slate-400">Execution Log</p>
+        {focusRange && (
+          <span className="ml-auto text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+            showing lines {focusRange[0] + 1}–{focusRange[1]}
+          </span>
+        )}
       </div>
-      <div className="p-3 space-y-1 font-mono text-[10px] max-h-44 sidebar-scroll overflow-y-auto">
+      <div ref={scrollRef} className="p-3 space-y-1 font-mono text-[10px] max-h-44 sidebar-scroll overflow-y-auto">
         {lines.map((l, i) => {
-          const isRollback = l.text.startsWith('[ROLLBACK]');
-          const isInfo     = l.text.startsWith('[START]') || l.text.startsWith('[DONE]');
-          const colorCls   = l.ok
+          const isRollback  = l.text.startsWith('[ROLLBACK]');
+          const isInfo      = l.text.startsWith('[START]') || l.text.startsWith('[DONE]') || l.text.startsWith('[INFO]');
+          const highlighted = focusRange && i >= focusRange[0] && i < focusRange[1];
+          const colorCls    = l.ok
             ? isInfo ? 'text-gray-400 dark:text-slate-500' : 'text-emerald-600 dark:text-emerald-400'
             : isRollback ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400';
           const Icon = l.ok ? (isInfo ? Info : CheckCircle2) : isRollback ? AlertCircle : XCircle;
           return (
-            <div key={i} className={`flex items-start gap-1.5 ${colorCls}`}>
+            <div key={i} data-li={i}
+              className={`flex items-start gap-1.5 rounded px-1 -mx-1 ${colorCls} ${highlighted ? 'bg-amber-50 dark:bg-amber-950/25 ring-1 ring-amber-300 dark:ring-amber-800' : ''}`}>
               <Icon size={10} className="mt-0.5 shrink-0" />
-              <span><span className="opacity-50 mr-1">[{l.step}]</span>{l.text}</span>
+              <span>
+                {l.ts && <span className="opacity-40 mr-1.5 font-mono text-[9px]">{l.ts}</span>}
+                <span className="opacity-50 mr-1">[{l.step}]</span>{l.text}
+              </span>
             </div>
           );
         })}
@@ -591,15 +615,21 @@ function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgt
 
 // ── Panel 2: Databases ─────────────────────────────────────────────────────────
 
-function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress }: {
+function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtConn, tgtValue, onTgtChange, onItemContextMenu }: {
   conn: ConnectionRow | null;
   value: string;
   onChange: (db: string) => void;
   allowCreate?: boolean;
   syncProgress?: { current: number; total: number; label: string } | null;
+  tgtConn?: ConnectionRow | null;
+  tgtValue?: string;
+  onTgtChange?: (db: string) => void;
+  onItemContextMenu?: (e: React.MouseEvent, dbName: string) => void;
 }) {
   const [dbs, setDbs]           = useState<string[]>([]);
   const [loading, setLoading]   = useState(false);
+  const [tgtDbs, setTgtDbs]     = useState<string[]>([]);
+  const [tgtLoading, setTgtLoading] = useState(false);
   const [showNew, setShowNew]   = useState(false);
   const [newName, setNewName]   = useState('');
   const [creating, setCreating] = useState(false);
@@ -629,6 +659,32 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress }: {
   useEffect(() => {
     if (dbs.length > 0 && !value) onChange(dbs[0]);
   }, [dbs, value, onChange]);
+
+  const loadTgt = useCallback(async (c: ConnectionRow) => {
+    setTgtLoading(true); setTgtDbs([]);
+    try {
+      if (c.db_type === 'postgres') {
+        const { data } = await axios.post('/api/pg-databases',
+          { host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '', ssl: c.ssl_enabled });
+        setTgtDbs((data as { databases: string[] }).databases);
+      } else {
+        const { data } = await axios.post('/api/list-databases',
+          { host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '' });
+        setTgtDbs((data as { databases: string[] }).databases);
+      }
+    } catch { setTgtDbs([]); }
+    finally { setTgtLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (tgtConn) void loadTgt(tgtConn); else setTgtDbs([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tgtConn?.id]);
+
+  useEffect(() => {
+    if (tgtDbs.length > 0 && onTgtChange && !tgtValue) onTgtChange(tgtDbs[0]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tgtDbs]);
 
   const handleCreate = async () => {
     if (!conn || !newName.trim()) return;
@@ -670,6 +726,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress }: {
               return (
                 <div key={db}>
                   <button type="button" onClick={() => onChange(db)}
+                    onContextMenu={onItemContextMenu ? e => { e.preventDefault(); e.stopPropagation(); onItemContextMenu(e, db); } : undefined}
                     className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
                       active
                         ? 'bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300'
@@ -692,6 +749,45 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress }: {
           </div>
         )}
       </div>
+
+      {/* Target database list (sync tab only) */}
+      {tgtConn && onTgtChange && (
+        <>
+          <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
+            <Database size={11} className="text-violet-500 shrink-0" />
+            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Target DB</span>
+            <button type="button" onClick={() => void loadTgt(tgtConn)} title="Refresh"
+              className="ml-auto p-0.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
+              {tgtLoading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+            </button>
+          </div>
+          <div className="flex-1 sidebar-scroll overflow-y-auto">
+            {tgtDbs.length === 0 && !tgtLoading ? (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">
+                {tgtConn ? 'No databases found' : 'Select target connection'}
+              </p>
+            ) : (
+              <div className="p-2 space-y-0.5">
+                {tgtDbs.map(db => {
+                  const active = tgtValue === db;
+                  return (
+                    <button key={db} type="button" onClick={() => onTgtChange(db)}
+                      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
+                        active
+                          ? 'bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300'
+                          : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
+                      }`}>
+                      <Database size={10} className={active ? 'text-violet-400 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
+                      <span className="text-[11px] font-mono truncate flex-1">{db}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       {allowCreate && conn && (
         <div className="shrink-0 border-t border-gray-100 dark:border-slate-800 p-2">
           {showNew ? (
@@ -725,23 +821,38 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress }: {
 
 // ── Panel 3: Schemas ───────────────────────────────────────────────────────────
 
-function SchemaPanel({ conn, database, value, onChange }: {
+function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tgtValue, onTgtChange, onItemContextMenu }: {
   conn: ConnectionRow | null;
   database: string;
   value: string;
   onChange: (s: string) => void;
+  tgtConn?: ConnectionRow | null;
+  tgtDatabase?: string;
+  tgtValue?: string;
+  onTgtChange?: (s: string) => void;
+  onItemContextMenu?: (e: React.MouseEvent, schemaName: string) => void;
 }) {
-  const [schemas, setSchemas] = useState<{ schema: string; tableCount: number }[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [schemas,    setSchemas]    = useState<{ schema: string; tableCount: number }[]>([]);
+  const [loading,    setLoading]    = useState(false);
+  const [tgtSchemas, setTgtSchemas] = useState<{ schema: string; tableCount: number }[]>([]);
+  const [tgtLoading, setTgtLoading] = useState(false);
 
   const load = useCallback(async (c: ConnectionRow, db: string) => {
     setLoading(true); setSchemas([]);
     try {
-      const { data } = await axios.post('/api/schema-explorer/schemas',
-        connToExplorerConn(c, db));
+      const { data } = await axios.post('/api/schema-explorer/schemas', connToExplorerConn(c, db));
       setSchemas((data as { schemas: { schema: string; tableCount: number }[] }).schemas);
     } catch { setSchemas([]); }
     finally { setLoading(false); }
+  }, []);
+
+  const loadTgt = useCallback(async (c: ConnectionRow, db: string) => {
+    setTgtLoading(true); setTgtSchemas([]);
+    try {
+      const { data } = await axios.post('/api/schema-explorer/schemas', connToExplorerConn(c, db));
+      setTgtSchemas((data as { schemas: { schema: string; tableCount: number }[] }).schemas);
+    } catch { setTgtSchemas([]); }
+    finally { setTgtLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -750,57 +861,108 @@ function SchemaPanel({ conn, database, value, onChange }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conn?.id, database]);
 
-  const isPg = conn?.db_type === 'postgres';
+  useEffect(() => {
+    if (tgtConn && tgtDatabase) void loadTgt(tgtConn, tgtDatabase);
+    else { setTgtSchemas([]); onTgtChange?.(''); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tgtConn?.id, tgtDatabase]);
 
-  return (
-    <div className="w-full h-full bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
-      <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
-        <Server size={12} className={isPg ? 'text-teal-500 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
-        <span className={`text-[11px] font-semibold ${isPg ? 'text-gray-700 dark:text-slate-200' : 'text-gray-400 dark:text-slate-600'}`}>Schema</span>
-        {loading && <Loader2 size={10} className="animate-spin text-gray-400 ml-auto" />}
-      </div>
-      <div className="flex-1 sidebar-scroll overflow-y-auto">
-        {!isPg ? (
-          <p className="text-[10px] text-gray-400 dark:text-slate-600 text-center py-8 px-2 italic">PostgreSQL only</p>
-        ) : !conn || !database ? (
-          <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a DB first</p>
-        ) : (
-          <div className="p-2 space-y-0.5">
-            <button type="button" onClick={() => onChange('')}
-              className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
-                value === '' ? 'bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/60'
-              }`}>
-              <span className="text-[11px]">All schemas</span>
-            </button>
-            {schemas.map(s => (
-              <button key={s.schema} type="button" onClick={() => onChange(s.schema)}
+  const isPg    = conn?.db_type    === 'postgres';
+  const isTgtPg = tgtConn?.db_type === 'postgres';
+  const isDual  = !!(tgtConn && onTgtChange);
+
+  const renderList = (
+    items: { schema: string; tableCount: number }[],
+    selected: string,
+    onSelect: (s: string) => void,
+    accent: 'teal' | 'violet',
+    isLoading: boolean,
+    onCtx?: (e: React.MouseEvent, schemaName: string) => void,
+  ) => (
+    <div className="flex-1 sidebar-scroll overflow-y-auto">
+      {isLoading ? (
+        <div className="flex justify-center py-6"><Loader2 size={12} className="animate-spin text-gray-400" /></div>
+      ) : items.length === 0 ? (
+        <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">No schemas found</p>
+      ) : (
+        <div className="p-2 space-y-0.5">
+          {items.map(s => {
+            const active = selected === s.schema;
+            const cls = accent === 'teal'
+              ? 'bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300'
+              : 'bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300';
+            return (
+              <button key={s.schema} type="button" onClick={() => onSelect(s.schema)}
+                onContextMenu={onCtx ? e => { e.preventDefault(); e.stopPropagation(); onCtx(e, s.schema); } : undefined}
                 className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
-                  value === s.schema ? 'bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
+                  active ? cls : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
                 }`}>
                 <div className="flex-1 min-w-0">
                   <p className="text-[11px] font-mono truncate">{s.schema}</p>
                   <p className="text-[9px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</p>
                 </div>
               </button>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="w-full h-full bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
+      {/* Source schema header */}
+      <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
+        <Server size={12} className={isPg ? 'text-teal-500 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
+        <span className={`text-[11px] font-semibold ${isPg ? 'text-gray-700 dark:text-slate-200' : 'text-gray-400 dark:text-slate-600'}`}>
+          {isDual ? 'Source Schema' : 'Schema'}
+        </span>
+        {loading && <Loader2 size={10} className="animate-spin text-gray-400 ml-auto" />}
       </div>
+
+      {!isPg ? (
+        <p className="text-[10px] text-gray-400 dark:text-slate-600 text-center py-8 px-2 italic">PostgreSQL only</p>
+      ) : !conn || !database ? (
+        <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a DB first</p>
+      ) : renderList(schemas, value, onChange, 'teal', loading, onItemContextMenu)}
+
+      {/* Target schema section (sync only) */}
+      {isDual && (
+        <>
+          <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
+            <Server size={11} className="text-violet-500 shrink-0" />
+            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Target Schema</span>
+            {tgtLoading && <Loader2 size={10} className="animate-spin text-gray-400 ml-auto" />}
+          </div>
+          {!isTgtPg ? (
+            <p className="text-[10px] text-gray-400 dark:text-slate-600 text-center py-6 px-2 italic">PostgreSQL only</p>
+          ) : !tgtConn || !tgtDatabase ? (
+            <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">Select target DB first</p>
+          ) : renderList(tgtSchemas, tgtValue ?? '', onTgtChange, 'violet', tgtLoading)}
+        </>
+      )}
     </div>
   );
 }
 
 // ── Panel 5: Saved Jobs (collapsible) ─────────────────────────────────────────
 
+const OP_BADGE: Record<string, string> = {
+  export:  'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400',
+  import:  'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400',
+  sync:    'bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-400',
+  replace: 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400',
+};
+
 function HistoryCard({ h, onDelete }: { h: HistoryEntry; onDelete: (id: number) => void }) {
   const [expanded, setExpanded] = useState(false);
   const connLabel = h.source_label ?? h.target_label;
   const db = h.source_db ?? h.target_db;
   const statusCls = h.status === 'success'
-    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+    ? 'text-emerald-600 dark:text-emerald-400'
     : h.status === 'failed'
-    ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400'
-    : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400';
+    ? 'text-rose-500 dark:text-rose-400'
+    : 'text-gray-400 dark:text-slate-500';
 
   return (
     <div className={`rounded-lg border p-2 transition-colors bg-white dark:bg-slate-800/50 ${
@@ -808,12 +970,17 @@ function HistoryCard({ h, onDelete }: { h: HistoryEntry; onDelete: (id: number) 
       : h.status === 'failed' ? 'border-rose-200 dark:border-rose-800/50'
       : 'border-gray-200 dark:border-slate-700'
     }`}>
-      {/* Row 1: name + status */}
-      <div className="flex items-start gap-1 mb-0.5">
+      {/* Row 1: operation badge + status icon */}
+      <div className="flex items-center gap-1 mb-0.5">
+        <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${OP_BADGE[h.operation] ?? OP_BADGE.export}`}>
+          {h.operation}
+        </span>
         <p className="text-[11px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">
-          {connLabel ?? h.operation}
+          {connLabel}
         </p>
-        <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusCls}`}>{h.status}</span>
+        <span className={`shrink-0 text-[10px] font-semibold ${statusCls}`}>
+          {h.status === 'success' ? <CheckCircle2 size={11} /> : h.status === 'failed' ? <XCircle size={11} /> : null}
+        </span>
       </div>
       {/* Row 2: db path */}
       {db && (
@@ -824,7 +991,7 @@ function HistoryCard({ h, onDelete }: { h: HistoryEntry; onDelete: (id: number) 
       {/* Row 3: count + date + expand */}
       <div className="flex items-center gap-1 mb-1">
         <p className="text-[10px] text-gray-400 dark:text-slate-500 flex-1">
-          {h.tables_count > 0 ? `${h.tables_count} table${h.tables_count !== 1 ? 's' : ''}` : h.operation}
+          {h.tables_count > 0 ? `${h.tables_count} table${h.tables_count !== 1 ? 's' : ''}` : '—'}
           {' · '}{timeAgo(h.created_at)}
         </p>
         <button onClick={() => setExpanded(v => !v)}
@@ -852,11 +1019,12 @@ function HistoryCard({ h, onDelete }: { h: HistoryEntry; onDelete: (id: number) 
   );
 }
 
-function SavedJobsPanel({ tab, collapsed, onToggle, refreshKey }: {
-  tab: Tab; collapsed: boolean; onToggle: () => void; refreshKey: number;
+function SavedJobsPanel({ collapsed, onToggle, refreshKey }: {
+  collapsed: boolean; onToggle: () => void; refreshKey: number;
 }) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState<string>('all');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -876,15 +1044,15 @@ function SavedJobsPanel({ tab, collapsed, onToggle, refreshKey }: {
     } catch { /* ignore */ }
   };
 
-  const filtered = history.filter(h => h.operation === tab);
+  const visible = filter === 'all' ? history : history.filter(h => h.operation === filter);
 
   return (
-    <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${collapsed ? 'w-9' : 'w-60'}`}>
+    <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${collapsed ? 'w-9' : 'w-64'}`}>
       {/* Header — always visible */}
       <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
         {!collapsed && <Save size={11} className="text-gray-400 shrink-0" />}
         {!collapsed && <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">Saved Jobs</span>}
-        {!collapsed && filtered.length > 0 && <span className="text-[10px] text-gray-400 shrink-0">{filtered.length}</span>}
+        {!collapsed && history.length > 0 && <span className="text-[10px] text-gray-400 shrink-0">{visible.length}/{history.length}</span>}
         <button onClick={onToggle}
           className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ml-auto">
           {collapsed ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
@@ -892,16 +1060,34 @@ function SavedJobsPanel({ tab, collapsed, onToggle, refreshKey }: {
       </div>
 
       {!collapsed && (
-        <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
-          {filtered.length === 0 && !loading ? (
-            <div className="py-8 text-center">
-              <Save size={22} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
-              <p className="text-[11px] text-gray-400 dark:text-slate-500">No {tab} jobs yet.</p>
-            </div>
-          ) : filtered.map(h => (
-            <HistoryCard key={h.id} h={h} onDelete={id => void handleDelete(id)} />
-          ))}
-        </div>
+        <>
+          {/* Filter chips */}
+          <div className="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-gray-100 dark:border-slate-800">
+            {(['all', 'export', 'import', 'sync', 'replace'] as const).map(op => (
+              <button key={op} onClick={() => setFilter(op)}
+                className={`px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide transition-colors ${
+                  filter === op
+                    ? (op === 'all' ? 'bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200'
+                      : OP_BADGE[op])
+                    : 'text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300'
+                }`}>
+                {op}
+              </button>
+            ))}
+          </div>
+          <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
+            {loading ? (
+              <div className="flex justify-center py-6"><Loader2 size={12} className="animate-spin text-gray-300" /></div>
+            ) : visible.length === 0 ? (
+              <div className="py-8 text-center">
+                <Save size={22} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
+                <p className="text-[11px] text-gray-400 dark:text-slate-500">No {filter === 'all' ? '' : filter + ' '}jobs yet.</p>
+              </div>
+            ) : visible.map(h => (
+              <HistoryCard key={h.id} h={h} onDelete={id => void handleDelete(id)} />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -925,11 +1111,16 @@ export default function ExportImportPage() {
   const [selectedTables, setSelectedTables] = useState<string[] | 'all'>('all');
 
   // Sync target
-  const [tgtConnId, setTgtConnId] = useState<number | ''>('');
+  const [tgtConnId, setTgtConnId]     = useState<number | ''>('');
+  const [tgtDatabase, setTgtDatabase] = useState('');
+  const [tgtSchema, setTgtSchema]     = useState('');
+  const [analyseResult, setAnalyseResult] = useState<AnalyseResult | null>(null);
+  const [analysing, setAnalysing]     = useState(false);
 
   // Export options
-  const [exportInclude, setExportInclude] = useState<ExportInclude>('both');
-  const [syncInclude, setSyncInclude]     = useState<ExportInclude>('both');
+  const [exportInclude, setExportInclude]   = useState<ExportInclude>('both');
+  const [syncInclude, setSyncInclude]       = useState<ExportInclude>('both');
+  const [replaceInclude, setReplaceInclude] = useState<ExportInclude>('both');
   const [format, setFormat]         = useState<ExportFormat>('sql');
   const [whereClause, setWhere]     = useState('');
   const [showFilter, setShowFilter] = useState(false);
@@ -946,6 +1137,9 @@ export default function ExportImportPage() {
   const [conflict, setConflict] = useState<ConflictStrategy>('insert_only');
   const [syncProgress, setSyncProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [showCrossDbAlert, setShowCrossDbAlert] = useState(false);
+  const [tableSyncStatus, setTableSyncStatus] = useState<Record<string, 'syncing' | 'done' | 'error'>>({});
+  const [tableLogRanges, setTableLogRanges] = useState<Record<string, [number, number]>>({});
+  const [focusRange, setFocusRange] = useState<[number, number] | null>(null);
 
   // Execution state
   const [running, setRunning]       = useState(false);
@@ -959,11 +1153,13 @@ export default function ExportImportPage() {
   const [jobsRefreshKey, setJobsRefreshKey] = useState(0);
 
   // Context menu (right-click on table rows)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; scope: 'table' | 'schema' | 'db' | null; name: string | null } | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
 
   const conn    = connections.find(c => c.id === connId) ?? null;
   const tgtConn = connections.find(c => c.id === tgtConnId) ?? null;
+
+  const { showConfirm } = useAlert();
 
   // Close context menu on outside click or Escape
   useEffect(() => {
@@ -980,7 +1176,7 @@ export default function ExportImportPage() {
   // Show alert when sync source/target DB types differ
   const typeMismatchRef = useRef(false);
   useEffect(() => {
-    const mismatch = !!(tab === 'sync' && conn && tgtConn && conn.db_type !== tgtConn.db_type);
+    const mismatch = !!((tab === 'sync' || tab === 'replace') && conn && tgtConn && conn.db_type !== tgtConn.db_type);
     if (mismatch && !typeMismatchRef.current) setShowCrossDbAlert(true);
     typeMismatchRef.current = mismatch;
   }, [tab, conn?.db_type, tgtConn?.db_type]);
@@ -1017,6 +1213,7 @@ export default function ExportImportPage() {
   // Reset results when switching tabs
   const handleTabChange = (t: Tab) => {
     setTab(t); setLog([]); setRunStatus(null); setExportResult(null); setError(null);
+    setTableSyncStatus({}); setTableLogRanges({}); setFocusRange(null);
   };
 
   // Export
@@ -1076,38 +1273,159 @@ export default function ExportImportPage() {
     } finally { setRunning(false); setJobsRefreshKey(k => k + 1); }
   };
 
-  // Sync — per-table with progress
-  const handleSync = async () => {
+  // Core per-table sync call — pure, no state side effects
+  const doSyncTable = async (table: string): Promise<{ ok: boolean; logs: LogLine[] }> => {
+    const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    try {
+      const { data } = await axios.post('/api/export-import/sync', {
+        source: connToCfg(conn!, database),
+        target: connToCfg(tgtConn!, tgtDatabase || database),
+        tables: [table], include: syncInclude, conflict,
+      });
+      const d = data as { success: boolean; log: LogLine[] };
+      return { ok: d.success, logs: d.log.map(l => ({ ...l, ts })) };
+    } catch (err: unknown) {
+      const d = axios.isAxiosError(err) ? err.response?.data as { log?: LogLine[] } | undefined : undefined;
+      const logs = (d?.log ?? [{ step: 'sync', ok: false, text: `[ERROR] ${table}: ${String(err)}` }]).map(l => ({ ...l, ts }));
+      return { ok: false, logs };
+    }
+  };
+
+  // Sync all selected tables in sequence (overrideTables bypasses selectedTables state)
+  const handleSync = async (overrideTables?: string[]) => {
     if (!conn || !database || !tgtConn) return;
     setRunning(true); setLog([]); setRunStatus(null); setError(null); setSyncProgress(null);
-    const tables = selectedTables === 'all'
+    setTableSyncStatus({}); setTableLogRanges({}); setFocusRange(null);
+    const tables = overrideTables ?? (selectedTables === 'all'
       ? tableList.map(t => t.name)
-      : selectedTables.map(t => t.split('.').pop() ?? t);
-    const total = Math.max(tables.length, 1);
-    const allLog: LogLine[] = [];
+      : selectedTables.map(t => t.split('.').pop() ?? t));
+
+    if (tables.length === 0) {
+      setLog([{ step: 'sync', ok: false, text: '[ERROR] No tables available to sync — load the table list first, or select at least one table.' }]);
+      setRunStatus('failed'); setRunning(false); return;
+    }
+
+    let allLogs: LogLine[] = [];
+    const ranges: Record<string, [number, number]> = {};
     let allOk = true;
+
     for (let i = 0; i < tables.length; i++) {
       const table = tables[i];
-      setSyncProgress({ current: i, total, label: table });
-      try {
-        const { data } = await axios.post('/api/export-import/sync',
-          { source: connToCfg(conn, database), target: connToCfg(tgtConn, database), tables: [table], include: syncInclude, conflict });
-        const d = data as { success: boolean; log: LogLine[] };
-        allLog.push(...d.log);
-        if (!d.success) allOk = false;
-      } catch (err: unknown) {
-        const d = axios.isAxiosError(err) ? err.response?.data as { log?: LogLine[] } | undefined : undefined;
-        allLog.push(...(d?.log ?? [{ step: 'sync', ok: false, text: `[ERROR] ${table}: ${String(err)}` }]));
-        allOk = false;
-      }
-      setSyncProgress({ current: i + 1, total, label: table });
+      setSyncProgress({ current: i, total: tables.length, label: table });
+      setTableSyncStatus(prev => ({ ...prev, [table]: 'syncing' }));
+
+      const startIdx = allLogs.length;
+      const { ok, logs } = await doSyncTable(table);
+      allLogs = [...allLogs, ...logs];
+      ranges[table] = [startIdx, allLogs.length];
+
+      setTableSyncStatus(prev => ({ ...prev, [table]: ok ? 'done' : 'error' }));
+      setTableLogRanges({ ...ranges });
+      setLog([...allLogs]);
+      if (!ok) allOk = false;
+      setSyncProgress({ current: i + 1, total: tables.length, label: table });
     }
-    setLog(allLog);
+
     setRunStatus(allOk ? 'success' : 'failed');
     setSyncProgress(null);
-    await saveHistory({ operation: 'sync', source_label: conn.label, source_db: database, target_label: tgtConn.label, target_db: database, tables_count: tables.length, include: syncInclude, conflict, status: allOk ? 'success' : 'failed' });
+    if (allOk) {
+      await saveHistory({ operation: 'sync', source_label: conn.label, source_db: database, target_label: tgtConn.label, target_db: tgtDatabase || database, tables_count: tables.length, include: syncInclude, conflict, status: 'success' });
+      setJobsRefreshKey(k => k + 1);
+    }
     setRunning(false);
-    setJobsRefreshKey(k => k + 1);
+    // Refresh analyse diff panel after batch sync so row counts reflect reality
+    if (analyseResult) void refreshAnalyseSilent(conn, tgtConn);
+  };
+
+  // Sync a single table — called from per-table button
+  const handleSyncSingle = async (tableName: string) => {
+    if (!conn || !database || !tgtConn || running) return;
+    setRunning(true); setRunStatus(null);
+    setTableSyncStatus(prev => ({ ...prev, [tableName]: 'syncing' }));
+
+    const { ok, logs } = await doSyncTable(tableName);
+
+    setLog(prev => {
+      const startIdx = prev.length;
+      const next = [...prev, ...logs];
+      setTableLogRanges(r => ({ ...r, [tableName]: [startIdx, next.length] }));
+      return next;
+    });
+    setTableSyncStatus(prev => ({ ...prev, [tableName]: ok ? 'done' : 'error' }));
+    setRunStatus(ok ? 'success' : 'failed');
+    setRunning(false);
+    // Refresh analyse diff so inline row counts update after per-table sync
+    if (ok && analyseResult) void refreshAnalyseSilent(conn, tgtConn);
+  };
+
+  // Replace — per-table call (drop + recreate on target from source)
+  const doReplaceTable = async (table: string): Promise<{ ok: boolean; logs: LogLine[] }> => {
+    const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    try {
+      const { data } = await axios.post('/api/export-import/replace', {
+        source: connToCfg(conn!, database),
+        target: connToCfg(tgtConn!, tgtDatabase || database),
+        tables: [table], include: replaceInclude,
+      });
+      const d = data as { success: boolean; log: LogLine[] };
+      return { ok: d.success, logs: d.log.map(l => ({ ...l, ts })) };
+    } catch (err: unknown) {
+      const d = axios.isAxiosError(err) ? err.response?.data as { log?: LogLine[] } | undefined : undefined;
+      const logs = (d?.log ?? [{ step: 'replace', ok: false, text: `[ERROR] ${table}: ${String(err)}` }]).map(l => ({ ...l, ts }));
+      return { ok: false, logs };
+    }
+  };
+
+  const handleReplace = async (overrideTables?: string[]) => {
+    if (!conn || !database || !tgtConn) return;
+    const tables = overrideTables ?? (selectedTables === 'all'
+      ? tableList.map(t => t.name)
+      : selectedTables.map(t => t.split('.').pop() ?? t));
+
+    if (tables.length === 0) {
+      setLog([{ step: 'replace', ok: false, text: '[ERROR] No tables available to replace — load the table list first.' }]);
+      setRunStatus('failed'); return;
+    }
+
+    showConfirm({
+      title: 'Replace target tables?',
+      description: `This will DROP and recreate ${tables.length} table(s) in "${tgtDatabase || database}" from source "${database}". All existing target data in these tables will be lost.`,
+      confirmLabel: 'Replace',
+      onConfirm: async () => {
+        setRunning(true); setLog([]); setRunStatus(null); setError(null);
+        setTableSyncStatus({}); setTableLogRanges({}); setFocusRange(null);
+
+        let allLogs: LogLine[] = [];
+        const ranges: Record<string, [number, number]> = {};
+        let allOk = true;
+
+        for (let i = 0; i < tables.length; i++) {
+          const table = tables[i];
+          setSyncProgress({ current: i, total: tables.length, label: table });
+          setTableSyncStatus(prev => ({ ...prev, [table]: 'syncing' }));
+
+          const startIdx = allLogs.length;
+          const { ok, logs } = await doReplaceTable(table);
+          allLogs = [...allLogs, ...logs];
+          ranges[table] = [startIdx, allLogs.length];
+
+          setTableSyncStatus(prev => ({ ...prev, [table]: ok ? 'done' : 'error' }));
+          setTableLogRanges({ ...ranges });
+          setLog([...allLogs]);
+          if (!ok) allOk = false;
+          setSyncProgress({ current: i + 1, total: tables.length, label: table });
+        }
+
+        setRunStatus(allOk ? 'success' : 'failed');
+        setSyncProgress(null);
+        if (allOk) {
+          await saveHistory({ operation: 'replace', source_label: conn!.label, source_db: database, target_label: tgtConn!.label, target_db: tgtDatabase || database, tables_count: tables.length, include: replaceInclude, status: 'success' });
+          setJobsRefreshKey(k => k + 1);
+        }
+        setRunning(false);
+        if (analyseResult) void refreshAnalyseSilent(conn, tgtConn);
+      },
+    });
   };
 
   const handleExcelFile = async (file: File) => {
@@ -1120,18 +1438,52 @@ export default function ExportImportPage() {
     finally { setParsingExcel(false); }
   };
 
+  // Analyse — compare source vs target schema before sync
+  const handleAnalyse = async () => {
+    if (!conn || !database || !tgtConn || !(tgtDatabase || database)) return;
+    setAnalysing(true); setAnalyseResult(null);
+    try {
+      const { data } = await axios.post('/api/export-import/analyse', {
+        source: connToCfg(conn, database),
+        target: connToCfg(tgtConn, tgtDatabase || database),
+        sourceSchema: schema || 'public',
+        targetSchema: tgtSchema || 'public',
+      });
+      setAnalyseResult(data as AnalyseResult);
+    } catch { /* ignore */ }
+    finally { setAnalysing(false); }
+  };
+
+  // Silent analyse refresh — updates row counts without clearing the panel
+  const refreshAnalyseSilent = async (connRef: typeof conn, tgtConnRef: typeof tgtConn) => {
+    if (!connRef || !database || !tgtConnRef || !(tgtDatabase || database)) return;
+    try {
+      const { data } = await axios.post('/api/export-import/analyse', {
+        source: connToCfg(connRef, database),
+        target: connToCfg(tgtConnRef, tgtDatabase || database),
+        sourceSchema: schema || 'public',
+        targetSchema: tgtSchema || 'public',
+      });
+      setAnalyseResult(data as AnalyseResult);
+    } catch { /* ignore */ }
+  };
+
   // Toolbar run
   const handleRun = () => {
     if (tab === 'export') void handleExport();
     else if (tab === 'import') { if (importSql.trim()) setShowDryRun(true); }
-    else void handleSync();
+    else if (tab === 'sync') void handleSync();
+    else void handleReplace();
   };
 
   const canRun = !running && conn && database && (
-    tab === 'import' ? importSql.trim() :
-    tab === 'sync'   ? tgtConn && conn.db_type === tgtConn.db_type :
+    tab === 'import'  ? importSql.trim() :
+    tab === 'sync'    ? tgtConn && conn.db_type === tgtConn.db_type :
+    tab === 'replace' ? tgtConn && conn.db_type === tgtConn.db_type :
     true
   );
+
+  const canAnalyse = !running && !analysing && tab === 'sync' && conn && database && tgtConn && (tgtDatabase || database);
 
   // Table list rendering helpers
   const allSelected = selectedTables === 'all';
@@ -1181,9 +1533,10 @@ export default function ExportImportPage() {
 
           {/* Tab buttons */}
           {([
-            { key: 'export' as Tab, label: 'Export', Icon: Download },
-            { key: 'import' as Tab, label: 'Import', Icon: UploadCloud },
-            { key: 'sync'   as Tab, label: 'Sync',   Icon: ArrowRightLeft },
+            { key: 'export'  as Tab, label: 'Export',  Icon: Download },
+            { key: 'import'  as Tab, label: 'Import',  Icon: UploadCloud },
+            { key: 'sync'    as Tab, label: 'Sync',    Icon: ArrowRightLeft },
+            { key: 'replace' as Tab, label: 'Replace', Icon: Replace },
           ]).map(({ key, label, Icon }) => (
             <button key={key} type="button" onClick={() => handleTabChange(key)}
               className={`self-stretch inline-flex items-center gap-1.5 px-3 text-[11px] font-medium border-b-2 transition-colors ${
@@ -1237,25 +1590,24 @@ export default function ExportImportPage() {
             </div>
           )}
 
-          {/* Sync options */}
+          {/* Sync options — removed from toolbar; use right-click context menu on tables instead */}
           {tab === 'sync' && (
+            <BtnTip tip="Right-click any table to set conflict strategy and copy/replace options">
+              <span className="text-[10px] text-gray-400 dark:text-slate-500 cursor-default select-none italic">right-click table for options</span>
+            </BtnTip>
+          )}
+
+          {/* Replace options */}
+          {tab === 'replace' && (
             <>
-              <BtnTip tip="Right-click any table to change">
-                <span className="text-[10px] text-gray-400 dark:text-slate-500 cursor-default select-none">
-                  incl: <span className="font-medium text-violet-600 dark:text-violet-400">
-                    {syncInclude === 'both' ? 'Schema+Data' : syncInclude === 'schema' ? 'Schema' : 'Data'}
-                  </span>
-                </span>
-              </BtnTip>
-              <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
               <div className="flex items-center gap-1">
-                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Conflict</span>
+                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">incl</span>
                 {([
-                  { v: 'insert_only'     as ConflictStrategy, label: 'Insert'   },
-                  { v: 'truncate_insert' as ConflictStrategy, label: 'Truncate' },
-                  { v: 'upsert'          as ConflictStrategy, label: 'Upsert'   },
+                  { v: 'both'   as ExportInclude, label: 'Schema+Data' },
+                  { v: 'schema' as ExportInclude, label: 'Schema'      },
+                  { v: 'data'   as ExportInclude, label: 'Data'        },
                 ]).map(({ v, label }) => (
-                  <button key={v} onClick={() => setConflict(v)} className={seg(conflict === v)}>{label}</button>
+                  <button key={v} onClick={() => setReplaceInclude(v)} className={seg(replaceInclude === v)}>{label}</button>
                 ))}
               </div>
             </>
@@ -1269,21 +1621,34 @@ export default function ExportImportPage() {
                 <Eye size={11} /> Preview
               </button>
             )}
+            {tab === 'sync' && (
+              <button type="button" onClick={() => void handleAnalyse()} disabled={!canAnalyse}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded-lg border border-teal-400 dark:border-teal-700 text-teal-700 dark:text-teal-400 bg-transparent hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40 transition-colors">
+                {analysing ? <Loader2 size={11} className="animate-spin" /> : <ShieldAlert size={11} />}
+                {analysing ? 'Analysing…' : 'Analyse'}
+              </button>
+            )}
             {runStatus && (
               <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${runStatus === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                 {runStatus === 'success' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                {runStatus === 'success' ? (tab === 'export' ? 'Exported' : tab === 'import' ? 'Imported' : 'Synced') : 'Failed'}
+                {runStatus === 'success'
+                  ? (tab === 'export' ? 'Exported' : tab === 'import' ? 'Imported' : tab === 'replace' ? 'Replaced' : 'Synced')
+                  : 'Failed'}
               </span>
             )}
             <button type="button" onClick={handleRun} disabled={!canRun}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-40 ${
-                tab === 'export' ? 'border border-blue-500 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-50 dark:hover:bg-blue-900/20' :
-                tab === 'import' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' :
+                tab === 'export'  ? 'border border-blue-500 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-50 dark:hover:bg-blue-900/20' :
+                tab === 'import'  ? 'bg-emerald-600 hover:bg-emerald-700 text-white' :
+                tab === 'replace' ? 'bg-rose-600 hover:bg-rose-700 text-white' :
                 'border border-violet-500 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20'
               }`}>
-              {running ? <Loader2 size={11} className="animate-spin" /> : tab === 'export' ? <Download size={11} /> : tab === 'import' ? <UploadCloud size={11} /> : <ArrowRightLeft size={11} />}
-              {running ? (tab === 'export' ? 'Exporting…' : tab === 'import' ? 'Importing…' : 'Syncing…')
-                       : (tab === 'export' ? `Export${format === 'csv' ? ' CSV' : ''}` : tab === 'import' ? 'Import' : 'Sync')}
+              {running
+                ? <Loader2 size={11} className="animate-spin" />
+                : tab === 'export' ? <Download size={11} /> : tab === 'import' ? <UploadCloud size={11} /> : tab === 'replace' ? <Replace size={11} /> : <ArrowRightLeft size={11} />}
+              {running
+                ? (tab === 'export' ? 'Exporting…' : tab === 'import' ? 'Importing…' : tab === 'replace' ? 'Replacing…' : 'Syncing…')
+                : (tab === 'export' ? `Export${format === 'csv' ? ' CSV' : ''}` : tab === 'import' ? 'Import' : tab === 'replace' ? 'Replace' : 'Sync')}
             </button>
             <GuidePopover />
           </div>
@@ -1315,32 +1680,41 @@ export default function ExportImportPage() {
               value={connId}
               onChange={id => { setConnId(id); setDatabase(''); setSchema(''); setSelectedTables('all'); }}
               label={tab === 'import' ? 'Target Conn' : 'Connection'}
-              tgtValue={tab === 'sync' ? tgtConnId : undefined}
-              onTgtChange={tab === 'sync' ? (id) => { setTgtConnId(id); } : undefined}
+              tgtValue={(tab === 'sync' || tab === 'replace') ? tgtConnId : undefined}
+              onTgtChange={(tab === 'sync' || tab === 'replace') ? (id) => { setTgtConnId(id); setTgtDatabase(''); setTgtSchema(''); setAnalyseResult(null); } : undefined}
             />
 
             {/* Panels 2, 3, 4: Resizable group */}
             <div className="flex-1 h-full overflow-hidden">
               <PanelGroup orientation="horizontal" className="h-full">
                 <Panel defaultSize={24} minSize={12}>
-                  <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); } }}>
+                  <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: null, name: null }); } }}>
                     <DatabasePanel
                       conn={conn}
                       value={database}
                       onChange={db => { setDatabase(db); setSchema(''); setSelectedTables('all'); }}
                       allowCreate={tab === 'import'}
                       syncProgress={syncProgress}
+                      tgtConn={(tab === 'sync' || tab === 'replace') ? tgtConn : undefined}
+                      tgtValue={(tab === 'sync' || tab === 'replace') ? tgtDatabase : undefined}
+                      onTgtChange={(tab === 'sync' || tab === 'replace') ? setTgtDatabase : undefined}
+                      onItemContextMenu={tab === 'sync' ? (e, dbName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'db', name: dbName }) : undefined}
                     />
                   </div>
                 </Panel>
                 <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
                 <Panel defaultSize={18} minSize={8}>
-                  <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); } }}>
+                  <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: null, name: null }); } }}>
                     <SchemaPanel
                       conn={tab === 'import' ? null : conn}
                       database={database}
                       value={schema}
-                      onChange={s => { setSchema(s); setSelectedTables('all'); }}
+                      onChange={s => { setSchema(s); setSelectedTables('all'); setAnalyseResult(null); }}
+                      tgtConn={(tab === 'sync' || tab === 'replace') ? tgtConn : undefined}
+                      tgtDatabase={(tab === 'sync' || tab === 'replace') ? tgtDatabase : undefined}
+                      tgtValue={(tab === 'sync' || tab === 'replace') ? tgtSchema : undefined}
+                      onTgtChange={(tab === 'sync' || tab === 'replace') ? (s) => { setTgtSchema(s); setAnalyseResult(null); } : undefined}
+                      onItemContextMenu={tab === 'sync' ? (e, schemaName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'schema', name: schemaName }) : undefined}
                     />
                   </div>
                 </Panel>
@@ -1362,6 +1736,19 @@ export default function ExportImportPage() {
                 {tablesLoading && <Loader2 size={10} className="animate-spin text-gray-400 ml-1" />}
                 {tab !== 'import' && tableList.length > 0 && !tablesLoading && (
                   <div className="ml-auto flex items-center gap-1">
+                    {tab === 'sync' && analyseResult && (
+                      <button type="button"
+                        onClick={() => {
+                          const diffKeys = analyseResult.rows
+                            .filter(r => r.status !== 'match' && r.status !== 'target_only')
+                            .map(r => { const t = tableList.find(tl => tl.name === r.name); return t ? `${t.schema}.${t.name}` : null; })
+                            .filter(Boolean) as string[];
+                          setSelectedTables(diffKeys);
+                        }}
+                        className="px-2 py-0.5 text-[10px] rounded border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                        Select diff
+                      </button>
+                    )}
                     {(['all', 'custom'] as const).map(m => (
                       <button key={m} type="button"
                         onClick={() => setSelectedTables(m === 'all' ? 'all' : [])}
@@ -1395,33 +1782,128 @@ export default function ExportImportPage() {
                   ) : (
                     <div className="flex-1 sidebar-scroll overflow-y-auto">
                       <div className="divide-y divide-gray-100 dark:divide-slate-800">
+                        {/* Normal table rows — with optional analyse diff columns in sync tab */}
                         {tableList.map(t => {
                           const key = `${t.schema}.${t.name}`;
                           const isChecked = allSelected || selectedArr.includes(key);
+                          const diff = tab === 'sync' && analyseResult
+                            ? analyseResult.rows.find(r => r.name === t.name)
+                            : null;
+                          const syncSt = tab === 'sync' ? tableSyncStatus[t.name] : undefined;
+                          const hasError = syncSt === 'error';
+                          const logRange = tableLogRanges[t.name];
                           return (
-                            <label key={key} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer"
-                              onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}>
-                              <input type="checkbox" checked={isChecked} className="accent-blue-600 shrink-0"
-                                onChange={e => {
-                                  if (allSelected) {
-                                    const all = tableList.map(x => `${x.schema}.${x.name}`);
-                                    setSelectedTables(e.target.checked ? all : all.filter(x => x !== key));
-                                  } else {
-                                    const next = e.target.checked ? [...selectedArr, key] : selectedArr.filter(x => x !== key);
-                                    setSelectedTables(next);
-                                  }
-                                }} />
-                              <Table2 size={10} className="text-gray-400 shrink-0" />
-                              <span className="text-[11px] text-gray-700 dark:text-slate-300 font-mono flex-1 truncate">{t.name}</span>
+                            <label key={key}
+                              className={`group flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer ${hasError ? 'bg-rose-50/50 dark:bg-rose-950/10' : ''}`}
+                              onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'table', name: t.name }); }}>
+
+                              {/* Sync status indicator (replaces checkbox area when status is set) */}
+                              {syncSt === 'syncing' && <Loader2 size={10} className="animate-spin text-violet-500 shrink-0" />}
+                              {syncSt === 'done'    && <CheckCircle2 size={10} className="text-emerald-500 shrink-0" />}
+                              {syncSt === 'error'   && (
+                                <button type="button"
+                                  title="Click to see error in log"
+                                  onClick={e => { e.preventDefault(); if (logRange) { setFocusRange(logRange); } }}
+                                  className="shrink-0">
+                                  <XCircle size={10} className="text-rose-500" />
+                                </button>
+                              )}
+                              {!syncSt && (
+                                <input type="checkbox" checked={isChecked} className="accent-blue-600 shrink-0"
+                                  onChange={e => {
+                                    if (allSelected) {
+                                      const all = tableList.map(x => `${x.schema}.${x.name}`);
+                                      setSelectedTables(e.target.checked ? all : all.filter(x => x !== key));
+                                    } else {
+                                      const next = e.target.checked ? [...selectedArr, key] : selectedArr.filter(x => x !== key);
+                                      setSelectedTables(next);
+                                    }
+                                  }} />
+                              )}
+
+                              <Table2 size={10} className={`shrink-0 ${hasError ? 'text-rose-400' : 'text-gray-400'}`} />
+                              <span className={`text-[11px] font-mono flex-1 truncate ${hasError ? 'text-rose-600 dark:text-rose-400' : 'text-gray-700 dark:text-slate-300'}`}>{t.name}</span>
                               {t.schema !== 'public' && (
                                 <span className="text-[9px] text-gray-400 dark:text-slate-500 font-mono shrink-0">{t.schema}</span>
                               )}
-                              <span className={`text-[10px] font-mono shrink-0 ${t.rowCount > 50_000 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
-                                {fmtRows(t.rowCount)}
-                              </span>
+
+                              {/* Diff columns from analyse */}
+                              {diff ? (
+                                <span className="flex items-center gap-1 shrink-0">
+                                  <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500">{fmtRows(t.rowCount)}</span>
+                                  <span className="text-[9px] text-gray-300 dark:text-slate-600">→</span>
+                                  <span className={`text-[10px] font-mono ${diff.targetRows === null ? 'text-rose-400' : 'text-gray-400 dark:text-slate-500'}`}>
+                                    {diff.targetRows !== null ? fmtRows(diff.targetRows) : '—'}
+                                  </span>
+                                  {diff.status === 'match'
+                                    ? <CheckCircle2 size={9} className="text-emerald-500 shrink-0" />
+                                    : diff.status === 'diff'
+                                    ? <AlertCircle size={9} className="text-amber-500 shrink-0" />
+                                    : <Info size={9} className="text-blue-400 shrink-0" />}
+                                </span>
+                              ) : (
+                                <span className={`text-[10px] font-mono shrink-0 ${t.rowCount > 50_000 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
+                                  {fmtRows(t.rowCount)}
+                                </span>
+                              )}
+
+                              {/* Per-table sync button (sync tab, hover, not while running) */}
+                              {tab === 'sync' && !running && (
+                                <button type="button"
+                                  title="Sync this table"
+                                  onClick={e => { e.preventDefault(); void handleSyncSingle(t.name); }}
+                                  className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-opacity shrink-0">
+                                  <ArrowRightLeft size={9} />
+                                </button>
+                              )}
+                              {/* Per-table replace button (replace tab, hover, not while running) */}
+                              {tab === 'replace' && !running && (
+                                <button type="button"
+                                  title="Replace this table"
+                                  onClick={e => {
+                                    e.preventDefault();
+                                    showConfirm({
+                                      title: `Replace "${t.name}"?`,
+                                      description: `This will DROP and recreate "${t.name}" in target "${tgtDatabase || database}" from source. All existing target data in this table will be lost.`,
+                                      confirmLabel: 'Replace',
+                                                                      onConfirm: async () => {
+                                        setRunning(true); setRunStatus(null);
+                                        setTableSyncStatus(prev => ({ ...prev, [t.name]: 'syncing' }));
+                                        const { ok, logs } = await doReplaceTable(t.name);
+                                        setLog(prev => {
+                                          const startIdx = prev.length;
+                                          const next = [...prev, ...logs];
+                                          setTableLogRanges(r => ({ ...r, [t.name]: [startIdx, next.length] }));
+                                          return next;
+                                        });
+                                        setTableSyncStatus(prev => ({ ...prev, [t.name]: ok ? 'done' : 'error' }));
+                                        setRunStatus(ok ? 'success' : 'failed');
+                                        setRunning(false);
+                                        if (ok && analyseResult) void refreshAnalyseSilent(conn, tgtConn);
+                                      },
+                                    });
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-opacity shrink-0">
+                                  <Replace size={9} />
+                                </button>
+                              )}
                             </label>
                           );
                         })}
+                        {/* Target-only tables (exist in target but not source) */}
+                        {tab === 'sync' && analyseResult && analyseResult.rows
+                          .filter(r => r.status === 'target_only')
+                          .map(r => (
+                            <div key={`tgt:${r.name}`} className="flex items-center gap-2.5 px-3 py-2 opacity-50">
+                              <div className="w-3.5 h-3.5 shrink-0" />
+                              <Table2 size={10} className="text-violet-400 shrink-0" />
+                              <span className="text-[11px] font-mono text-violet-500 dark:text-violet-400 flex-1 truncate">{r.name}</span>
+                              <span className="text-[9px] font-medium text-violet-400 shrink-0">target only</span>
+                              <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 shrink-0">
+                                {r.targetRows !== null ? fmtRows(r.targetRows) : '—'}
+                              </span>
+                            </div>
+                          ))}
                       </div>
                     </div>
                   )}
@@ -1466,7 +1948,7 @@ export default function ExportImportPage() {
               )}
 
               {/* Log (Import/Sync) */}
-              {tab !== 'export' && <LogPanel lines={log} running={running} />}
+              {tab !== 'export' && <LogPanel lines={log} running={running} focusRange={(tab === 'sync' || tab === 'replace') ? focusRange : null} />}
             </div>
                 </Panel>
               </PanelGroup>
@@ -1474,7 +1956,6 @@ export default function ExportImportPage() {
 
             {/* Panel 5: Saved Jobs */}
             <SavedJobsPanel
-              tab={tab}
               collapsed={jobsCollapsed}
               onToggle={() => setJobsCollapsed(v => !v)}
               refreshKey={jobsRefreshKey}
@@ -1507,33 +1988,96 @@ export default function ExportImportPage() {
         {ctxMenu && (
           <div ref={ctxMenuRef}
             style={{ top: ctxMenu.y, left: ctxMenu.x }}
-            className="fixed z-[200] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl py-1.5 min-w-[210px]"
+            className="fixed z-[200] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl py-1.5 min-w-[220px]"
             onContextMenu={e => e.preventDefault()}>
-            <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Include</p>
-            {([
-              { v: 'both'   as ExportInclude, label: 'Schema + Data', desc: 'DDL and all rows'  },
-              { v: 'schema' as ExportInclude, label: 'Schema only',   desc: 'DDL, no row data'  },
-              { v: 'data'   as ExportInclude, label: 'Data only',     desc: 'INSERTs, no DDL'   },
-            ]).map(({ v, label, desc }) => {
-              const current = tab === 'sync' ? syncInclude : exportInclude;
-              const setter  = tab === 'sync' ? setSyncInclude : setExportInclude;
-              const active  = current === v;
-              return (
-                <button key={v} type="button" onClick={() => { setter(v); setCtxMenu(null); }}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>
-                  <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${active ? 'border-blue-500' : 'border-gray-300 dark:border-slate-600'}`}>
-                    {active && <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium">{label}</p>
-                    <p className="text-[10px] text-gray-400 dark:text-slate-500">{desc}</p>
-                  </div>
-                </button>
-              );
-            })}
+
+            {/* ── Sync tab context menu ── */}
             {tab === 'sync' && (
               <>
-                <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+                {/* Scoped Copy/Replace actions — table, schema, or db */}
+                {ctxMenu.scope && ctxMenu.name && (() => {
+                  const scopeLabel =
+                    ctxMenu.scope === 'table'  ? `table "${ctxMenu.name}"` :
+                    ctxMenu.scope === 'schema' ? `schema "${ctxMenu.name}"` :
+                    `database "${ctxMenu.name}"`;
+                  const tables =
+                    ctxMenu.scope === 'table'  ? [ctxMenu.name] :
+                    ctxMenu.scope === 'schema' ? tableList.filter(t => t.schema === ctxMenu.name).map(t => t.name) :
+                    tableList.map(t => t.name);
+                  const noTgt = !tgtConn;
+                  const noTables = tables.length === 0;
+
+                  return (
+                    <>
+                      <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide truncate max-w-[220px]">
+                        {ctxMenu.scope === 'table' ? '' : ctxMenu.scope + ' · '}{ctxMenu.name}
+                        {tables.length > 1 && <span className="ml-1 normal-case font-normal text-gray-300 dark:text-slate-600">({tables.length} tables)</span>}
+                      </p>
+
+                      {/* Copy */}
+                      <button type="button"
+                        disabled={noTgt || running || noTables}
+                        onClick={() => {
+                          const t = [...tables]; setCtxMenu(null);
+                          if (ctxMenu.scope === 'table') void handleSyncSingle(t[0]);
+                          else void handleSync(t);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-violet-50 dark:hover:bg-violet-900/20 text-gray-700 dark:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        <ArrowRightLeft size={13} className="text-violet-500 shrink-0" />
+                        <div>
+                          <p className="text-[11px] font-medium">Copy to target</p>
+                          <p className="text-[10px] text-gray-400 dark:text-slate-500">
+                            {noTgt ? 'Select a target connection first' : noTables ? 'No tables loaded yet' : `Sync ${scopeLabel} using current conflict strategy`}
+                          </p>
+                        </div>
+                      </button>
+
+                      {/* Replace */}
+                      <button type="button"
+                        disabled={noTgt || running || noTables}
+                        onClick={() => {
+                          const t = [...tables]; setCtxMenu(null);
+                          if (ctxMenu.scope === 'table') {
+                            const name = t[0];
+                            showConfirm({
+                              title: `Replace "${name}"?`,
+                              description: `DROP and recreate "${name}" in target "${tgtDatabase || database}". All existing data will be lost.`,
+                              confirmLabel: 'Replace',
+                              onConfirm: async () => {
+                                setRunning(true); setRunStatus(null);
+                                setTableSyncStatus(prev => ({ ...prev, [name]: 'syncing' }));
+                                const { ok, logs } = await doReplaceTable(name);
+                                setLog(prev => {
+                                  const startIdx = prev.length;
+                                  const next = [...prev, ...logs];
+                                  setTableLogRanges(r => ({ ...r, [name]: [startIdx, next.length] }));
+                                  return next;
+                                });
+                                setTableSyncStatus(prev => ({ ...prev, [name]: ok ? 'done' : 'error' }));
+                                setRunStatus(ok ? 'success' : 'failed');
+                                setRunning(false);
+                                if (ok && analyseResult) void refreshAnalyseSilent(conn, tgtConn);
+                              },
+                            });
+                          } else {
+                            void handleReplace(t);
+                          }
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-rose-50 dark:hover:bg-rose-900/20 text-gray-700 dark:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Replace size={13} className="text-rose-500 shrink-0" />
+                        <div>
+                          <p className="text-[11px] font-medium">Replace on target</p>
+                          <p className="text-[10px] text-gray-400 dark:text-slate-500">
+                            {noTgt ? 'Select a target connection first' : noTables ? 'No tables loaded yet' : `DROP + recreate ${scopeLabel}, then copy all data`}
+                          </p>
+                        </div>
+                      </button>
+                      <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+                    </>
+                  );
+                })()}
+
+                {/* Conflict strategy — always shown in sync context menu */}
                 <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Conflict</p>
                 {([
                   { v: 'insert_only'     as ConflictStrategy, label: 'Insert only',       desc: 'Fail if row exists'   },
@@ -1546,6 +2090,32 @@ export default function ExportImportPage() {
                       className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors ${active ? 'text-violet-600 dark:text-violet-400' : 'text-gray-700 dark:text-slate-300'}`}>
                       <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${active ? 'border-violet-500' : 'border-gray-300 dark:border-slate-600'}`}>
                         {active && <div className="w-1.5 h-1.5 rounded-full bg-violet-500" />}
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-medium">{label}</p>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500">{desc}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+
+            {/* ── Export tab context menu — Include only ── */}
+            {tab !== 'sync' && (
+              <>
+                <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Include</p>
+                {([
+                  { v: 'both'   as ExportInclude, label: 'Schema + Data', desc: 'DDL and all rows'  },
+                  { v: 'schema' as ExportInclude, label: 'Schema only',   desc: 'DDL, no row data'  },
+                  { v: 'data'   as ExportInclude, label: 'Data only',     desc: 'INSERTs, no DDL'   },
+                ]).map(({ v, label, desc }) => {
+                  const active = exportInclude === v;
+                  return (
+                    <button key={v} type="button" onClick={() => { setExportInclude(v); setCtxMenu(null); }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>
+                      <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${active ? 'border-blue-500' : 'border-gray-300 dark:border-slate-600'}`}>
+                        {active && <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
                       </div>
                       <div>
                         <p className="text-[11px] font-medium">{label}</p>

@@ -2,6 +2,92 @@
 
 ---
 
+## 2026-06-07
+- **implement** — Data Maintenance: Copy/Replace context menu on DB and Schema items in Sync tab
+  - Right-click on a source database item → context menu shows Copy/Replace scoped to all tables in that DB
+  - Right-click on a source schema item → context menu shows Copy/Replace scoped to all tables in that schema
+  - Both DB and schema level Replace use `handleReplace(tables)` which triggers the confirmation dialog before running
+  - `ctxMenu` state type changed from `{ x, y, tableName }` to `{ x, y, scope: 'table'|'schema'|'db'|null, name }` for cleaner scope handling
+  - `handleSync` and `handleReplace` accept optional `overrideTables?: string[]` parameter to bypass `selectedTables` state — context menu uses this to pass the scoped table list directly
+  - `DatabasePanel` and `SchemaPanel` gain `onItemContextMenu` callback prop; wired in the page for sync tab only (source side only, not target side)
+  - `SchemaPanel.renderList` accepts optional `onCtx` callback param; passed only to source schema list
+  - Context menu header shows scope type + name + table count when scope is schema/db
+  - Files: `src/pages/export-import.tsx`
+  - Status: done
+
+- **revision** — Data Maintenance: remove Include/Conflict from Sync toolbar; fix context menu Copy/Replace visibility
+  - Removed Include and Conflict pickers from Sync tab toolbar — redundant since they live in the right-click context menu; replaced with a subtle hint label "right-click table for options"
+  - Fixed Copy/Replace not appearing in context menu: condition was gated on `tgtConn` being set, but user may right-click before selecting target; now shows both actions always when a table is right-clicked, with `disabled` state and descriptive text "Select a target connection first" when no target is chosen
+  - Restructured context menu per tab: Sync tab shows Copy/Replace (when table is right-clicked) + Conflict section only; Export/Import tabs show Include section only — no more duplicated options across both locations
+  - Files: `src/pages/export-import.tsx`
+  - Status: done
+
+- **implement** — Data Maintenance: right-click context menu Copy/Replace per table in Sync tab
+  - Right-clicking a table row in the Sync tab now shows table-specific actions at the top of the context menu: "Copy to target" (calls `handleSyncSingle`) and "Replace on target" (confirms then calls `doReplaceTable`)
+  - `ctxMenu` state extended from `{ x, y }` to `{ x, y, tableName: string | null }` — panel background right-click sets `tableName: null`, table row right-click sets the specific table name
+  - Replace action fires `showConfirm` before proceeding; on success updates `tableSyncStatus`, `tableLogRanges`, and refreshes `analyseResult` silently
+  - Global Include and Conflict settings still visible below the table actions as before
+  - Files: `src/pages/export-import.tsx`
+  - Status: done
+
+- **fix** — Data Maintenance: unified Saved Jobs panel + analyse diff refresh after sync
+  - Saved Jobs panel was filtering history by active tab — removed tab filter; now shows all jobs across export/import/sync/replace
+  - Added operation-type badge chips (export=blue, import=emerald, sync=violet, replace=rose) to each `HistoryCard` so operations are visually distinguishable at a glance
+  - Added filter chip row inside the panel (All / export / import / sync / replace) so user can still narrow down if needed; count shows `visible/total`
+  - `HistoryEntry.operation` type extended to include `'replace'`; replace operations now saved correctly to history
+  - Per-table sync no longer left the analyse diff panel stale: added `refreshAnalyseSilent()` that re-fetches analyse without clearing the panel; called after `handleSyncSingle` succeeds, after `handleSync` batch completes, and after per-table replace
+  - Files: `src/pages/export-import.tsx`, `src/pages/api/export-import/history.ts`
+  - Status: done
+
+- **implement** — Data Maintenance: Replace tab — drop & recreate target tables from source
+  - New tab "Replace" alongside Export/Import/Sync; icon: `Replace` (lucide-react); run button is rose/red to signal destructive intent
+  - New API `src/pages/api/export-import/replace.ts`: exports source schema + data, then on target runs `DROP TABLE IF EXISTS ... CASCADE` for each table and re-executes the source SQL; PG path uses `session_replication_role = replica` to bypass FK trigger checks during DROP + INSERT; MySQL path uses `SET FOREIGN_KEY_CHECKS=0`; wrapped in a single transaction with ROLLBACK on failure
+  - Works per-table via `doReplaceTable` (same pattern as `doSyncTable`): `handleReplace` loops through selected tables sequentially, updating `tableSyncStatus`, `tableLogRanges`, and live log; per-table Replace button appears on row hover in the tables panel
+  - Both batch Replace and per-table replace prompt a `showConfirm` dialog (destructive) before proceeding
+  - Replace tab shares source/target connection, database, and schema panels with Sync tab (same state: `tgtConnId`, `tgtDatabase`, `tgtSchema`); cross-DB mismatch alert extended to cover replace tab
+  - Include option: Schema+Data / Schema / Data (controlled by new `replaceInclude` state)
+  - Files: `src/pages/api/export-import/replace.ts` (new), `src/pages/export-import.tsx`
+  - Status: done
+
+- **implement** — Data Maintenance sync: per-table sync status, error click-to-log, hover sync button
+  - Each table row in sync tab now shows a live status indicator: `Loader2` (spinning violet) while syncing, `CheckCircle2` (emerald) on success, `XCircle` (rose) on error — replaces the checkbox while a status is set
+  - Clicking the error `XCircle` calls `setFocusRange(tableLogRanges[tableName])` to scroll and highlight that table's log lines in the execution log panel
+  - Per-table `ArrowRightLeft` sync button appears on row hover (opacity-0 → group-hover:opacity-100) and calls `handleSyncSingle`; hidden while a batch sync is running
+  - Error rows get a rose tinted row background so they stand out at a glance
+  - `handleSync` (batch) and `handleSyncSingle` (single) both write to `tableSyncStatus` and `tableLogRanges` state; `LogPanel` reads `focusRange` and highlights + scrolls to the relevant line range
+  - Files: `src/pages/export-import.tsx`
+  - Status: done
+
+- **fix** — Data Maintenance sync: FK violations, ARRAY type export, index IF NOT EXISTS
+  - FK constraint errors (`AuditLog_user_id_fkey`, `Deliverable_project_id_fkey`, etc.) — tables were synced alphabetically so child tables arrived before parents; fixed in `sync.ts` by running `SET session_replication_role = replica` on the PG target connection before import, which disables FK/trigger constraint checking for that session (connection is destroyed after handler so no permanent effect); logged as `[INFO]` or `[WARN]` in execution log; MySQL FK bypass via `SET FOREIGN_KEY_CHECKS=0` was already present in exported SQL
+  - "syntax error at or near ARRAY" — `pgExportSchema` was passing `data_type` literally for array columns; fixed to detect `data_type = 'ARRAY'` and resolve `udt_name` (e.g. `_text` → `text[]`, `_int4` → `int4[]`)
+  - "relation already exists" for indexes — `pgExportSchema` was emitting raw `CREATE INDEX name ON ...`; fixed to prepend `IF NOT EXISTS` to both `CREATE INDEX` and `CREATE UNIQUE INDEX` via string replace on `indexdef`
+  - Files: `src/lib/sql-exporter.ts`, `src/pages/api/export-import/sync.ts`
+  - Status: done
+
+- **fix** — Data Maintenance sync: log timestamps, inline analyse diff in tables panel
+  - `LogLine` interface gains optional `ts?: string`; in `handleSync`, each log line is stamped with `toLocaleTimeString` (HH:MM:SS) when received from API; `LogPanel` renders timestamp in faded monospace before the step tag
+  - Removed dedicated analyse results panel below the table list; instead, when `analyseResult` is set in sync tab, each table row shows `sourceRows → targetRows` + a status icon (`✓` match / `⚠` diff / `ℹ` src-only) inline in the row; tables that exist only in target appear as non-selectable violet rows at the bottom of the list
+  - Files: `src/pages/export-import.tsx`
+  - Status: done
+
+- **fix** — Data Maintenance sync: real-time log, schema split, analyse feature, save-on-success only
+  - Bug: Execution log only appeared after full sync completed — fixed by calling `setLog([...allLog])` inside the per-table loop so each table's log lines appear immediately
+  - Bug: Failed syncs were saved as Saved Jobs — changed `saveHistory` call to only run when `allOk === true`
+  - Feature: Schema panel now shows separate "Source Schema" and "Target Schema" sections in sync tab (teal vs violet accent); `SchemaPanel` refactored with optional `tgtConn/tgtDatabase/tgtValue/onTgtChange` dual-mode props; added `tgtSchema` state and reset on database/connection changes
+  - Feature: New API `/api/export-import/analyse.ts` — accepts source + target ConnCfg + schema names, queries tables + row counts + PG owner from both sides in parallel, returns per-table comparison with status: `match | diff | source_only | target_only`
+  - Feature: "Analyse" button in toolbar (sync tab) — enabled when source and target connections are selected; results rendered as a scrollable table in Panel 4 showing each table's source rows, target rows, owner, and status badge; `analyseResult` cleared on schema/database/connection change
+  - Files: `src/pages/export-import.tsx`, `src/pages/api/export-import/analyse.ts` (new)
+  - Status: done
+
+- **fix** — Data Maintenance sync: no diff verification + false "Synced" status when no tables
+  - Bug 1: Sync had no source vs target comparison — blindly exported and imported without any visibility into row counts
+  - Bug 2: When `tableList` was empty (not yet loaded), `handleSync` looped over 0 tables, `allOk` stayed `true`, and "Synced" ✓ was shown with nothing actually done
+  - Bug 3: Target database was always hardcoded to same name as source — no way to select a different database on the target connection
+  - `src/pages/api/export-import/sync.ts`: Added `countRowsPg`/`countRowsMysql`/`countRows` helpers; added Step 0 `[DIFF]` log entry showing source vs target row counts + delta before sync; added `[VERIFY]` log entry showing target row count after successful commit (both PG and MySQL paths)
+  - `src/pages/export-import.tsx`: Added `tgtDatabase` state; added early-return guard in `handleSync` when `tables.length === 0` with error log and `runStatus: 'failed'`; modified `DatabasePanel` to accept `tgtConn/tgtValue/onTgtChange` props and render a target database list (violet accent, same DB-loading logic) below the source list in sync tab; wired `tgtDatabase` into sync API call and `saveHistory`; reset `tgtDatabase` on target connection change
+  - Status: done
+
 ## 2026-06-06
 - **fix** — Schema Studio: `crypto.randomUUID is not a function` on load schema
   - Added `genId()` helper in `src/pages/schema-studio.tsx` that uses `crypto.randomUUID` when available, falls back to a manual RFC-4122 v4 UUID otherwise

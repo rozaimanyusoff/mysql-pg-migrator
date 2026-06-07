@@ -5,6 +5,38 @@ import { exportDatabase, ConnCfg, ExportInclude, ConflictStrategy } from '../../
 
 interface SyncLog { step: string; ok: boolean; text: string }
 
+async function countRowsPg(cfg: ConnCfg, table: string): Promise<number | null> {
+  const pool = new Pool({
+    host: cfg.host, port: cfg.port ?? 5432, user: cfg.user,
+    password: cfg.password, database: cfg.database,
+    ssl: cfg.ssl ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 10000,
+  });
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query<{ c: string }>(`SELECT COUNT(*)::text AS c FROM "${table}"`);
+    return parseInt(rows[0]?.c ?? '0', 10);
+  } catch { return null; }
+  finally { client.release(); await pool.end(); }
+}
+
+async function countRowsMysql(cfg: ConnCfg, table: string): Promise<number | null> {
+  try {
+    const conn = await mysql.createConnection({
+      host: cfg.host, port: cfg.port ?? 3306, user: cfg.user,
+      password: cfg.password, database: cfg.database,
+    });
+    try {
+      const [rows] = await conn.execute<mysql.RowDataPacket[]>(`SELECT COUNT(*) AS c FROM \`${table}\``);
+      return Number((rows as mysql.RowDataPacket[])[0]?.c ?? 0);
+    } finally { await conn.end(); }
+  } catch { return null; }
+}
+
+async function countRows(cfg: ConnCfg, table: string): Promise<number | null> {
+  return cfg.db_type === 'postgres' ? countRowsPg(cfg, table) : countRowsMysql(cfg, table);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -24,8 +56,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const strategy: ConflictStrategy = conflict ?? 'insert_only';
   const log: SyncLog[] = [];
+  const singleTable = Array.isArray(tables) && tables.length === 1 ? tables[0] : null;
 
   try {
+    // Step 0: Diff — compare source vs target row counts before sync
+    if (singleTable) {
+      const [srcCount, tgtCount] = await Promise.all([
+        countRows(source, singleTable),
+        countRows(target, singleTable),
+      ]);
+      const srcStr = srcCount === null ? 'unknown' : `${srcCount} rows`;
+      const tgtStr = tgtCount === null ? 'table does not exist yet' : `${tgtCount} rows`;
+      const deltaStr = srcCount !== null && tgtCount !== null
+        ? ` | Δ ${srcCount - tgtCount} rows to sync`
+        : '';
+      log.push({ step: 'diff', ok: true, text: `[DIFF] "${singleTable}" — source: ${srcStr} | target: ${tgtStr}${deltaStr}` });
+    }
+
     // Step 1: Export from source (with conflict strategy embedded in SQL)
     log.push({ step: 'export', ok: true, text: `[START] Exporting from source "${source.database}" (${source.db_type})…` });
     const exported = await exportDatabase(source, tables ?? 'all', include ?? 'both', { conflictStrategy: strategy });
@@ -45,9 +92,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        // Disable FK constraint triggers for this session so tables can be synced
+        // independently of FK dependency order. Resets when the connection is released.
+        let fkBypassed = false;
+        try {
+          await client.query("SET session_replication_role = replica");
+          fkBypassed = true;
+        } catch { /* proceed without FK bypass if no replication privilege */ }
+        log.push({ step: 'import', ok: true, text: fkBypassed
+          ? '[INFO] FK checks disabled for this session (session_replication_role = replica)'
+          : '[WARN] Could not disable FK checks — sync may fail if FK deps not satisfied'
+        });
         await client.query(exported.sql);
         await client.query('COMMIT');
         log.push({ step: 'import', ok: true, text: `[OK] Committed to "${target.database}"` });
+        if (singleTable) {
+          const tgtCountAfter = await countRows(target, singleTable);
+          if (tgtCountAfter !== null)
+            log.push({ step: 'verify', ok: true, text: `[VERIFY] "${singleTable}" — target now has ${tgtCountAfter} rows` });
+        }
       } catch (err: unknown) {
         await client.query('ROLLBACK');
         const message = err instanceof Error ? err.message : String(err);
@@ -66,6 +129,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await conn.execute(exported.sql);
         await conn.commit();
         log.push({ step: 'import', ok: true, text: `[OK] Committed to "${target.database}"` });
+        if (singleTable) {
+          const tgtCountAfter = await countRows(target, singleTable);
+          if (tgtCountAfter !== null)
+            log.push({ step: 'verify', ok: true, text: `[VERIFY] "${singleTable}" — target now has ${tgtCountAfter} rows` });
+        }
       } catch (err: unknown) {
         await conn.rollback();
         const message = err instanceof Error ? err.message : String(err);

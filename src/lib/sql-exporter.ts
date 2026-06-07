@@ -116,7 +116,15 @@ async function pgExportSchema(client: PoolClient, table: string): Promise<string
   );
 
   const colDefs = cols.map((c) => {
-    let type = c.data_type === 'USER-DEFINED' ? c.udt_name : c.data_type;
+    let type: string;
+    if (c.data_type === 'USER-DEFINED') {
+      type = c.udt_name;
+    } else if (c.data_type === 'ARRAY') {
+      // udt_name for arrays is '_text', '_int4', etc. — strip leading '_' and append '[]'
+      type = c.udt_name.startsWith('_') ? c.udt_name.slice(1) + '[]' : 'text[]';
+    } else {
+      type = c.data_type;
+    }
     if (c.character_maximum_length) type += `(${c.character_maximum_length})`;
     else if (c.numeric_precision != null && c.data_type === 'numeric')
       type += `(${c.numeric_precision},${c.numeric_scale ?? 0})`;
@@ -135,7 +143,13 @@ async function pgExportSchema(client: PoolClient, table: string): Promise<string
     );
 
   let sql = `CREATE TABLE IF NOT EXISTS "${table}" (\n${colDefs.join(',\n')}\n);\n`;
-  for (const idx of idxs) sql += `${idx.indexdef};\n`;
+  for (const idx of idxs) {
+    // Add IF NOT EXISTS so re-running schema on an existing DB doesn't fail
+    const def = idx.indexdef
+      .replace(/^CREATE UNIQUE INDEX /, 'CREATE UNIQUE INDEX IF NOT EXISTS ')
+      .replace(/^CREATE INDEX /, 'CREATE INDEX IF NOT EXISTS ');
+    sql += `${def};\n`;
+  }
   return sql;
 }
 
