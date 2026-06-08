@@ -14,6 +14,7 @@ const MODULE_LABELS: Record<string, string> = {
   '/settings': 'Settings',
   '/docs': 'Docs',
   '/schema-generate': 'Schema Generate',
+  '/ai-migration': 'AI Migration',
 };
 
 export default function Navbar() {

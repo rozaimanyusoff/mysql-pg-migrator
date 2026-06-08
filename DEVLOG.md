@@ -2,6 +2,53 @@
 
 ---
 
+## 2026-06-08
+- **implement** — AI Migration Assistant module (new module, does not touch existing migration)
+  - New page `/ai-migration` with 3 tabs: Pre-flight Analyzer, Column Suggestions, Error Explainer
+  - Installed `@anthropic-ai/sdk`; all AI calls use `claude-opus-4-8` with `thinking: {type: "adaptive"}`
+  - **Pre-flight Analyzer** (`/api/ai-migration/analyze`): SSE streaming endpoint; fetches MySQL column + FK schema for selected tables, builds comprehensive prompt, streams Claude analysis report in sections (Critical Issues, Warnings, Info, Migration Order); terminal-style renderer in browser consumes SSE via `fetch` + `ReadableStream`
+  - **Column Suggestions** (`/api/ai-migration/suggest-columns`): POST endpoint; fetches columns from MySQL server-side, returns JSON array of `{sourceCol, sourceMysqlType, suggestedPgType, conversion, notes, warnings}`; displayed in color-coded table with conversion badges
+  - **Error Explainer** (`/api/ai-migration/explain`): POST endpoint; accepts raw PG error + optional context, returns `{summary, rootCause, fixes[], preventionTip}` as structured JSON; rendered as info/warning cards with code blocks
+  - `Navbar.tsx`: added `'/ai-migration': 'AI Migration'` to MODULE_LABELS
+  - `src/pages/index.tsx`: added AI Migration module card with Brain icon
+  - Files: `src/pages/ai-migration.tsx`, `src/pages/api/ai-migration/analyze.ts`, `src/pages/api/ai-migration/suggest-columns.ts`, `src/pages/api/ai-migration/explain.ts`, `src/components/Navbar.tsx`, `src/pages/index.tsx`
+  - Status: done
+
+- **implement** — AI Migration: Generate Job tab — AI creates a complete MigJob from MySQL schema
+  - New tab "Generate Job" (first tab, Sparkles icon) — user picks source/target connections + databases, loads tables, names the job, clicks Generate
+  - `/api/ai-migration/generate-job` (SSE): fetches full MySQL column + FK schema for selected tables, calls `claude-opus-4-8` with adaptive thinking to generate `TableMap[]` JSON (column types, conversions, FK-ordered table sequence), saves the result as a `MigJob` via `saveJob()` from `job-store.ts`
+  - Heartbeat SSE ping every 10s keeps connection alive during long AI calls
+  - Saved job appears in the existing `/migration` module sidebar — user opens it, reviews mappings, runs migration themselves
+  - Success card shows job name, table count, and "Open Migration Module" link
+  - AI generates: PG type for each column, conversion annotation (keep/to_boolean/to_jsonb/to_timestamptz/etc.), DEFAULT values, FK-topological table order
+  - Files: `src/pages/api/ai-migration/generate-job.ts`, `src/pages/ai-migration.tsx`
+  - Status: done
+
+- **revision** — AI Migration: target side gets database + schema selectors (PG now has 3 dropdowns: connection → database → schema)
+  - Updated `/api/ai-migration/databases`: PG now returns actual databases from `pg_database` (was returning schemas before)
+  - Added `/api/ai-migration/schemas`: POST with `{conn, database}` → returns schemas for a specific PG database (used after user picks a DB)
+  - `ConnPanel` now renders two sub-dropdowns for PG: database (loaded from `databases` endpoint) + schema (loaded from `schemas` endpoint after database is selected); schema dropdown only appears for `filter="postgres"` when `onSchemaChange` is provided
+  - Added `targetDb` state at page root; `ConnPanel` for target wired with `schemaValue`/`onSchemaChange` props
+  - `PreflightTab` and `ColumnsTab` accept `targetDb` prop; ColumnsTab displays full path `target / db.schema` in results header
+  - Files: `src/pages/ai-migration.tsx`, `src/pages/api/ai-migration/databases.ts`, `src/pages/api/ai-migration/schemas.ts`
+  - Status: done
+
+- **revision** — AI Migration: source database + target schema selectors with live dropdown
+  - Added `/api/ai-migration/databases` endpoint: POST with ExplorerConn → returns `{ databases }` for MySQL or `{ schemas }` for PG, queried from `information_schema`
+  - `ConnPicker` replaced with `ConnPanel` — each side now has two controls: connection dropdown + database/schema dropdown (loaded live after connection is selected, falls back to text input on error)
+  - `sourceDb` and `targetSchema` state at page root; auto-filled from the connection's default DB/`public` schema; can be freely changed without affecting the saved connection
+  - All API calls in `PreflightTab` and `ColumnsTab` override `ExplorerConn.database` with the selected `sourceDb`
+  - Files: `src/pages/ai-migration.tsx`, `src/pages/api/ai-migration/databases.ts`
+  - Status: done
+
+- **revision** — AI Migration: add shared source + target connection bar (matching existing migration module pattern)
+  - Moved connection selectors from per-tab to page-level: source (MySQL) and target (PostgreSQL) sit in a shared bar above the tabs, matching the source→target pattern of the existing migration module
+  - Connection state (`sourceId`, `targetId`) lives at page root; `sourceConn` and `targetConn` are passed as props to PreflightTab and ColumnsTab
+  - Per-tab connection pickers removed; each tab shows a hint when no source is selected
+  - Status indicators below the connection bar show which connections are active
+  - Files: `src/pages/ai-migration.tsx`
+  - Status: done
+
 ## 2026-06-07
 - **implement** — Data Maintenance: Copy/Replace context menu on DB and Schema items in Sync tab
   - Right-click on a source database item → context menu shows Copy/Replace scoped to all tables in that DB
