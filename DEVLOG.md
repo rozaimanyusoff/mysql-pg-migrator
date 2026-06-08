@@ -2,6 +2,32 @@
 
 ---
 
+## 2026-06-09
+- **fix** — AI Migration chat: hide proposal JSON during streaming + reduce turn latency
+  - `getDisplayText()` replaces `stripProposalBlock()` — during streaming, truncates display at `[MAPPING_PROPOSAL]` immediately so JSON is never visible; when closing tag arrives, strips the full block cleanly
+  - System prompt updated: Claude now only emits `[MAPPING_PROPOSAL]` on initial analysis and when the user requests mapping changes; conversational replies (questions, clarifications) skip the JSON block entirely — drastically faster for back-and-forth turns
+  - Files: `src/pages/ai-migration.tsx`, `src/pages/api/ai-migration/chat.ts`
+  - Status: done
+
+- **update** — AI Migration chat: enable prompt caching + model rationale
+  - Added `cache_control: { type: 'ephemeral' }` to the system prompt block in `chat.ts`; system prompt now sent as a content block array instead of a plain string
+  - The system prompt embeds full MySQL + PG schema text (3–6K tokens typical); cache reads on turn 2+ cost ~0.1× input price instead of full rate
+  - Model confirmed: `claude-sonnet-4-6` for `chat.ts` (multi-turn iterative chat, explicit rules in prompt, UX benefits from speed); `claude-opus-4-8` kept for one-shot deep reasoning endpoints (`generate-job`, `analyze`, `suggest-columns`, `explain`)
+  - Files: `src/pages/api/ai-migration/chat.ts`
+  - Status: done
+
+- **implement** — AI Migration Assistant: Scenario 1 — interactive chat with dual-schema analysis
+  - Complete redesign of `/ai-migration` page: resizable panel layout (left: source+target table lists + Analyze button; right: chat interface)
+  - Source (MySQL) tables: checkbox list with Load button; Target (PG) tables: auto-loaded on connection change showing existing tables in selected schema
+  - **`/api/ai-migration/chat`** (new, SSE streaming): reads full MySQL column+FK schema for selected tables AND all existing PG tables in target schema; builds system prompt with both schemas; calls `claude-sonnet-4-6` streaming; sends back `event:schemas` (for client caching), `event:text` (chunks), `event:proposal` (parsed JSON), `event:done`. On subsequent turns, client passes cached schemas — server skips DB reads
+  - **`/api/ai-migration/save-proposal`** (new): converts AI proposal JSON into a `MigJob` (same `TableMap`/`ColumnMap` structures as migv2); saves via `saveJob()`; returns `{jobId, jobName, tableCount}`
+  - AI is instructed to match source tables to EXISTING target tables only, map columns with type conversions, respect FK ordering, and emit `[MAPPING_PROPOSAL]...[/MAPPING_PROPOSAL]` blocks
+  - UI: proposal blocks stripped from chat display text, rendered as expandable `ProposalCard` (table rows with confidence badges, per-column mapping table, warnings, unmatched list); "Save as Job" button in chat + input area
+  - `SaveJobDialog`: modal for naming + confirming save; redirects user to `/migration` after save
+  - Installed `@anthropic-ai/sdk` (was missing from node_modules despite being in package.json)
+  - Files: `src/pages/ai-migration.tsx` (rewrite), `src/pages/api/ai-migration/chat.ts` (new), `src/pages/api/ai-migration/save-proposal.ts` (new)
+  - Status: done
+
 ## 2026-06-08
 - **implement** — AI Migration Assistant module (new module, does not touch existing migration)
   - New page `/ai-migration` with 3 tabs: Pre-flight Analyzer, Column Suggestions, Error Explainer
