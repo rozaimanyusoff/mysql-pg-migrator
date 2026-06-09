@@ -1553,13 +1553,16 @@ export default function ExportImportPage() {
           {/* Export options */}
           {tab === 'export' && (
             <>
-              <BtnTip tip="Right-click any table to change">
-                <span className="text-[10px] text-gray-400 dark:text-slate-500 cursor-default select-none">
-                  incl: <span className="font-medium text-blue-600 dark:text-blue-400">
-                    {exportInclude === 'both' ? 'Schema+Data' : exportInclude === 'schema' ? 'Schema' : 'Data'}
-                  </span>
-                </span>
-              </BtnTip>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Include</span>
+                {([
+                  { v: 'both'   as ExportInclude, label: 'Schema+Data' },
+                  { v: 'schema' as ExportInclude, label: 'Schema'      },
+                  { v: 'data'   as ExportInclude, label: 'Data'        },
+                ]).map(({ v, label }) => (
+                  <button key={v} onClick={() => setExportInclude(v)} className={seg(exportInclude === v)}>{label}</button>
+                ))}
+              </div>
               <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
               <div className="flex items-center gap-1">
                 <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Format</span>

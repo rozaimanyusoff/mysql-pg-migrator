@@ -69,9 +69,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const client = new Anthropic();
     const message = await client.messages.create({
-      model: 'claude-opus-4-8',
-      max_tokens: 4096,
-      thinking: { type: 'adaptive' },
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 2048,
       messages: [{
         role: 'user',
         content: `You are a MySQL→PostgreSQL migration expert. Suggest the optimal PostgreSQL column type for each MySQL column in this table.

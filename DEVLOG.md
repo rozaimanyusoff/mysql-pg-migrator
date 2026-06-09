@@ -3,6 +3,17 @@
 ---
 
 ## 2026-06-09
+- **fix** — Data Maintenance Export: make Include option clickable in toolbar
+  - Root cause: `incl:` display was a static label (cursor-default, non-interactive) — user had no obvious way to switch between Schema+Data / Schema / Data; only hinted via tooltip "right-click any table"
+  - Fix: replaced static label with segmented buttons matching Format (SQL/CSV) style; user can now directly click Schema+Data, Schema, or Data in the toolbar
+  - File: `src/pages/export-import.tsx` (Export toolbar section ~line 1554)
+  - Status: done
+- **fix** — AI Migration: reduce response latency across all AI endpoints
+  - `analyze.ts`: switched from `claude-opus-4-8` + adaptive thinking + 8000 max_tokens → `claude-sonnet-4-6` + 4096 max_tokens
+  - `suggest-columns.ts`: switched from `claude-opus-4-8` + adaptive thinking + 4096 max_tokens → `claude-haiku-4-5-20251001` + 2048 max_tokens
+  - `explain.ts`: switched from `claude-opus-4-8` + adaptive thinking + 2048 max_tokens → `claude-haiku-4-5-20251001` + 1024 max_tokens
+  - Root cause: Opus 4 has high TTFT; `thinking: { type: 'adaptive' }` added 5–30s pre-stream delay; oversized max_tokens forced model to "budget" for long output
+  - Status: done
 - **fix** — AI Migration chat: hide proposal JSON during streaming + reduce turn latency
   - `getDisplayText()` replaces `stripProposalBlock()` — during streaming, truncates display at `[MAPPING_PROPOSAL]` immediately so JSON is never visible; when closing tag arrives, strips the full block cleanly
   - System prompt updated: Claude now only emits `[MAPPING_PROPOSAL]` on initial analysis and when the user requests mapping changes; conversational replies (questions, clarifications) skip the JSON block entirely — drastically faster for back-and-forth turns

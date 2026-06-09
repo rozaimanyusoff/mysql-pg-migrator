@@ -80,9 +80,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const client = new Anthropic();
     const stream = client.messages.stream({
-      model: 'claude-opus-4-8',
-      max_tokens: 8000,
-      thinking: { type: 'adaptive' },
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4096,
       messages: [{
         role: 'user',
         content: `You are an expert MySQL→PostgreSQL migration engineer. Analyze the following MySQL schema and produce a thorough pre-flight migration report.

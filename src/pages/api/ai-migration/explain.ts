@@ -25,9 +25,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const client = new Anthropic();
     const message = await client.messages.create({
-      model: 'claude-opus-4-8',
-      max_tokens: 2048,
-      thinking: { type: 'adaptive' },
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
       messages: [{
         role: 'user',
         content: `You are a PostgreSQL expert helping debug a MySQL→PostgreSQL migration error.
