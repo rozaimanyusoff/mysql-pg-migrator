@@ -144,14 +144,14 @@ export default function SchemaGeneratePage() {
         <header className="sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center gap-4 justify-between">
           <div>
             <h1 className="font-bold text-gray-900 dark:text-slate-100">Schema Generate</h1>
-            <p className="text-xs text-gray-500 dark:text-slate-400">Pre-flight validation, SQL generation, and execution.</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400">Pre-flight validation, SQL generation, and execution.</p>
           </div>
           <ConnectionBadges />
-          <nav className="flex items-center gap-1 text-sm">
+          <nav className="flex items-center gap-1 text-base">
             <Link href="/schema-config" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Schema Selection</Link>
-            <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
+            <ChevronRight size={16} className="text-slate-400 dark:text-slate-500" />
             <Link href="/schema-config" className="px-3 py-1 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Schema Config</Link>
-            <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />
+            <ChevronRight size={16} className="text-slate-400 dark:text-slate-500" />
             <span className="px-3 py-1 rounded-lg bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold">Generate</span>
             <span className="w-px h-5 bg-gray-200 dark:bg-slate-700 mx-1" />
             <ResetEverythingButton />
@@ -161,29 +161,29 @@ export default function SchemaGeneratePage() {
         <main className="max-w-6xl mx-auto px-6 py-8 space-y-4">
           <section className="bg-white dark:bg-slate-900/70 border border-gray-200 dark:border-slate-700 rounded-xl p-4">
             <h2 className="font-semibold text-gray-900 dark:text-slate-100">Scope</h2>
-            <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
+            <p className="text-base text-gray-500 dark:text-slate-400 mt-1">
               Database: <span className="font-medium text-gray-800 dark:text-slate-200">{runtime?.selectedDb || '-'}</span> · {scopeText}
             </p>
             {!ready && (
-              <p className="text-sm text-rose-500 mt-2">Missing runtime or PostgreSQL connection. Return to Schema Config and click Generate again.</p>
+              <p className="text-base text-rose-500 mt-2">Missing runtime or PostgreSQL connection. Return to Schema Config and click Generate again.</p>
             )}
             <div className="flex flex-wrap items-center gap-2 mt-3">
               <button
                 type="button"
                 onClick={() => void handleGeneratePlan()}
                 disabled={!ready || loadingPlan}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-300 text-sm font-medium disabled:opacity-60"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-300 text-base font-medium disabled:opacity-60"
               >
-                <ShieldCheck size={15} />
+                <ShieldCheck size={17} />
                 {loadingPlan ? 'Running Pre-flight...' : 'Pre-flight + Plan'}
               </button>
               <button
                 type="button"
                 onClick={() => void handleExecute()}
                 disabled={!canExecute || executing}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded bg-blue-600 text-white text-sm font-medium disabled:opacity-60"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded bg-blue-600 text-white text-base font-medium disabled:opacity-60"
               >
-                <Play size={15} />
+                <Play size={17} />
                 {executing ? 'Executing...' : 'Execute'}
               </button>
               {planData && (
@@ -191,17 +191,17 @@ export default function SchemaGeneratePage() {
                   <button
                     type="button"
                     onClick={() => downloadText('schema_generate_apply.sql', planData.plan.applySql.join('\n\n'))}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-300 text-sm font-medium"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-300 text-base font-medium"
                   >
-                    <Download size={14} />
+                    <Download size={16} />
                     Download Apply SQL
                   </button>
                   <button
                     type="button"
                     onClick={() => downloadText('schema_generate_rollback.sql', planData.plan.rollbackSql.join('\n\n'))}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-300 text-sm font-medium"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-300 text-base font-medium"
                   >
-                    <Download size={14} />
+                    <Download size={16} />
                     Download Rollback SQL
                   </button>
                 </>
@@ -213,34 +213,34 @@ export default function SchemaGeneratePage() {
             <>
               <section className="bg-white dark:bg-slate-900/70 border border-gray-200 dark:border-slate-700 rounded-xl p-4">
                 <h3 className="font-semibold text-gray-900 dark:text-slate-100">Pre-flight Result</h3>
-                <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
+                <p className="text-base text-gray-500 dark:text-slate-400 mt-1">
                   Tables: {planData.plan.summary.selectedTables} · Relationships: {planData.plan.summary.selectedRelationships} · Operations: {planData.plan.summary.operations}
                 </p>
-                <p className={`text-sm mt-2 ${planData.preflight.valid ? 'text-emerald-500' : 'text-rose-500'}`}>
+                <p className={`text-base mt-2 ${planData.preflight.valid ? 'text-emerald-500' : 'text-rose-500'}`}>
                   {planData.preflight.valid ? 'Validation passed' : 'Validation failed'}
                 </p>
                 {planData.preflight.warnings.length > 0 && (
-                  <ul className="text-xs text-amber-500 mt-2 space-y-1">
+                  <ul className="text-sm text-amber-500 mt-2 space-y-1">
                     {planData.preflight.warnings.map((w) => <li key={w}>• {w}</li>)}
                   </ul>
                 )}
                 {planData.preflight.errors.length > 0 && (
-                  <ul className="text-xs text-rose-500 mt-2 space-y-1">
+                  <ul className="text-sm text-rose-500 mt-2 space-y-1">
                     {planData.preflight.errors.map((e) => <li key={e}>• {e}</li>)}
                   </ul>
                 )}
               </section>
 
               <section className="bg-white dark:bg-slate-900/70 border border-gray-200 dark:border-slate-700 rounded-xl p-4">
-                <h3 className="font-semibold text-gray-900 dark:text-slate-100 mb-2 inline-flex items-center gap-2"><FileCode2 size={16} /> SQL Preview (Apply)</h3>
-                <pre className="text-xs bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded p-3 overflow-auto max-h-[320px]">
+                <h3 className="font-semibold text-slate-700 dark:text-slate-200 mb-2 inline-flex items-center gap-2"><FileCode2 size={18} /> SQL Preview (Apply)</h3>
+                <pre className="text-sm bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded p-3 overflow-auto max-h-[320px]">
                   {planData.plan.applySql.join('\n\n')}
                 </pre>
               </section>
 
               <section className="bg-white dark:bg-slate-900/70 border border-gray-200 dark:border-slate-700 rounded-xl p-4">
                 <h3 className="font-semibold text-gray-900 dark:text-slate-100 mb-2">Rollback SQL</h3>
-                <pre className="text-xs bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded p-3 overflow-auto max-h-[220px]">
+                <pre className="text-sm bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded p-3 overflow-auto max-h-[220px]">
                   {planData.plan.rollbackSql.join('\n\n')}
                 </pre>
               </section>
@@ -250,9 +250,9 @@ export default function SchemaGeneratePage() {
           {(execLog.length > 0 || execError) && (
             <section className="bg-white dark:bg-slate-900/70 border border-gray-200 dark:border-slate-700 rounded-xl p-4">
               <h3 className="font-semibold text-gray-900 dark:text-slate-100">Execution Report</h3>
-              {execError && <p className="text-sm text-rose-500 mt-2">{execError}</p>}
+              {execError && <p className="text-base text-rose-500 mt-2">{execError}</p>}
               {execLog.length > 0 && (
-                <pre className="text-xs bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded p-3 overflow-auto max-h-[220px] mt-2">
+                <pre className="text-sm bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded p-3 overflow-auto max-h-[220px] mt-2">
                   {execLog.join('\n')}
                 </pre>
               )}

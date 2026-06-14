@@ -89,19 +89,19 @@ export default function AuditPage() {
         <header className="sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center">
           <div>
             <h1 className="font-bold text-gray-900 dark:text-slate-100">Global Audit Logs</h1>
-            <p className="text-xs text-gray-500 dark:text-slate-400">Daily files in `/public/uploads/logs`</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400">Daily files in `/public/uploads/logs`</p>
           </div>
         </header>
 
         <main className="max-w-6xl mx-auto px-6 py-6 space-y-4">
           <div className="bg-white border border-gray-200 rounded-xl p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <h2 className="text-sm font-semibold text-gray-800">Retrieve by file</h2>
+              <h2 className="text-base font-semibold text-gray-800">Retrieve by file</h2>
               <div className="flex items-center gap-2">
                 <select
                   value={selectedFile}
                   onChange={(e) => setSelectedFile(e.target.value)}
-                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-base bg-white"
                 >
                   <option value="">Select log file</option>
                   {files.map((f) => (
@@ -111,7 +111,7 @@ export default function AuditPage() {
                 <button
                   onClick={loadByFile}
                   disabled={!selectedFile || loading}
-                  className="text-sm px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
+                  className="text-base px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
                 >
                   Load
                 </button>
@@ -119,24 +119,24 @@ export default function AuditPage() {
             </div>
 
             <div className="space-y-2">
-              <h2 className="text-sm font-semibold text-gray-800">Retrieve by date range</h2>
+              <h2 className="text-base font-semibold text-gray-800">Retrieve by date range</h2>
               <div className="flex items-center gap-2">
                 <input
                   type="date"
                   value={start}
                   onChange={(e) => setStart(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-base"
                 />
                 <input
                   type="date"
                   value={end}
                   onChange={(e) => setEnd(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-base"
                 />
                 <button
                   onClick={loadByRange}
                   disabled={!start || !end || loading}
-                  className="text-sm px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
+                  className="text-base px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
                 >
                   Load
                 </button>
@@ -145,12 +145,12 @@ export default function AuditPage() {
           </div>
 
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-            <div className="px-4 py-2 border-b border-gray-100 text-sm text-gray-600">
+            <div className="px-4 py-2 border-b border-gray-100 text-base text-gray-600">
               {loading ? 'Loading logs…' : `${sorted.length} entries`}
             </div>
             <div className="max-h-[60vh] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs">
+              <table className="w-full text-base">
+                <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-sm">
                   <tr>
                     <th className="text-left px-3 py-2">Timestamp</th>
                     <th className="text-left px-3 py-2">Module</th>
@@ -162,11 +162,11 @@ export default function AuditPage() {
                 <tbody>
                   {sorted.map((e, i) => (
                     <tr key={`${e.timestamp}-${e.action}-${i}`} className="border-b border-gray-50 align-top">
-                      <td className="px-3 py-2 font-mono text-xs text-gray-600">{e.timestamp}</td>
+                      <td className="px-3 py-2 font-mono text-sm text-gray-600">{e.timestamp}</td>
                       <td className="px-3 py-2">{e.module}</td>
                       <td className="px-3 py-2">{e.action}</td>
                       <td className="px-3 py-2">{e.source}</td>
-                      <td className="px-3 py-2 text-xs">
+                      <td className="px-3 py-2 text-sm">
                         <pre className="whitespace-pre-wrap break-words text-gray-600">
                           {e.details ? JSON.stringify(e.details, null, 2) : ''}
                         </pre>

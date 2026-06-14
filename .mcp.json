@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "migrator": {
+      "command": "node",
+      "args": ["mcp/server.mjs"]
+    }
+  }
+}

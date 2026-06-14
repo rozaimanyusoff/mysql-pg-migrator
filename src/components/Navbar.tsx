@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { ChevronRight, Settings2 } from 'lucide-react';
+import MigrationGuidePopover from './MigrationGuidePopover';
 
 const MODULE_LABELS: Record<string, string> = {
   '/migration': 'Migration',
@@ -15,6 +16,7 @@ const MODULE_LABELS: Record<string, string> = {
   '/docs': 'Docs',
   '/schema-generate': 'Schema Generate',
   '/ai-migration': 'AI Migration',
+  '/scheduler': 'Scheduler',
 };
 
 export default function Navbar() {
@@ -27,7 +29,7 @@ export default function Navbar() {
       {/* App name */}
       <Link
         href="/"
-        className="font-semibold text-sm text-gray-800 dark:text-slate-200 shrink-0 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+        className="font-semibold text-base text-gray-800 dark:text-slate-200 shrink-0 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
       >
         DB Maintenance
       </Link>
@@ -35,10 +37,11 @@ export default function Navbar() {
       {/* Current module breadcrumb */}
       {currentLabel && (
         <>
-          <ChevronRight size={13} className="text-gray-300 dark:text-slate-600 shrink-0" />
-          <span className="text-xs font-semibold text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40">
+          <ChevronRight size={15} className="text-slate-400 dark:text-slate-500 shrink-0" />
+          <span className="text-sm font-semibold text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40">
             {currentLabel}
           </span>
+          {router.pathname === '/migration' && <MigrationGuidePopover />}
         </>
       )}
 
@@ -53,7 +56,7 @@ export default function Navbar() {
             : 'text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800'
         }`}
       >
-        <Settings2 size={16} />
+        <Settings2 size={18} />
       </Link>
     </header>
   );

@@ -36,17 +36,17 @@ export default function ColumnMappingEditor({ columns, onChange }: Props) {
           {/* Row header */}
           <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors">
             <button
-              className="flex items-center gap-2 text-sm font-medium text-gray-700 flex-1 text-left"
+              className="flex items-center gap-2 text-base font-medium text-gray-700 flex-1 text-left"
               onClick={() => setExpanded((p) => ({ ...p, [col.mysqlName]: !p[col.mysqlName] }))}
             >
-              {expanded[col.mysqlName] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {expanded[col.mysqlName] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               <span className="font-mono">{col.mysqlName}</span>
               <span className="text-gray-400 font-normal">{col.mysqlType}</span>
               {col.isPrimaryKey && (
-                <span className="bg-yellow-100 text-yellow-700 text-xs px-1.5 py-0.5 rounded">PK</span>
+                <span className="bg-yellow-100 text-yellow-700 text-sm px-1.5 py-0.5 rounded">PK</span>
               )}
             </button>
-            <label className="flex items-center gap-1.5 text-xs ml-2 cursor-pointer">
+            <label className="flex items-center gap-1.5 text-sm ml-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={col.include}
@@ -62,21 +62,21 @@ export default function ColumnMappingEditor({ columns, onChange }: Props) {
             <div className="px-4 py-3 grid grid-cols-2 gap-3 border-t border-gray-100">
               {/* PG column name */}
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">PG Column Name</label>
+                <label className="block text-sm font-medium text-gray-500 mb-1">PG Column Name</label>
                 <input
                   type="text"
                   value={col.pgName}
                   onChange={(e) => updateCol(idx, { pgName: e.target.value })}
-                  className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-base focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
               </div>
               {/* PG type */}
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">PostgreSQL Type</label>
+                <label className="block text-sm font-medium text-gray-500 mb-1">PostgreSQL Type</label>
                 <select
                   value={col.pgType}
                   onChange={(e) => updateCol(idx, { pgType: e.target.value })}
-                  className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-base bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
                 >
                   {PG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
@@ -84,11 +84,11 @@ export default function ColumnMappingEditor({ columns, onChange }: Props) {
               {/* Index strategy (PK only) */}
               {col.isPrimaryKey && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Index Strategy</label>
+                  <label className="block text-sm font-medium text-gray-500 mb-1">Index Strategy</label>
                   <select
                     value={col.indexStrategy}
                     onChange={(e) => updateCol(idx, { indexStrategy: e.target.value as IndexStrategy })}
-                    className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-base bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
                   >
                     {INDEX_STRATEGIES.map((s) => (
                       <option key={s.value} value={s.value}>{s.label}</option>
@@ -105,7 +105,7 @@ export default function ColumnMappingEditor({ columns, onChange }: Props) {
                   className="w-4 h-4"
                   id={`nullable-${idx}`}
                 />
-                <label htmlFor={`nullable-${idx}`} className="text-sm text-gray-600 cursor-pointer">
+                <label htmlFor={`nullable-${idx}`} className="text-base text-gray-600 cursor-pointer">
                   Nullable
                 </label>
               </div>

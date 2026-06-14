@@ -1,8 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { loadRun, listRuns } from '../../../../lib/migv2/run-store';
+import { loadRun, listRuns, reconcileStaleRuns } from '../../../../lib/migv2/run-store';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).end();
+
+  // Mark any orphaned (process-restarted) runs as interrupted before reporting.
+  reconcileStaleRuns();
 
   const { id } = req.query as { id?: string };
   if (id) {

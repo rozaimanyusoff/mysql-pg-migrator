@@ -106,8 +106,8 @@ function DryRunModal({ sql, onConfirm, onCancel }: {
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl">
         <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
-          <Eye size={15} className="text-blue-500" />
-          <p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Import Preview</p>
+          <Eye size={17} className="text-blue-500" />
+          <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">Import Preview</p>
         </div>
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-2">
@@ -116,7 +116,7 @@ function DryRunModal({ sql, onConfirm, onCancel }: {
               ['INSERT', s.inserts], ['ALTER TABLE', s.alters],
               ['DROP TABLE', s.drops], ['TRUNCATE', s.truncates],
             ] as [string, number][]).map(([label, count]) => (
-              <div key={label} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs ${
+              <div key={label} className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
                 (label === 'DROP TABLE' || label === 'TRUNCATE') && count > 0
                   ? 'bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800'
                   : 'bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700'
@@ -127,18 +127,18 @@ function DryRunModal({ sql, onConfirm, onCancel }: {
             ))}
           </div>
           {hasDestructive && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
-              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-sm text-rose-700 dark:text-rose-400">
+              <AlertCircle size={15} className="mt-0.5 shrink-0" />
               This SQL contains destructive statements (DROP / TRUNCATE). Data may be permanently deleted.
             </div>
           )}
         </div>
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
           <button type="button" onClick={onCancel}
-            className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
+            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
           <button type="button" onClick={onConfirm}
-            className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white ${hasDestructive ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
-            <Play size={13} /> {hasDestructive ? 'Proceed anyway' : 'Import'}
+            className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white ${hasDestructive ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+            <Play size={15} /> {hasDestructive ? 'Proceed anyway' : 'Import'}
           </button>
         </div>
       </div>
@@ -165,17 +165,17 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
       <div className="w-full max-w-3xl max-h-[88vh] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5">
-            <FileSpreadsheet size={15} className="text-emerald-500" />
-            <p className="font-semibold text-sm text-gray-900 dark:text-slate-100">Excel → INSERT Preview</p>
-            <span className="text-xs text-gray-400 dark:text-slate-500">{tables.length} sheets</span>
+            <FileSpreadsheet size={17} className="text-emerald-500" />
+            <p className="font-semibold text-base text-gray-900 dark:text-slate-100">Excel → INSERT Preview</p>
+            <span className="text-sm text-gray-400 dark:text-slate-500">{tables.length} sheets</span>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"><XCircle size={16} /></button>
+          <button onClick={onClose} className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><XCircle size={18} /></button>
         </div>
         <div className="flex flex-1 min-h-0">
           <nav className="w-40 shrink-0 border-r border-gray-100 dark:border-slate-800 p-2 space-y-1 overflow-y-auto">
             {tables.map((t) => (
               <button key={t.sheetName} type="button" onClick={() => setActive(t.sheetName)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
                   activeSheet === t.sheetName
                     ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
                     : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
@@ -187,11 +187,11 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
           </nav>
           {active && (
             <div className="flex-1 p-4 overflow-y-auto min-w-0 space-y-3">
-              <p className="text-xs text-gray-500 dark:text-slate-400">
+              <p className="text-sm text-gray-500 dark:text-slate-400">
                 Table: <code className="font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400">{active.name}</code>
               </p>
               <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
-                <table className="w-full text-xs">
+                <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-slate-700">
                       <th className="text-left px-3 py-2 font-medium text-gray-500 dark:text-slate-400">Column</th>
@@ -206,7 +206,7 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
                         <td className="px-3 py-2">
                           <select value={col.type}
                             onChange={(e) => updateCol(active.sheetName, i, { type: e.target.value as PgColumnType })}
-                            className="px-2 py-1 rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            className="px-2 py-1 rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500">
                             {PG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                           </select>
                         </td>
@@ -224,15 +224,15 @@ function ExcelImportModal({ tables: initial, onApply, onClose }: {
           )}
         </div>
         <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100 dark:border-slate-800 shrink-0">
-          <p className="text-xs text-gray-400 dark:text-slate-500">
+          <p className="text-sm text-gray-400 dark:text-slate-500">
             Generates INSERT statements for {tables.reduce((s, t) => s + t.rowCount, 0)} rows
           </p>
           <div className="flex items-center gap-3">
             <button type="button" onClick={onClose}
-              className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
+              className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
             <button type="button" onClick={() => onApply(generateSeedSqlFromTables(tables))}
-              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700">
-              <CheckCircle2 size={13} /> Apply as SQL
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-base font-medium hover:bg-emerald-700">
+              <CheckCircle2 size={15} /> Apply as SQL
             </button>
           </div>
         </div>
@@ -260,16 +260,16 @@ function SqlImportField({ value, onChange }: { value: string; onChange: (v: stri
     >
       <textarea value={value} onChange={(e) => onChange(e.target.value)}
         placeholder="Paste SQL here or drag & drop a .sql file…"
-        className="flex-1 px-4 py-3 text-xs font-mono bg-transparent text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none resize-none"
+        className="flex-1 px-4 py-3 text-sm font-mono bg-transparent text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none resize-none"
       />
       <div className="shrink-0 px-4 pb-3 flex items-center gap-2 border-t border-gray-100 dark:border-slate-800">
         <button type="button" onClick={() => fileRef.current?.click()}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">
-          <UploadCloud size={12} /> Browse .sql
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">
+          <UploadCloud size={14} /> Browse .sql
         </button>
-        {value && <button type="button" onClick={() => onChange('')} className="text-[10px] text-gray-400 hover:text-rose-500">Clear</button>}
+        {value && <button type="button" onClick={() => onChange('')} className="text-[12px] text-gray-400 hover:text-rose-500">Clear</button>}
         {value.trim() && (
-          <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500 font-mono">~{parseDryRun(value).total} statements</span>
+          <span className="ml-auto text-[12px] text-gray-400 dark:text-slate-500 font-mono">~{parseDryRun(value).total} statements</span>
         )}
         <input ref={fileRef} type="file" accept=".sql,.txt" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); }} />
@@ -297,15 +297,15 @@ function LogPanel({ lines, running, focusRange }: {
   return (
     <div className="shrink-0 border-t border-gray-200 dark:border-slate-800">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
-        <FileCode2 size={12} className="text-gray-400" />
-        <p className="text-[11px] font-medium text-gray-500 dark:text-slate-400">Execution Log</p>
+        <FileCode2 size={14} className="text-slate-500 dark:text-slate-400" />
+        <p className="text-[13px] font-medium text-gray-500 dark:text-slate-400">Execution Log</p>
         {focusRange && (
-          <span className="ml-auto text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+          <span className="ml-auto text-[12px] text-amber-600 dark:text-amber-400 font-medium">
             showing lines {focusRange[0] + 1}–{focusRange[1]}
           </span>
         )}
       </div>
-      <div ref={scrollRef} className="p-3 space-y-1 font-mono text-[10px] max-h-44 sidebar-scroll overflow-y-auto">
+      <div ref={scrollRef} className="p-3 space-y-1 font-mono text-[12px] max-h-44 sidebar-scroll overflow-y-auto">
         {lines.map((l, i) => {
           const isRollback  = l.text.startsWith('[ROLLBACK]');
           const isInfo      = l.text.startsWith('[START]') || l.text.startsWith('[DONE]') || l.text.startsWith('[INFO]');
@@ -317,15 +317,15 @@ function LogPanel({ lines, running, focusRange }: {
           return (
             <div key={i} data-li={i}
               className={`flex items-start gap-1.5 rounded px-1 -mx-1 ${colorCls} ${highlighted ? 'bg-amber-50 dark:bg-amber-950/25 ring-1 ring-amber-300 dark:ring-amber-800' : ''}`}>
-              <Icon size={10} className="mt-0.5 shrink-0" />
+              <Icon size={12} className="mt-0.5 shrink-0" />
               <span>
-                {l.ts && <span className="opacity-40 mr-1.5 font-mono text-[9px]">{l.ts}</span>}
+                {l.ts && <span className="opacity-40 mr-1.5 font-mono text-[11px]">{l.ts}</span>}
                 <span className="opacity-50 mr-1">[{l.step}]</span>{l.text}
               </span>
             </div>
           );
         })}
-        {running && <div className="flex items-center gap-1.5 text-gray-400"><Loader2 size={10} className="animate-spin" /> Running…</div>}
+        {running && <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400"><Loader2 size={12} className="animate-spin" /> Running…</div>}
       </div>
     </div>
   );
@@ -351,27 +351,27 @@ function SqlPreview({ sql, filename }: { sql: string; filename: string }) {
   return (
     <div className="shrink-0 border-t border-gray-200 dark:border-slate-800">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
-        <FileCode2 size={12} className="text-emerald-500" />
-        <p className="text-[11px] font-medium text-gray-500 dark:text-slate-400">
+        <FileCode2 size={14} className="text-emerald-500" />
+        <p className="text-[13px] font-medium text-gray-500 dark:text-slate-400">
           SQL Output <span className="opacity-60">({(sql.length / 1024).toFixed(1)} KB)</span>
         </p>
         <div className="ml-auto flex items-center gap-1">
           <button type="button" onClick={() => setExpanded(v => !v)}
-            className="px-2 py-0.5 text-[10px] rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700">
+            className="px-2 py-0.5 text-[12px] rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700">
             {expanded ? 'Collapse' : 'Preview'}
           </button>
           <button type="button" onClick={copy}
-            className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700">
-            {copied ? <Check size={10} /> : <Copy size={10} />} {copied ? 'Copied' : 'Copy'}
+            className="flex items-center gap-1 px-2 py-0.5 text-[12px] rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700">
+            {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}
           </button>
           <button type="button" onClick={download}
-            className="flex items-center gap-1 px-2.5 py-0.5 text-[10px] rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700">
-            <Download size={10} /> Download
+            className="flex items-center gap-1 px-2.5 py-0.5 text-[12px] rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700">
+            <Download size={12} /> Download
           </button>
         </div>
       </div>
       {expanded && (
-        <pre className="px-4 py-3 text-[10px] font-mono text-gray-600 dark:text-slate-300 max-h-52 sidebar-scroll overflow-y-auto whitespace-pre-wrap break-words">
+        <pre className="px-4 py-3 text-[12px] font-mono text-gray-600 dark:text-slate-300 max-h-52 sidebar-scroll overflow-y-auto whitespace-pre-wrap break-words">
           {sql.slice(0, 8000)}{sql.length > 8000 ? '\n… (truncated)' : ''}
         </pre>
       )}
@@ -389,23 +389,23 @@ function CrossDbAlertModal({ srcType, tgtType, onClose }: {
     <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
       <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 rounded-2xl shadow-2xl">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-rose-100 dark:border-rose-900">
-          <AlertCircle size={15} className="text-rose-500 shrink-0" />
-          <p className="font-semibold text-sm text-gray-900 dark:text-slate-100">Cross-DB Sync Not Supported</p>
+          <AlertCircle size={17} className="text-rose-500 shrink-0" />
+          <p className="font-semibold text-base text-gray-900 dark:text-slate-100">Cross-DB Sync Not Supported</p>
         </div>
-        <div className="px-5 py-4 space-y-3 text-sm text-gray-600 dark:text-slate-300">
+        <div className="px-5 py-4 space-y-3 text-base text-gray-600 dark:text-slate-300">
           <p>Source and target are different database types:</p>
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs font-semibold">
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-sm font-semibold">
             <span className={srcType === 'mysql' ? 'text-orange-600 dark:text-orange-400' : 'text-blue-600 dark:text-blue-400'}>{label(srcType)}</span>
-            <ArrowRightLeft size={12} className="text-rose-400 shrink-0" />
+            <ArrowRightLeft size={14} className="text-rose-400 shrink-0" />
             <span className={tgtType === 'mysql' ? 'text-orange-600 dark:text-orange-400' : 'text-blue-600 dark:text-blue-400'}>{label(tgtType)}</span>
           </div>
-          <p className="text-[11px] text-gray-400 dark:text-slate-500">
+          <p className="text-[13px] text-gray-400 dark:text-slate-500">
             Use the <strong className="text-gray-600 dark:text-slate-300">Migration</strong> module to move data between MySQL and PostgreSQL.
           </p>
         </div>
         <div className="px-5 py-4 border-t border-gray-100 dark:border-slate-800 flex justify-end">
           <button onClick={onClose}
-            className="px-5 py-2 rounded-lg text-sm font-medium bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
+            className="px-5 py-2 rounded-lg text-base font-medium bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
             OK, understood
           </button>
         </div>
@@ -428,33 +428,33 @@ function GuidePopover() {
   }, [open]);
 
   const pill = (text: string) => (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{text}</span>
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[12px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{text}</span>
   );
-  const h3 = 'flex items-center gap-1.5 text-xs font-semibold text-gray-800 dark:text-slate-100';
-  const sec = 'mt-2 space-y-1.5 text-[11px] text-gray-600 dark:text-slate-300 leading-relaxed';
+  const h3 = 'flex items-center gap-1.5 text-sm font-semibold text-gray-800 dark:text-slate-100';
+  const sec = 'mt-2 space-y-1.5 text-[13px] text-gray-600 dark:text-slate-300 leading-relaxed';
   const sep = 'border-t border-gray-100 dark:border-slate-800';
 
   return (
     <div ref={ref} className="relative flex items-center">
       <button
         onClick={() => setOpen(v => !v)}
-        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors border ${open
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors border ${open
           ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
           : 'text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-transparent hover:border-blue-200 dark:hover:border-blue-800'}`}
       >
-        <HelpCircle size={13} /> Guide
+        <HelpCircle size={15} /> Guide
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-2 z-50 w-[420px] max-h-[74vh] flex flex-col bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden">
           <div className="shrink-0 flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 dark:border-slate-800">
-            <BookOpen size={14} className="text-blue-500" />
-            <p className="flex-1 font-semibold text-sm text-gray-900 dark:text-slate-100">Data Maintenance Guide</p>
-            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={14} /></button>
+            <BookOpen size={16} className="text-blue-500" />
+            <p className="flex-1 font-semibold text-base text-gray-900 dark:text-slate-100">Data Maintenance Guide</p>
+            <button onClick={() => setOpen(false)} className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-[11px]">
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-[13px]">
 
             <div>
-              <p className={h3}><Info size={12} className="text-blue-500" /> Navigation</p>
+              <p className={h3}><Info size={14} className="text-blue-500" /> Navigation</p>
               <div className={sec}>
                 <p>Use the <strong>5-panel flow</strong> left to right: pick a connection → database → schema → tables. Then click the action button in the toolbar.</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
@@ -470,7 +470,7 @@ function GuidePopover() {
             <div className={sep} />
 
             <div>
-              <p className={h3}><Download size={12} className="text-blue-500" /> Export</p>
+              <p className={h3}><Download size={14} className="text-blue-500" /> Export</p>
               <div className={sec}>
                 <p>Select connection → database → schema → tables, then configure options in the toolbar and click {pill('Export')}.</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
@@ -485,7 +485,7 @@ function GuidePopover() {
             <div className={sep} />
 
             <div>
-              <p className={h3}><UploadCloud size={12} className="text-emerald-500" /> Import</p>
+              <p className={h3}><UploadCloud size={14} className="text-emerald-500" /> Import</p>
               <div className={sec}>
                 <p>Select <strong>target</strong> connection → database, then paste or upload SQL. Click {pill('Import')} (or {pill('Preview')} first).</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
@@ -494,14 +494,14 @@ function GuidePopover() {
                   <li>{pill('Preview')} — shows a dry-run breakdown (CREATE/INSERT/DROP counts) before executing.</li>
                   <li>Import runs with per-statement rollback — a failed statement rolls back only that statement.</li>
                 </ul>
-                <p className="text-[10px] text-gray-400 dark:text-slate-500">Panels 3 (Schema) and 4 (Tables) are not applicable for Import — table selection comes from the SQL input itself.</p>
+                <p className="text-[12px] text-gray-400 dark:text-slate-500">Panels 3 (Schema) and 4 (Tables) are not applicable for Import — table selection comes from the SQL input itself.</p>
               </div>
             </div>
 
             <div className={sep} />
 
             <div>
-              <p className={h3}><ArrowRightLeft size={12} className="text-violet-500" /> Sync</p>
+              <p className={h3}><ArrowRightLeft size={14} className="text-violet-500" /> Sync</p>
               <div className={sec}>
                 <p>Copy data from a source database to a target database of the <strong>same type</strong> (MySQL→MySQL or PG→PG).</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
@@ -516,7 +516,7 @@ function GuidePopover() {
             <div className={sep} />
 
             <div>
-              <p className={h3}><Clock size={12} className="text-gray-500" /> Saved Jobs</p>
+              <p className={h3}><Clock size={14} className="text-slate-500 dark:text-slate-400" /> Saved Jobs</p>
               <div className={sec}>
                 <p>Every completed Export, Import, or Sync operation is saved automatically. Click the chevron notch on the right edge to collapse/expand the panel.</p>
                 <p>Each entry shows status, timestamp, source/target databases, table count, format, and conflict strategy. Click {pill('×')} to delete an entry.</p>
@@ -549,7 +549,7 @@ function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgt
   ) => (
     <div className="flex-1 sidebar-scroll overflow-y-auto p-2 space-y-1">
       {connections.length === 0 ? (
-        <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center py-6 italic">
+        <p className="text-[13px] text-gray-400 dark:text-slate-500 text-center py-6 italic">
           No saved connections.<br />
           <Link href="/settings" className="text-blue-500 hover:underline not-italic">Add one →</Link>
         </p>
@@ -567,12 +567,12 @@ function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgt
               className={`w-full flex items-start gap-2 px-2.5 py-2 rounded-lg text-left transition-all border ${
                 active ? sel : 'border-transparent hover:bg-gray-50 dark:hover:bg-slate-800/60'
               }`}>
-              <Database size={12} className={`mt-0.5 shrink-0 ${active ? selIcon : 'text-gray-400 dark:text-slate-500'}`} />
+              <Database size={14} className={`mt-0.5 shrink-0 ${active ? selIcon : 'text-slate-500 dark:text-slate-400'}`} />
               <div className="flex-1 min-w-0">
-                <p className={`text-[11px] font-medium truncate ${active ? selText : 'text-gray-800 dark:text-slate-200'}`}>{c.label}</p>
-                <p className="text-[10px] text-gray-400 dark:text-slate-500 truncate font-mono">{c.host}:{c.port}</p>
+                <p className={`text-[13px] font-medium truncate ${active ? selText : 'text-gray-800 dark:text-slate-200'}`}>{c.label}</p>
+                <p className="text-[12px] text-gray-400 dark:text-slate-500 truncate font-mono">{c.host}:{c.port}</p>
               </div>
-              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${dbTypeBadge(c.db_type)}`}>
+              <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${dbTypeBadge(c.db_type)}`}>
                 {c.db_type === 'mysql' ? 'MySQL' : 'PG'}
               </span>
             </button>
@@ -587,23 +587,23 @@ function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgt
       {isDual ? (
         <>
           <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-200 dark:border-slate-800">
-            <Server size={12} className="text-blue-500 shrink-0" />
-            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Source</span>
+            <Server size={14} className="text-blue-500 shrink-0" />
+            <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">Source</span>
           </div>
           {renderList(value, onChange, 'blue')}
           <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
-            <Server size={12} className="text-violet-500 shrink-0" />
-            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Target</span>
+            <Server size={14} className="text-violet-500 shrink-0" />
+            <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">Target</span>
           </div>
           {renderList(tgtValue!, onTgtChange!, 'violet')}
         </>
       ) : (
         <>
           <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
-            <Server size={12} className="text-blue-500 shrink-0" />
-            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">{label ?? 'Connection'}</span>
+            <Server size={14} className="text-blue-500 shrink-0" />
+            <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">{label ?? 'Connection'}</span>
             {connections.length > 0 && (
-              <span className="ml-auto text-[10px] font-mono text-gray-400 dark:text-slate-500">{connections.length}</span>
+              <span className="ml-auto text-[12px] font-mono text-gray-400 dark:text-slate-500">{connections.length}</span>
             )}
           </div>
           {renderList(value, onChange, 'blue')}
@@ -707,18 +707,18 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
   return (
     <div className="w-full h-full bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
       <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
-        <Database size={12} className="text-purple-500 shrink-0" />
-        <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Database</span>
+        <Database size={14} className="text-purple-500 shrink-0" />
+        <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">Database</span>
         {conn && (
           <button type="button" onClick={() => void load(conn)} title="Refresh"
             className="ml-auto p-0.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
-            {loading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+            {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
           </button>
         )}
       </div>
       <div className="flex-1 sidebar-scroll overflow-y-auto">
         {!conn ? (
-          <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a connection first</p>
+          <p className="text-[13px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a connection first</p>
         ) : (
           <div className="p-2 space-y-0.5">
             {dbs.map(db => {
@@ -732,10 +732,10 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
                         ? 'bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300'
                         : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
                     }`}>
-                    <Database size={10} className={active ? 'text-purple-400 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
-                    <span className="text-[11px] font-mono truncate flex-1">{db}</span>
+                    <Database size={12} className={active ? 'text-purple-400 shrink-0' : 'text-slate-400 dark:text-slate-500 shrink-0'} />
+                    <span className="text-[13px] font-mono truncate flex-1">{db}</span>
                     {active && pct !== null && (
-                      <span className="text-[9px] font-mono text-violet-500 dark:text-violet-400 shrink-0">{pct}%</span>
+                      <span className="text-[11px] font-mono text-violet-500 dark:text-violet-400 shrink-0">{pct}%</span>
                     )}
                   </button>
                   {active && pct !== null && (
@@ -754,16 +754,16 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
       {tgtConn && onTgtChange && (
         <>
           <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
-            <Database size={11} className="text-violet-500 shrink-0" />
-            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Target DB</span>
+            <Database size={13} className="text-violet-500 shrink-0" />
+            <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">Target DB</span>
             <button type="button" onClick={() => void loadTgt(tgtConn)} title="Refresh"
               className="ml-auto p-0.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
-              {tgtLoading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+              {tgtLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
             </button>
           </div>
           <div className="flex-1 sidebar-scroll overflow-y-auto">
             {tgtDbs.length === 0 && !tgtLoading ? (
-              <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">
+              <p className="text-[13px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">
                 {tgtConn ? 'No databases found' : 'Select target connection'}
               </p>
             ) : (
@@ -777,8 +777,8 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
                           ? 'bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300'
                           : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
                       }`}>
-                      <Database size={10} className={active ? 'text-violet-400 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
-                      <span className="text-[11px] font-mono truncate flex-1">{db}</span>
+                      <Database size={12} className={active ? 'text-violet-400 shrink-0' : 'text-slate-400 dark:text-slate-500 shrink-0'} />
+                      <span className="text-[13px] font-mono truncate flex-1">{db}</span>
                     </button>
                   );
                 })}
@@ -794,23 +794,23 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
             <div className="space-y-1.5">
               <input type="text" value={newName} onChange={e => { setNewName(e.target.value); setCreateErr(null); }}
                 placeholder="new_db_name" autoFocus
-                className="w-full px-2 py-1.5 text-[11px] font-mono rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
-              {createErr && <p className="text-[10px] text-rose-500">{createErr}</p>}
+                className="w-full px-2 py-1.5 text-[13px] font-mono rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+              {createErr && <p className="text-[12px] text-rose-500">{createErr}</p>}
               <div className="flex gap-1">
                 <button type="button" onClick={() => void handleCreate()} disabled={creating || !newName.trim()}
-                  className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-[10px] rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
-                  {creating ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />} Create
+                  className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-[12px] rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+                  {creating ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Create
                 </button>
                 <button type="button" onClick={() => { setShowNew(false); setCreateErr(null); setNewName(''); }}
-                  className="px-2 py-1.5 text-[10px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">
+                  className="px-2 py-1.5 text-[12px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">
                   Cancel
                 </button>
               </div>
             </div>
           ) : (
             <button type="button" onClick={() => setShowNew(true)}
-              className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
-              <Plus size={11} /> New Database…
+              className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+              <Plus size={13} /> New Database…
             </button>
           )}
         </div>
@@ -881,9 +881,9 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
   ) => (
     <div className="flex-1 sidebar-scroll overflow-y-auto">
       {isLoading ? (
-        <div className="flex justify-center py-6"><Loader2 size={12} className="animate-spin text-gray-400" /></div>
+        <div className="flex justify-center py-6"><Loader2 size={14} className="animate-spin text-slate-500 dark:text-slate-400" /></div>
       ) : items.length === 0 ? (
-        <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">No schemas found</p>
+        <p className="text-[12px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">No schemas found</p>
       ) : (
         <div className="p-2 space-y-0.5">
           {items.map(s => {
@@ -898,8 +898,8 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
                   active ? cls : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
                 }`}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-mono truncate">{s.schema}</p>
-                  <p className="text-[9px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</p>
+                  <p className="text-[13px] font-mono truncate">{s.schema}</p>
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</p>
                 </div>
               </button>
             );
@@ -913,31 +913,31 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
     <div className="w-full h-full bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
       {/* Source schema header */}
       <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
-        <Server size={12} className={isPg ? 'text-teal-500 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
-        <span className={`text-[11px] font-semibold ${isPg ? 'text-gray-700 dark:text-slate-200' : 'text-gray-400 dark:text-slate-600'}`}>
+        <Server size={14} className={isPg ? 'text-teal-500 shrink-0' : 'text-slate-400 dark:text-slate-500 shrink-0'} />
+        <span className={`text-[13px] font-semibold ${isPg ? 'text-gray-700 dark:text-slate-200' : 'text-gray-400 dark:text-slate-600'}`}>
           {isDual ? 'Source Schema' : 'Schema'}
         </span>
-        {loading && <Loader2 size={10} className="animate-spin text-gray-400 ml-auto" />}
+        {loading && <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400 ml-auto" />}
       </div>
 
       {!isPg ? (
-        <p className="text-[10px] text-gray-400 dark:text-slate-600 text-center py-8 px-2 italic">PostgreSQL only</p>
+        <p className="text-[12px] text-gray-400 dark:text-slate-600 text-center py-8 px-2 italic">PostgreSQL only</p>
       ) : !conn || !database ? (
-        <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a DB first</p>
+        <p className="text-[12px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a DB first</p>
       ) : renderList(schemas, value, onChange, 'teal', loading, onItemContextMenu)}
 
       {/* Target schema section (sync only) */}
       {isDual && (
         <>
           <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
-            <Server size={11} className="text-violet-500 shrink-0" />
-            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Target Schema</span>
-            {tgtLoading && <Loader2 size={10} className="animate-spin text-gray-400 ml-auto" />}
+            <Server size={13} className="text-violet-500 shrink-0" />
+            <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">Target Schema</span>
+            {tgtLoading && <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400 ml-auto" />}
           </div>
           {!isTgtPg ? (
-            <p className="text-[10px] text-gray-400 dark:text-slate-600 text-center py-6 px-2 italic">PostgreSQL only</p>
+            <p className="text-[12px] text-gray-400 dark:text-slate-600 text-center py-6 px-2 italic">PostgreSQL only</p>
           ) : !tgtConn || !tgtDatabase ? (
-            <p className="text-[10px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">Select target DB first</p>
+            <p className="text-[12px] text-gray-400 dark:text-slate-500 text-center py-6 italic px-2">Select target DB first</p>
           ) : renderList(tgtSchemas, tgtValue ?? '', onTgtChange, 'violet', tgtLoading)}
         </>
       )}
@@ -972,47 +972,47 @@ function HistoryCard({ h, onDelete }: { h: HistoryEntry; onDelete: (id: number) 
     }`}>
       {/* Row 1: operation badge + status icon */}
       <div className="flex items-center gap-1 mb-0.5">
-        <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${OP_BADGE[h.operation] ?? OP_BADGE.export}`}>
+        <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wide ${OP_BADGE[h.operation] ?? OP_BADGE.export}`}>
           {h.operation}
         </span>
-        <p className="text-[11px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">
+        <p className="text-[13px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">
           {connLabel}
         </p>
-        <span className={`shrink-0 text-[10px] font-semibold ${statusCls}`}>
-          {h.status === 'success' ? <CheckCircle2 size={11} /> : h.status === 'failed' ? <XCircle size={11} /> : null}
+        <span className={`shrink-0 text-[12px] font-semibold ${statusCls}`}>
+          {h.status === 'success' ? <CheckCircle2 size={13} /> : h.status === 'failed' ? <XCircle size={13} /> : null}
         </span>
       </div>
       {/* Row 2: db path */}
       {db && (
-        <p className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate mb-0.5">
+        <p className="text-[12px] font-mono text-gray-400 dark:text-slate-500 truncate mb-0.5">
           {db}{h.target_db && h.source_db ? <> → {h.target_db}</> : null}
         </p>
       )}
       {/* Row 3: count + date + expand */}
       <div className="flex items-center gap-1 mb-1">
-        <p className="text-[10px] text-gray-400 dark:text-slate-500 flex-1">
+        <p className="text-[12px] text-gray-400 dark:text-slate-500 flex-1">
           {h.tables_count > 0 ? `${h.tables_count} table${h.tables_count !== 1 ? 's' : ''}` : '—'}
           {' · '}{timeAgo(h.created_at)}
         </p>
         <button onClick={() => setExpanded(v => !v)}
           className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
-          {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+          {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
       </div>
       {/* Expanded: meta detail */}
       {expanded && (
         <div className="mb-1.5 border border-gray-100 dark:border-slate-700 rounded px-2 py-1.5 space-y-0.5">
-          {h.format && <p className="text-[10px] text-gray-500 dark:text-slate-400">Format: <span className="font-medium uppercase">{h.format}</span></p>}
-          {h.include && <p className="text-[10px] text-gray-500 dark:text-slate-400">Include: {h.include.replace(/_/g, ' ')}</p>}
-          {h.conflict && h.conflict !== 'insert_only' && <p className="text-[10px] text-gray-500 dark:text-slate-400">Conflict: {h.conflict.replace(/_/g, ' ')}</p>}
-          {h.where_clause && <p className="text-[10px] font-mono text-gray-500 dark:text-slate-400 truncate" title={h.where_clause}>WHERE {h.where_clause}</p>}
+          {h.format && <p className="text-[12px] text-gray-500 dark:text-slate-400">Format: <span className="font-medium uppercase">{h.format}</span></p>}
+          {h.include && <p className="text-[12px] text-gray-500 dark:text-slate-400">Include: {h.include.replace(/_/g, ' ')}</p>}
+          {h.conflict && h.conflict !== 'insert_only' && <p className="text-[12px] text-gray-500 dark:text-slate-400">Conflict: {h.conflict.replace(/_/g, ' ')}</p>}
+          {h.where_clause && <p className="text-[12px] font-mono text-gray-500 dark:text-slate-400 truncate" title={h.where_clause}>WHERE {h.where_clause}</p>}
         </div>
       )}
       {/* Row 4: actions */}
       <div className="flex items-center gap-1">
         <button type="button" onClick={() => onDelete(h.id)}
           className="ml-auto p-1 rounded text-gray-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
-          <Trash2 size={11} />
+          <Trash2 size={13} />
         </button>
       </div>
     </div>
@@ -1050,12 +1050,12 @@ function SavedJobsPanel({ collapsed, onToggle, refreshKey }: {
     <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${collapsed ? 'w-9' : 'w-64'}`}>
       {/* Header — always visible */}
       <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
-        {!collapsed && <Save size={11} className="text-gray-400 shrink-0" />}
-        {!collapsed && <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">Saved Jobs</span>}
-        {!collapsed && history.length > 0 && <span className="text-[10px] text-gray-400 shrink-0">{visible.length}/{history.length}</span>}
+        {!collapsed && <Save size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />}
+        {!collapsed && <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">Saved Jobs</span>}
+        {!collapsed && history.length > 0 && <span className="text-[12px] text-gray-400 shrink-0">{visible.length}/{history.length}</span>}
         <button onClick={onToggle}
           className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ml-auto">
-          {collapsed ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
+          {collapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
         </button>
       </div>
 
@@ -1065,7 +1065,7 @@ function SavedJobsPanel({ collapsed, onToggle, refreshKey }: {
           <div className="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-gray-100 dark:border-slate-800">
             {(['all', 'export', 'import', 'sync', 'replace'] as const).map(op => (
               <button key={op} onClick={() => setFilter(op)}
-                className={`px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide transition-colors ${
+                className={`px-1.5 py-0.5 rounded text-[11px] font-medium uppercase tracking-wide transition-colors ${
                   filter === op
                     ? (op === 'all' ? 'bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200'
                       : OP_BADGE[op])
@@ -1077,11 +1077,11 @@ function SavedJobsPanel({ collapsed, onToggle, refreshKey }: {
           </div>
           <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
             {loading ? (
-              <div className="flex justify-center py-6"><Loader2 size={12} className="animate-spin text-gray-300" /></div>
+              <div className="flex justify-center py-6"><Loader2 size={14} className="animate-spin text-slate-400 dark:text-slate-500" /></div>
             ) : visible.length === 0 ? (
               <div className="py-8 text-center">
-                <Save size={22} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
-                <p className="text-[11px] text-gray-400 dark:text-slate-500">No {filter === 'all' ? '' : filter + ' '}jobs yet.</p>
+                <Save size={24} className="mx-auto text-slate-400 dark:text-slate-500 mb-2" />
+                <p className="text-[13px] text-gray-400 dark:text-slate-500">No {filter === 'all' ? '' : filter + ' '}jobs yet.</p>
               </div>
             ) : visible.map(h => (
               <HistoryCard key={h.id} h={h} onDelete={id => void handleDelete(id)} />
@@ -1494,7 +1494,7 @@ export default function ExportImportPage() {
 
   // Segmented control style
   const seg = (active: boolean) =>
-    `px-2 py-1 text-[10px] rounded border transition-colors ${active ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`;
+    `px-2 py-1 text-[12px] rounded border transition-colors ${active ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`;
 
   // Tooltip wrapper for toolbar seg buttons
   const BtnTip = ({ tip, children }: { tip: string; children: React.ReactNode }) => {
@@ -1504,7 +1504,7 @@ export default function ExportImportPage() {
         onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
         {children}
         {show && (
-          <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1.5 z-[100] whitespace-nowrap bg-gray-900 dark:bg-slate-700 text-white text-[10px] leading-snug px-2 py-1 rounded shadow-lg pointer-events-none">
+          <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1.5 z-[100] whitespace-nowrap bg-gray-900 dark:bg-slate-700 text-white text-[12px] leading-snug px-2 py-1 rounded shadow-lg pointer-events-none">
             {tip}
           </span>
         )}
@@ -1522,10 +1522,10 @@ export default function ExportImportPage() {
 
           {/* Module identity (compact, replaces separate header) */}
           <div className="flex items-center gap-1.5 mr-1 shrink-0">
-            <UploadCloud size={13} className="text-emerald-500 shrink-0" />
+            <UploadCloud size={15} className="text-emerald-500 shrink-0" />
             <div className="leading-none">
-              <p className="text-[11px] font-bold text-gray-800 dark:text-slate-100 leading-none">Data Maintenance</p>
-              <p className="text-[9px] text-gray-400 dark:text-slate-500 mt-0.5 leading-none">Backup · Import · Sync · Copy</p>
+              <p className="text-[13px] font-bold text-gray-800 dark:text-slate-100 leading-none">Data Maintenance</p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5 leading-none">Backup · Import · Sync · Copy</p>
             </div>
           </div>
 
@@ -1539,12 +1539,12 @@ export default function ExportImportPage() {
             { key: 'replace' as Tab, label: 'Replace', Icon: Replace },
           ]).map(({ key, label, Icon }) => (
             <button key={key} type="button" onClick={() => handleTabChange(key)}
-              className={`self-stretch inline-flex items-center gap-1.5 px-3 text-[11px] font-medium border-b-2 transition-colors ${
+              className={`self-stretch inline-flex items-center gap-1.5 px-3 text-[13px] font-medium border-b-2 transition-colors ${
                 tab === key
                   ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
               }`}>
-              <Icon size={11} /> {label}
+              <Icon size={13} /> {label}
             </button>
           ))}
 
@@ -1554,7 +1554,7 @@ export default function ExportImportPage() {
           {tab === 'export' && (
             <>
               <div className="flex items-center gap-1">
-                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Include</span>
+                <span className="text-[12px] text-gray-400 dark:text-slate-500 mr-0.5">Include</span>
                 {([
                   { v: 'both'   as ExportInclude, label: 'Schema+Data' },
                   { v: 'schema' as ExportInclude, label: 'Schema'      },
@@ -1565,15 +1565,15 @@ export default function ExportImportPage() {
               </div>
               <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
               <div className="flex items-center gap-1">
-                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Format</span>
+                <span className="text-[12px] text-gray-400 dark:text-slate-500 mr-0.5">Format</span>
                 {(['sql', 'csv'] as ExportFormat[]).map(v => (
                   <button key={v} onClick={() => setFormat(v)} className={`${seg(format === v)} uppercase`}>{v}</button>
                 ))}
               </div>
               <BtnTip tip="WHERE filter — applies a WHERE clause to all data SELECT queries">
                 <button onClick={() => setShowFilter(v => !v)}
-                  className={`inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded border transition-colors ${showFilter ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
-                  <Filter size={10} /> Filter
+                  className={`inline-flex items-center gap-1 px-2 py-1 text-[12px] rounded border transition-colors ${showFilter ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
+                  <Filter size={12} /> Filter
                 </button>
               </BtnTip>
             </>
@@ -1582,11 +1582,11 @@ export default function ExportImportPage() {
           {/* Import options */}
           {tab === 'import' && (
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">Input</span>
+              <span className="text-[12px] text-gray-400 dark:text-slate-500 mr-0.5">Input</span>
               {(['sql', 'excel'] as const).map(m => (
                 <button key={m} onClick={() => setImportMode(m)}
                   className={`${seg(importMode === m)} inline-flex items-center gap-1`}>
-                  {m === 'excel' ? <FileSpreadsheet size={9} /> : <FileCode2 size={9} />}
+                  {m === 'excel' ? <FileSpreadsheet size={11} /> : <FileCode2 size={11} />}
                   {m === 'sql' ? 'SQL' : 'Excel'}
                 </button>
               ))}
@@ -1596,7 +1596,7 @@ export default function ExportImportPage() {
           {/* Sync options — removed from toolbar; use right-click context menu on tables instead */}
           {tab === 'sync' && (
             <BtnTip tip="Right-click any table to set conflict strategy and copy/replace options">
-              <span className="text-[10px] text-gray-400 dark:text-slate-500 cursor-default select-none italic">right-click table for options</span>
+              <span className="text-[12px] text-gray-400 dark:text-slate-500 cursor-default select-none italic">right-click table for options</span>
             </BtnTip>
           )}
 
@@ -1604,7 +1604,7 @@ export default function ExportImportPage() {
           {tab === 'replace' && (
             <>
               <div className="flex items-center gap-1">
-                <span className="text-[10px] text-gray-400 dark:text-slate-500 mr-0.5">incl</span>
+                <span className="text-[12px] text-gray-400 dark:text-slate-500 mr-0.5">incl</span>
                 {([
                   { v: 'both'   as ExportInclude, label: 'Schema+Data' },
                   { v: 'schema' as ExportInclude, label: 'Schema'      },
@@ -1620,35 +1620,35 @@ export default function ExportImportPage() {
           <div className="ml-auto flex items-center gap-2">
             {tab === 'import' && importSql.trim() && (
               <button type="button" onClick={() => setShowDryRun(true)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                <Eye size={11} /> Preview
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                <Eye size={13} /> Preview
               </button>
             )}
             {tab === 'sync' && (
               <button type="button" onClick={() => void handleAnalyse()} disabled={!canAnalyse}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded-lg border border-teal-400 dark:border-teal-700 text-teal-700 dark:text-teal-400 bg-transparent hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40 transition-colors">
-                {analysing ? <Loader2 size={11} className="animate-spin" /> : <ShieldAlert size={11} />}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13px] rounded-lg border border-teal-400 dark:border-teal-700 text-teal-700 dark:text-teal-400 bg-transparent hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40 transition-colors">
+                {analysing ? <Loader2 size={13} className="animate-spin" /> : <ShieldAlert size={13} />}
                 {analysing ? 'Analysing…' : 'Analyse'}
               </button>
             )}
             {runStatus && (
-              <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${runStatus === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                {runStatus === 'success' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+              <span className={`inline-flex items-center gap-1 text-[13px] font-medium ${runStatus === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                {runStatus === 'success' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                 {runStatus === 'success'
                   ? (tab === 'export' ? 'Exported' : tab === 'import' ? 'Imported' : tab === 'replace' ? 'Replaced' : 'Synced')
                   : 'Failed'}
               </span>
             )}
             <button type="button" onClick={handleRun} disabled={!canRun}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-40 ${
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors disabled:opacity-40 ${
                 tab === 'export'  ? 'border border-blue-500 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-50 dark:hover:bg-blue-900/20' :
                 tab === 'import'  ? 'bg-emerald-600 hover:bg-emerald-700 text-white' :
                 tab === 'replace' ? 'bg-rose-600 hover:bg-rose-700 text-white' :
                 'border border-violet-500 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20'
               }`}>
               {running
-                ? <Loader2 size={11} className="animate-spin" />
-                : tab === 'export' ? <Download size={11} /> : tab === 'import' ? <UploadCloud size={11} /> : tab === 'replace' ? <Replace size={11} /> : <ArrowRightLeft size={11} />}
+                ? <Loader2 size={13} className="animate-spin" />
+                : tab === 'export' ? <Download size={13} /> : tab === 'import' ? <UploadCloud size={13} /> : tab === 'replace' ? <Replace size={13} /> : <ArrowRightLeft size={13} />}
               {running
                 ? (tab === 'export' ? 'Exporting…' : tab === 'import' ? 'Importing…' : tab === 'replace' ? 'Replacing…' : 'Syncing…')
                 : (tab === 'export' ? `Export${format === 'csv' ? ' CSV' : ''}` : tab === 'import' ? 'Import' : tab === 'replace' ? 'Replace' : 'Sync')}
@@ -1660,19 +1660,19 @@ export default function ExportImportPage() {
         {/* ── WHERE filter row (Export only) ── */}
         {tab === 'export' && showFilter && (
           <div className="shrink-0 flex items-center gap-2 border-b border-gray-200 dark:border-slate-800 bg-amber-50 dark:bg-amber-950/10 px-4 py-2">
-            <Filter size={11} className="text-amber-500 shrink-0" />
+            <Filter size={13} className="text-amber-500 shrink-0" />
             <input type="text" value={whereClause} onChange={e => setWhere(e.target.value)}
               placeholder="WHERE clause applied to all SELECT queries  (e.g.  created_at > '2025-01-01')"
-              className="flex-1 text-[11px] font-mono bg-transparent text-gray-800 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none" />
+              className="flex-1 text-[13px] font-mono bg-transparent text-gray-800 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none" />
             <button onClick={() => { setShowFilter(false); setWhere(''); }}
-              className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={12} /></button>
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={14} /></button>
           </div>
         )}
 
         {/* ── 5-Panel Content ── */}
         {loadingConns ? (
-          <div className="flex-1 flex items-center justify-center gap-2 text-sm text-gray-400 dark:text-slate-500">
-            <Loader2 size={14} className="animate-spin" /> Loading connections…
+          <div className="flex-1 flex items-center justify-center gap-2 text-base text-gray-400 dark:text-slate-500">
+            <Loader2 size={16} className="animate-spin" /> Loading connections…
           </div>
         ) : (
           <div className="flex flex-1 overflow-hidden">
@@ -1729,14 +1729,14 @@ export default function ExportImportPage() {
 
               {/* Panel 4 header */}
               <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
-                <Table2 size={12} className="text-blue-500 shrink-0" />
-                <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">
+                <Table2 size={14} className="text-blue-500 shrink-0" />
+                <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">
                   {tab === 'import' ? 'SQL Input' : 'Tables'}
                 </span>
                 {tab !== 'import' && tableList.length > 0 && (
-                  <span className="text-[10px] text-gray-400 dark:text-slate-500">{tableList.length} tables</span>
+                  <span className="text-[12px] text-gray-400 dark:text-slate-500">{tableList.length} tables</span>
                 )}
-                {tablesLoading && <Loader2 size={10} className="animate-spin text-gray-400 ml-1" />}
+                {tablesLoading && <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400 ml-1" />}
                 {tab !== 'import' && tableList.length > 0 && !tablesLoading && (
                   <div className="ml-auto flex items-center gap-1">
                     {tab === 'sync' && analyseResult && (
@@ -1748,14 +1748,14 @@ export default function ExportImportPage() {
                             .filter(Boolean) as string[];
                           setSelectedTables(diffKeys);
                         }}
-                        className="px-2 py-0.5 text-[10px] rounded border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                        className="px-2 py-0.5 text-[12px] rounded border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
                         Select diff
                       </button>
                     )}
                     {(['all', 'custom'] as const).map(m => (
                       <button key={m} type="button"
                         onClick={() => setSelectedTables(m === 'all' ? 'all' : [])}
-                        className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+                        className={`px-2 py-0.5 text-[12px] rounded border transition-colors ${
                           (m === 'all' ? allSelected : !allSelected)
                             ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
                             : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'
@@ -1770,16 +1770,16 @@ export default function ExportImportPage() {
               {tab !== 'import' && (
                 <>
                   {hasLarge && (
-                    <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800 text-[10px] text-amber-700 dark:text-amber-400">
-                      <ShieldAlert size={10} /> Some tables have &gt;50k rows — export may be slow.
+                    <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800 text-[12px] text-amber-700 dark:text-amber-400">
+                      <ShieldAlert size={12} /> Some tables have &gt;50k rows — export may be slow.
                     </div>
                   )}
                   {!conn || !database ? (
-                    <div className="flex-1 flex items-center justify-center text-[11px] text-gray-400 dark:text-slate-500 italic">
+                    <div className="flex-1 flex items-center justify-center text-[13px] text-gray-400 dark:text-slate-500 italic">
                       Select a connection and database to load tables
                     </div>
                   ) : tableList.length === 0 && !tablesLoading ? (
-                    <div className="flex-1 flex items-center justify-center text-[11px] text-gray-400 dark:text-slate-500 italic">
+                    <div className="flex-1 flex items-center justify-center text-[13px] text-gray-400 dark:text-slate-500 italic">
                       No tables found{schema ? ` in schema "${schema}"` : ''}
                     </div>
                   ) : (
@@ -1801,14 +1801,14 @@ export default function ExportImportPage() {
                               onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'table', name: t.name }); }}>
 
                               {/* Sync status indicator (replaces checkbox area when status is set) */}
-                              {syncSt === 'syncing' && <Loader2 size={10} className="animate-spin text-violet-500 shrink-0" />}
-                              {syncSt === 'done'    && <CheckCircle2 size={10} className="text-emerald-500 shrink-0" />}
+                              {syncSt === 'syncing' && <Loader2 size={12} className="animate-spin text-violet-500 shrink-0" />}
+                              {syncSt === 'done'    && <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />}
                               {syncSt === 'error'   && (
                                 <button type="button"
                                   title="Click to see error in log"
                                   onClick={e => { e.preventDefault(); if (logRange) { setFocusRange(logRange); } }}
                                   className="shrink-0">
-                                  <XCircle size={10} className="text-rose-500" />
+                                  <XCircle size={12} className="text-rose-500" />
                                 </button>
                               )}
                               {!syncSt && (
@@ -1824,28 +1824,28 @@ export default function ExportImportPage() {
                                   }} />
                               )}
 
-                              <Table2 size={10} className={`shrink-0 ${hasError ? 'text-rose-400' : 'text-gray-400'}`} />
-                              <span className={`text-[11px] font-mono flex-1 truncate ${hasError ? 'text-rose-600 dark:text-rose-400' : 'text-gray-700 dark:text-slate-300'}`}>{t.name}</span>
+                              <Table2 size={12} className={`shrink-0 ${hasError ? 'text-rose-400' : 'text-slate-500 dark:text-slate-400'}`} />
+                              <span className={`text-[13px] font-mono flex-1 truncate ${hasError ? 'text-rose-600 dark:text-rose-400' : 'text-gray-700 dark:text-slate-300'}`}>{t.name}</span>
                               {t.schema !== 'public' && (
-                                <span className="text-[9px] text-gray-400 dark:text-slate-500 font-mono shrink-0">{t.schema}</span>
+                                <span className="text-[11px] text-gray-400 dark:text-slate-500 font-mono shrink-0">{t.schema}</span>
                               )}
 
                               {/* Diff columns from analyse */}
                               {diff ? (
                                 <span className="flex items-center gap-1 shrink-0">
-                                  <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500">{fmtRows(t.rowCount)}</span>
-                                  <span className="text-[9px] text-gray-300 dark:text-slate-600">→</span>
-                                  <span className={`text-[10px] font-mono ${diff.targetRows === null ? 'text-rose-400' : 'text-gray-400 dark:text-slate-500'}`}>
+                                  <span className="text-[12px] font-mono text-gray-400 dark:text-slate-500">{fmtRows(t.rowCount)}</span>
+                                  <span className="text-[11px] text-gray-300 dark:text-slate-600">→</span>
+                                  <span className={`text-[12px] font-mono ${diff.targetRows === null ? 'text-rose-400' : 'text-gray-400 dark:text-slate-500'}`}>
                                     {diff.targetRows !== null ? fmtRows(diff.targetRows) : '—'}
                                   </span>
                                   {diff.status === 'match'
-                                    ? <CheckCircle2 size={9} className="text-emerald-500 shrink-0" />
+                                    ? <CheckCircle2 size={11} className="text-emerald-500 shrink-0" />
                                     : diff.status === 'diff'
-                                    ? <AlertCircle size={9} className="text-amber-500 shrink-0" />
-                                    : <Info size={9} className="text-blue-400 shrink-0" />}
+                                    ? <AlertCircle size={11} className="text-amber-500 shrink-0" />
+                                    : <Info size={11} className="text-blue-400 shrink-0" />}
                                 </span>
                               ) : (
-                                <span className={`text-[10px] font-mono shrink-0 ${t.rowCount > 50_000 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
+                                <span className={`text-[12px] font-mono shrink-0 ${t.rowCount > 50_000 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
                                   {fmtRows(t.rowCount)}
                                 </span>
                               )}
@@ -1856,7 +1856,7 @@ export default function ExportImportPage() {
                                   title="Sync this table"
                                   onClick={e => { e.preventDefault(); void handleSyncSingle(t.name); }}
                                   className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-opacity shrink-0">
-                                  <ArrowRightLeft size={9} />
+                                  <ArrowRightLeft size={11} />
                                 </button>
                               )}
                               {/* Per-table replace button (replace tab, hover, not while running) */}
@@ -1887,7 +1887,7 @@ export default function ExportImportPage() {
                                     });
                                   }}
                                   className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-opacity shrink-0">
-                                  <Replace size={9} />
+                                  <Replace size={11} />
                                 </button>
                               )}
                             </label>
@@ -1899,10 +1899,10 @@ export default function ExportImportPage() {
                           .map(r => (
                             <div key={`tgt:${r.name}`} className="flex items-center gap-2.5 px-3 py-2 opacity-50">
                               <div className="w-3.5 h-3.5 shrink-0" />
-                              <Table2 size={10} className="text-violet-400 shrink-0" />
-                              <span className="text-[11px] font-mono text-violet-500 dark:text-violet-400 flex-1 truncate">{r.name}</span>
-                              <span className="text-[9px] font-medium text-violet-400 shrink-0">target only</span>
-                              <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 shrink-0">
+                              <Table2 size={12} className="text-violet-400 shrink-0" />
+                              <span className="text-[13px] font-mono text-violet-500 dark:text-violet-400 flex-1 truncate">{r.name}</span>
+                              <span className="text-[11px] font-medium text-violet-400 shrink-0">target only</span>
+                              <span className="text-[12px] font-mono text-gray-400 dark:text-slate-500 shrink-0">
                                 {r.targetRows !== null ? fmtRows(r.targetRows) : '—'}
                               </span>
                             </div>
@@ -1923,12 +1923,12 @@ export default function ExportImportPage() {
                       className="flex-1 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-200 dark:border-slate-700 hover:border-emerald-400 dark:hover:border-emerald-700 cursor-pointer transition-colors"
                       onClick={() => excelFileRef.current?.click()}>
                       {parsingExcel ? (
-                        <><Loader2 size={22} className="text-emerald-500 animate-spin" /><p className="text-sm text-gray-400">Parsing…</p></>
+                        <><Loader2 size={24} className="text-emerald-500 animate-spin" /><p className="text-base text-slate-500 dark:text-slate-400">Parsing…</p></>
                       ) : (
                         <>
-                          <FileSpreadsheet size={24} className="text-gray-300 dark:text-slate-600" />
-                          <p className="text-sm font-medium text-gray-600 dark:text-slate-300">Drop Excel or click to browse</p>
-                          <p className="text-xs text-gray-400 dark:text-slate-500">Each sheet becomes INSERT statements</p>
+                          <FileSpreadsheet size={26} className="text-slate-400 dark:text-slate-500" />
+                          <p className="text-base font-medium text-gray-600 dark:text-slate-300">Drop Excel or click to browse</p>
+                          <p className="text-sm text-gray-400 dark:text-slate-500">Each sheet becomes INSERT statements</p>
                         </>
                       )}
                       <input ref={excelFileRef} type="file" accept=".xlsx,.xls" className="hidden"
@@ -1940,8 +1940,8 @@ export default function ExportImportPage() {
 
               {/* Error */}
               {error && (
-                <div className="shrink-0 flex items-start gap-2 mx-3 mb-2 p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[11px] text-rose-700 dark:text-rose-400">
-                  <XCircle size={12} className="mt-0.5 shrink-0" /> {error}
+                <div className="shrink-0 flex items-start gap-2 mx-3 mb-2 p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[13px] text-rose-700 dark:text-rose-400">
+                  <XCircle size={14} className="mt-0.5 shrink-0" /> {error}
                 </div>
               )}
 
@@ -2012,7 +2012,7 @@ export default function ExportImportPage() {
 
                   return (
                     <>
-                      <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide truncate max-w-[220px]">
+                      <p className="px-3 pt-1 pb-1 text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide truncate max-w-[220px]">
                         {ctxMenu.scope === 'table' ? '' : ctxMenu.scope + ' · '}{ctxMenu.name}
                         {tables.length > 1 && <span className="ml-1 normal-case font-normal text-gray-300 dark:text-slate-600">({tables.length} tables)</span>}
                       </p>
@@ -2026,10 +2026,10 @@ export default function ExportImportPage() {
                           else void handleSync(t);
                         }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-violet-50 dark:hover:bg-violet-900/20 text-gray-700 dark:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                        <ArrowRightLeft size={13} className="text-violet-500 shrink-0" />
+                        <ArrowRightLeft size={15} className="text-violet-500 shrink-0" />
                         <div>
-                          <p className="text-[11px] font-medium">Copy to target</p>
-                          <p className="text-[10px] text-gray-400 dark:text-slate-500">
+                          <p className="text-[13px] font-medium">Copy to target</p>
+                          <p className="text-[12px] text-gray-400 dark:text-slate-500">
                             {noTgt ? 'Select a target connection first' : noTables ? 'No tables loaded yet' : `Sync ${scopeLabel} using current conflict strategy`}
                           </p>
                         </div>
@@ -2067,10 +2067,10 @@ export default function ExportImportPage() {
                           }
                         }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-rose-50 dark:hover:bg-rose-900/20 text-gray-700 dark:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                        <Replace size={13} className="text-rose-500 shrink-0" />
+                        <Replace size={15} className="text-rose-500 shrink-0" />
                         <div>
-                          <p className="text-[11px] font-medium">Replace on target</p>
-                          <p className="text-[10px] text-gray-400 dark:text-slate-500">
+                          <p className="text-[13px] font-medium">Replace on target</p>
+                          <p className="text-[12px] text-gray-400 dark:text-slate-500">
                             {noTgt ? 'Select a target connection first' : noTables ? 'No tables loaded yet' : `DROP + recreate ${scopeLabel}, then copy all data`}
                           </p>
                         </div>
@@ -2081,7 +2081,7 @@ export default function ExportImportPage() {
                 })()}
 
                 {/* Conflict strategy — always shown in sync context menu */}
-                <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Conflict</p>
+                <p className="px-3 pt-1 pb-1 text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Conflict</p>
                 {([
                   { v: 'insert_only'     as ConflictStrategy, label: 'Insert only',       desc: 'Fail if row exists'   },
                   { v: 'truncate_insert' as ConflictStrategy, label: 'Truncate + Insert', desc: 'Clear table first'    },
@@ -2095,8 +2095,8 @@ export default function ExportImportPage() {
                         {active && <div className="w-1.5 h-1.5 rounded-full bg-violet-500" />}
                       </div>
                       <div>
-                        <p className="text-[11px] font-medium">{label}</p>
-                        <p className="text-[10px] text-gray-400 dark:text-slate-500">{desc}</p>
+                        <p className="text-[13px] font-medium">{label}</p>
+                        <p className="text-[12px] text-gray-400 dark:text-slate-500">{desc}</p>
                       </div>
                     </button>
                   );
@@ -2107,7 +2107,7 @@ export default function ExportImportPage() {
             {/* ── Export tab context menu — Include only ── */}
             {tab !== 'sync' && (
               <>
-                <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Include</p>
+                <p className="px-3 pt-1 pb-1 text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Include</p>
                 {([
                   { v: 'both'   as ExportInclude, label: 'Schema + Data', desc: 'DDL and all rows'  },
                   { v: 'schema' as ExportInclude, label: 'Schema only',   desc: 'DDL, no row data'  },
@@ -2121,8 +2121,8 @@ export default function ExportImportPage() {
                         {active && <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
                       </div>
                       <div>
-                        <p className="text-[11px] font-medium">{label}</p>
-                        <p className="text-[10px] text-gray-400 dark:text-slate-500">{desc}</p>
+                        <p className="text-[13px] font-medium">{label}</p>
+                        <p className="text-[12px] text-gray-400 dark:text-slate-500">{desc}</p>
                       </div>
                     </button>
                   );

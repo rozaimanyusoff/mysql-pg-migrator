@@ -79,17 +79,17 @@ function TableNode({ data }: { data: { label: string; columns: ColumnInfo[]; onN
   const highlighted = useContext(HighlightCtx);
   const isHighlighted = highlighted.has(data.label);
   return (
-    <div className={`bg-white dark:bg-slate-800 border rounded-lg shadow-md min-w-[220px] text-xs overflow-hidden transition-all duration-150 ${isHighlighted ? 'border-red-500 shadow-red-500/30 shadow-lg ring-2 ring-red-500/40' : 'border-gray-300 dark:border-slate-600'}`}>
+    <div className={`bg-white dark:bg-slate-800 border rounded-lg shadow-md min-w-[220px] text-sm overflow-hidden transition-all duration-150 ${isHighlighted ? 'border-red-500 shadow-red-500/30 shadow-lg ring-2 ring-red-500/40' : 'border-gray-300 dark:border-slate-600'}`}>
       <Handle type="target" position={Position.Left} className={isHighlighted ? '!bg-red-500' : '!bg-blue-500'} />
       <Handle type="source" position={Position.Right} className={isHighlighted ? '!bg-red-500' : '!bg-blue-500'} />
-      <div className={`text-white px-3 py-1.5 font-semibold text-[11px] tracking-wide flex items-center justify-between transition-colors duration-150 ${isHighlighted ? 'bg-red-600 dark:bg-red-700' : 'bg-blue-600 dark:bg-blue-700'}`}>
+      <div className={`text-white px-3 py-1.5 font-semibold text-[13px] tracking-wide flex items-center justify-between transition-colors duration-150 ${isHighlighted ? 'bg-red-600 dark:bg-red-700' : 'bg-blue-600 dark:bg-blue-700'}`}>
         <span className="truncate">{data.label}</span>
         <button
           onMouseDown={e => { e.stopPropagation(); data.onNavigate(); }}
           title="View columns"
           className={`shrink-0 ml-1.5 p-0.5 rounded transition-colors ${isHighlighted ? 'hover:bg-red-500/60' : 'hover:bg-blue-500/60'}`}
         >
-          <ExternalLink size={10} />
+          <ExternalLink size={12} />
         </button>
       </div>
       <div className="divide-y divide-gray-100 dark:divide-slate-700">
@@ -469,7 +469,7 @@ function ERDInner({
       {/* Edge hover tooltip */}
       {edgeTooltip && (
         <div
-          className="pointer-events-none fixed z-50 px-2 py-1.5 rounded-lg bg-slate-900 text-slate-100 text-[11px] shadow-xl border border-slate-700 max-w-[240px]"
+          className="pointer-events-none fixed z-50 px-2 py-1.5 rounded-lg bg-slate-900 text-slate-100 text-[13px] shadow-xl border border-slate-700 max-w-[240px]"
           style={{ left: edgeTooltip.x + 12, top: edgeTooltip.y - 10 }}
         >
           {edgeTooltip.label}
@@ -521,9 +521,9 @@ function ERDInner({
             <button
               onClick={() => setSelectMode(v => !v)}
               title={selectMode ? 'Select mode — drag to zoom area (click to switch to pan)' : 'Pan mode (click to switch to select area)'}
-              className={`p-1.5 rounded-lg border text-xs shadow-sm transition-colors flex items-center gap-1 ${selectMode ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700' : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
+              className={`p-1.5 rounded-lg border text-sm shadow-sm transition-colors flex items-center gap-1 ${selectMode ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700' : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
             >
-              {selectMode ? <MousePointer2 size={13} /> : <Hand size={13} />}
+              {selectMode ? <MousePointer2 size={15} /> : <Hand size={15} />}
             </button>
 
             {/* Layout dropdown */}
@@ -531,20 +531,20 @@ function ERDInner({
               <button
                 onClick={() => setLayoutOpen(v => !v)}
                 title="Layout options"
-                className="px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-sm"
+                className="px-2 py-1.5 rounded-lg text-sm bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-sm"
               >
-                <Layers size={12} /> Layout
+                <Layers size={14} /> Layout
               </button>
               {layoutOpen && (
                 <div className="absolute left-0 top-full mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl z-50 p-3 space-y-3">
 
                   {/* Algorithm */}
                   <div>
-                    <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><GitBranch size={9} /> Algorithm</p>
+                    <p className="text-[12px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1"><GitBranch size={11} /> Algorithm</p>
                     <div className="grid grid-cols-2 gap-1">
                       {([['hierarchical','Hierarchical'],['grid','Grid']] as [LayoutAlgo,string][]).map(([v,label]) => (
                         <button key={v} onClick={() => { setLayoutAlgo(v); applyLayout(undefined, undefined, layoutDir, layoutSpacing, layoutSort, v); }}
-                          className={`py-1 text-[10px] rounded border transition-colors ${layoutAlgo === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                          className={`py-1 text-[12px] rounded border transition-colors ${layoutAlgo === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
                           {label}
                         </button>
                       ))}
@@ -554,13 +554,13 @@ function ERDInner({
                   {/* Direction (hierarchical only) */}
                   {layoutAlgo === 'hierarchical' && (
                     <div>
-                      <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><ArrowRight size={9} /> Direction</p>
+                      <p className="text-[12px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1"><ArrowRight size={11} /> Direction</p>
                       <div className="grid grid-cols-4 gap-1">
                         {([
-                          ['LR', <ArrowDown size={10} key="lr" />, 'Horizontal (Left → Right)'],
-                          ['RL', <ArrowUp size={10} key="rl" />, 'Horizontal (Right → Left)'],
-                          ['TB', <ArrowRight size={10} key="tb" />, 'Vertical (Top → Bottom)'],
-                          ['BT', <ArrowLeftIcon size={10} key="bt" />, 'Vertical (Bottom → Top)'],
+                          ['LR', <ArrowDown size={12} key="lr" />, 'Horizontal (Left → Right)'],
+                          ['RL', <ArrowUp size={12} key="rl" />, 'Horizontal (Right → Left)'],
+                          ['TB', <ArrowRight size={12} key="tb" />, 'Vertical (Top → Bottom)'],
+                          ['BT', <ArrowLeftIcon size={12} key="bt" />, 'Vertical (Bottom → Top)'],
                         ] as [LayoutDir, React.ReactNode, string][]).map(([v, icon, tip]) => (
                           <button key={v} onClick={() => { setLayoutDir(v); applyLayout(undefined, undefined, v, layoutSpacing, layoutSort, layoutAlgo); }}
                             title={tip}
@@ -574,11 +574,11 @@ function ERDInner({
 
                   {/* Spacing */}
                   <div>
-                    <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><AlignJustify size={9} /> Spacing</p>
+                    <p className="text-[12px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1"><AlignJustify size={11} /> Spacing</p>
                     <div className="grid grid-cols-3 gap-1">
                       {([['compact','Compact'],['normal','Normal'],['loose','Loose']] as [LayoutSpacing,string][]).map(([v,label]) => (
                         <button key={v} onClick={() => { setLayoutSpacing(v); applyLayout(undefined, undefined, layoutDir, v, layoutSort, layoutAlgo); }}
-                          className={`py-1 text-[10px] rounded border transition-colors ${layoutSpacing === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                          className={`py-1 text-[12px] rounded border transition-colors ${layoutSpacing === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
                           {label}
                         </button>
                       ))}
@@ -587,11 +587,11 @@ function ERDInner({
 
                   {/* Sort */}
                   <div>
-                    <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><SortAsc size={9} /> Sort within level</p>
+                    <p className="text-[12px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1"><SortAsc size={11} /> Sort within level</p>
                     <div className="grid grid-cols-2 gap-1">
                       {([['none','Default'],['name','Name'],['columns','Columns'],['connections','Connections']] as [LayoutSort,string][]).map(([v,label]) => (
                         <button key={v} onClick={() => { setLayoutSort(v); applyLayout(undefined, undefined, layoutDir, layoutSpacing, v, layoutAlgo); }}
-                          className={`py-1 text-[10px] rounded border transition-colors ${layoutSort === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                          className={`py-1 text-[12px] rounded border transition-colors ${layoutSort === v ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
                           {label}
                         </button>
                       ))}
@@ -600,14 +600,14 @@ function ERDInner({
 
                   {/* Edge style */}
                   <div className="pt-2 border-t border-gray-100 dark:border-slate-700">
-                    <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><Minus size={9} /> Edge style</p>
+                    <p className="text-[12px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1"><Minus size={11} /> Edge style</p>
                     <div className="grid grid-cols-2 gap-1">
                       <button onClick={() => setEdgeStyle('crowfoot')}
-                        className={`py-1 text-[10px] rounded border transition-colors ${edgeStyle === 'crowfoot' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                        className={`py-1 text-[12px] rounded border transition-colors ${edgeStyle === 'crowfoot' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
                         Crow&apos;s foot
                       </button>
                       <button onClick={() => setEdgeStyle('simple')}
-                        className={`py-1 text-[10px] rounded border transition-colors ${edgeStyle === 'simple' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                        className={`py-1 text-[12px] rounded border transition-colors ${edgeStyle === 'simple' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
                         Simple arrow
                       </button>
                     </div>
@@ -615,7 +615,7 @@ function ERDInner({
 
                   {/* Apply button */}
                   <button onClick={() => { applyLayout(); setLayoutOpen(false); }}
-                    className="w-full py-1.5 text-[11px] rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium">
+                    className="w-full py-1.5 text-[13px] rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium">
                     Apply Layout
                   </button>
                 </div>
@@ -629,17 +629,17 @@ function ERDInner({
           <div className="flex items-center rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden">
             <button onClick={() => zoomOut({ duration: 200 })} title="Zoom out"
               className="px-2 py-1.5 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
-              <ZoomOut size={13} />
+              <ZoomOut size={15} />
             </button>
             <div className="w-px h-4 bg-gray-200 dark:bg-slate-700" />
             <button onClick={() => fitView({ padding: 0.15, duration: 300 })} title="Fit to view"
-              className="px-2.5 py-1.5 text-[10px] font-medium text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-1">
-              <Maximize2 size={11} /> Fit
+              className="px-2.5 py-1.5 text-[12px] font-medium text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-1">
+              <Maximize2 size={13} /> Fit
             </button>
             <div className="w-px h-4 bg-gray-200 dark:bg-slate-700" />
             <button onClick={() => zoomIn({ duration: 200 })} title="Zoom in"
               className="px-2 py-1.5 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
-              <ZoomIn size={13} />
+              <ZoomIn size={15} />
             </button>
           </div>
         </Panel>
@@ -720,10 +720,10 @@ function SchemaTransferModal({
 
         {/* Header */}
         <div className="shrink-0 flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
-          <ArrowRightLeft size={15} className="text-blue-500 shrink-0" />
-          <p className="font-semibold text-sm text-gray-900 dark:text-slate-100 flex-1">Transfer Schema</p>
+          <ArrowRightLeft size={17} className="text-blue-500 shrink-0" />
+          <p className="font-semibold text-base text-gray-900 dark:text-slate-100 flex-1">Transfer Schema</p>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
-            <X size={15} />
+            <X size={17} />
           </button>
         </div>
 
@@ -732,17 +732,17 @@ function SchemaTransferModal({
 
           {/* Type mismatch */}
           {typeMismatch && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
-              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-sm text-rose-700 dark:text-rose-400">
+              <AlertCircle size={15} className="mt-0.5 shrink-0" />
               Cross-type transfer (MySQL ↔ PostgreSQL) is not supported. Use the Migration module instead.
             </div>
           )}
 
           {/* Source */}
           <div className="space-y-1.5">
-            <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Source</p>
-            <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-xs">
-              <Database size={12} className="text-blue-500 shrink-0" />
+            <p className="text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Source</p>
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-sm">
+              <Database size={14} className="text-blue-500 shrink-0" />
               <span className="font-medium text-gray-700 dark:text-slate-300">{sourceConn.label}</span>
               <span className="text-gray-300 dark:text-slate-600">·</span>
               <span className="font-mono text-gray-500 dark:text-slate-400">{sourceDb}</span>
@@ -753,11 +753,11 @@ function SchemaTransferModal({
 
           {/* Target connection + database */}
           <div className="space-y-2">
-            <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Target</p>
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-xs">
-              <Database size={12} className="text-violet-500 shrink-0" />
+            <p className="text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Target</p>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-sm">
+              <Database size={14} className="text-violet-500 shrink-0" />
               <span className="font-medium text-gray-700 dark:text-slate-300">{targetConn.label}</span>
-              <span className={`ml-auto text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+              <span className={`ml-auto text-[11px] font-semibold px-1.5 py-0.5 rounded ${
                 targetConn.db_type === 'mysql'
                   ? 'bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-400'
                   : 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400'
@@ -766,25 +766,25 @@ function SchemaTransferModal({
               </span>
             </div>
             {loadingDbs ? (
-              <p className="text-[11px] text-gray-400 animate-pulse px-1">Loading databases…</p>
+              <p className="text-[13px] text-gray-400 animate-pulse px-1">Loading databases…</p>
             ) : (
               <select value={targetDb} onChange={e => setTargetDb(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500">
                 {dbs.map(db => <option key={db} value={db}>{db}</option>)}
               </select>
             )}
             {targetConn.db_type === 'postgres' && (
               <div className="flex items-center gap-2">
-                <label className="text-[11px] text-gray-500 dark:text-slate-400 shrink-0 w-24">Schema name:</label>
+                <label className="text-[13px] text-gray-500 dark:text-slate-400 shrink-0 w-24">Schema name:</label>
                 <input type="text" value={targetSchema} onChange={e => setTargetSchema(e.target.value)}
-                  className="flex-1 px-2 py-1 text-xs font-mono rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  className="flex-1 px-2 py-1 text-sm font-mono rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
             )}
           </div>
 
           {/* Include */}
           <div className="space-y-2">
-            <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Include</p>
+            <p className="text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Include</p>
             <div className="flex gap-1.5">
               {([
                 { v: 'both'   as ExportInclude, label: 'Schema + Data' },
@@ -792,7 +792,7 @@ function SchemaTransferModal({
                 { v: 'data'   as ExportInclude, label: 'Data only'     },
               ]).map(({ v, label }) => (
                 <button key={v} type="button" onClick={() => setInclude(v)}
-                  className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors ${
+                  className={`flex-1 px-2 py-1.5 text-[13px] rounded-lg border transition-colors ${
                     include === v
                       ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
                       : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
@@ -803,7 +803,7 @@ function SchemaTransferModal({
 
           {/* Mode */}
           <div className="space-y-2">
-            <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Mode</p>
+            <p className="text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Mode</p>
             <div className="flex gap-1.5">
               {([
                 { v: 'copy' as const, label: 'Copy', desc: 'Keep source intact', Icon: Copy },
@@ -817,15 +817,15 @@ function SchemaTransferModal({
                         : 'border-rose-500 bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'
                       : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
                   }`}>
-                  <Icon size={13} />
-                  <span className="text-[11px] font-semibold">{label}</span>
-                  <span className="text-[10px] opacity-70">{desc}</span>
+                  <Icon size={15} />
+                  <span className="text-[13px] font-semibold">{label}</span>
+                  <span className="text-[12px] opacity-70">{desc}</span>
                 </button>
               ))}
             </div>
             {mode === 'move' && (
-              <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
-                <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-sm text-rose-700 dark:text-rose-400">
+                <AlertCircle size={15} className="mt-0.5 shrink-0" />
                 <span>
                   <strong>Warning:</strong> Schema <code className="font-mono bg-rose-100 dark:bg-rose-900/40 px-1 rounded">&quot;{schema}&quot;</code> will be
                   {' '}<strong>permanently deleted</strong> from <em>{sourceConn.label} / {sourceDb}</em> after the transfer completes. This cannot be undone.
@@ -838,9 +838,9 @@ function SchemaTransferModal({
           {log.length > 0 && (
             <div className="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
               <div className="px-3 py-1.5 bg-gray-50 dark:bg-slate-800/50 border-b border-gray-100 dark:border-slate-800">
-                <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Log</p>
+                <p className="text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Log</p>
               </div>
-              <div className="p-3 space-y-0.5 font-mono text-[10px] max-h-36 overflow-y-auto sidebar-scroll">
+              <div className="p-3 space-y-0.5 font-mono text-[12px] max-h-36 overflow-y-auto sidebar-scroll">
                 {log.map((line, i) => (
                   <div key={i} className={
                     line.startsWith('[OK]') ? 'text-emerald-600 dark:text-emerald-400' :
@@ -857,21 +857,21 @@ function SchemaTransferModal({
         {/* Footer */}
         <div className="shrink-0 flex items-center justify-between px-5 py-4 border-t border-gray-100 dark:border-slate-800">
           <button type="button" onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">
+            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">
             {done ? 'Close' : 'Cancel'}
           </button>
           {!done ? (
             <button type="button" onClick={() => void handleTransfer()}
               disabled={running || typeMismatch || !targetDb || (targetConn.db_type === 'postgres' && !targetSchema.trim())}
-              className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-40 transition-colors ${
+              className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white disabled:opacity-40 transition-colors ${
                 mode === 'move' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-blue-600 hover:bg-blue-700'
               }`}>
-              {running ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={13} />}
+              {running ? <Loader2 size={15} className="animate-spin" /> : <ArrowRightLeft size={15} />}
               {running ? 'Transferring…' : mode === 'move' ? 'Move Schema' : 'Copy Schema'}
             </button>
           ) : (
-            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
-              <CheckCircle2 size={14} /> Done
+            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-base font-medium">
+              <CheckCircle2 size={16} /> Done
             </span>
           )}
         </div>
@@ -1304,10 +1304,10 @@ export default function SchemaExplorer() {
 
           {/* Title */}
           <div className="flex items-center gap-3 shrink-0">
-            <Network size={18} className="text-blue-600" />
+            <Network size={20} className="text-blue-600" />
             <div>
-              <h1 className="font-bold text-sm text-gray-900 dark:text-slate-100">Schema Explorer</h1>
-              <p className="text-xs text-gray-500 dark:text-slate-400">Browse schemas, tables, ERD and export</p>
+              <h1 className="font-bold text-base text-gray-900 dark:text-slate-100">Schema Explorer</h1>
+              <p className="text-sm text-gray-500 dark:text-slate-400">Browse schemas, tables, ERD and export</p>
             </div>
           </div>
 
@@ -1320,7 +1320,7 @@ export default function SchemaExplorer() {
               if (!connected) setSelectedConnId(e.target.value ? Number(e.target.value) : null);
             }}
             disabled={connected}
-            className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 disabled:opacity-60 min-w-[200px]"
+            className="px-2 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 disabled:opacity-60 min-w-[200px]"
           >
             <option value="">— select connection —</option>
             {(['postgres', 'mysql'] as const).map(type => {
@@ -1339,13 +1339,13 @@ export default function SchemaExplorer() {
           {/* Database picker */}
           {selectedConn && (
             loadingDbs
-              ? <span className="text-xs text-gray-400 dark:text-slate-500 animate-pulse">Loading databases…</span>
+              ? <span className="text-sm text-gray-400 dark:text-slate-500 animate-pulse">Loading databases…</span>
               : (
                 <select
                   value={selectedDb}
                   onChange={e => { if (!connected) setSelectedDb(e.target.value); }}
                   disabled={connected || !dbs.length}
-                  className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 disabled:opacity-60 min-w-[140px]"
+                  className="px-2 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 disabled:opacity-60 min-w-[140px]"
                 >
                   {dbs.map(db => <option key={db} value={db}>{db}</option>)}
                 </select>
@@ -1354,17 +1354,17 @@ export default function SchemaExplorer() {
 
           {/* DB type badge — green border + check icon when connected */}
           {selectedConn && (
-            <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors ${
+            <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-medium border transition-colors ${
               connected
                 ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 border-emerald-400 dark:border-emerald-600'
                 : 'bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-100 dark:border-blue-900'
             }`}>
-              {connected && <Check size={10} strokeWidth={2.5} />}
+              {connected && <Check size={12} strokeWidth={2.5} />}
               {selectedConn.db_type === 'postgres' ? 'PostgreSQL' : 'MySQL'}
             </span>
           )}
 
-          {connError && <span className="text-xs text-rose-500">{connError}</span>}
+          {connError && <span className="text-sm text-rose-500">{connError}</span>}
 
           {!connected ? (
             <button
@@ -1374,18 +1374,18 @@ export default function SchemaExplorer() {
               className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-40 transition-colors"
             >
               {connecting
-                ? <RefreshCw size={15} className="animate-spin" />
-                : <Plug size={15} />}
+                ? <RefreshCw size={17} className="animate-spin" />
+                : <Plug size={17} />}
             </button>
           ) : (
             <div className="flex items-center gap-1">
               <button onClick={handleDisconnect} title="Disconnect"
                 className="p-1.5 rounded-lg text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-colors">
-                <Unplug size={15} />
+                <Unplug size={17} />
               </button>
               <button onClick={() => void loadSchemas()} title="Refresh schemas"
                 className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
-                <RefreshCw size={14} />
+                <RefreshCw size={16} />
               </button>
             </div>
           )}
@@ -1401,23 +1401,23 @@ export default function SchemaExplorer() {
               {/* Sticky search */}
               <div className="sticky top-0 z-20 px-2 py-1.5 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
                 <div className="relative">
-                  <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
                   <input value={treeSearch} onChange={e => setTreeSearch(e.target.value)}
                     placeholder="Filter schemas / tables…"
-                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full pl-7 pr-2 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
               </div>
 
               {!connected && (
                 <div className="px-4 py-8 text-center">
-                  <Database size={28} className="mx-auto text-gray-300 dark:text-slate-600 mb-2" />
-                  <p className="text-xs text-gray-400 dark:text-slate-500">Connect to a database to browse</p>
+                  <Database size={30} className="mx-auto text-slate-400 dark:text-slate-500 mb-2" />
+                  <p className="text-sm text-gray-400 dark:text-slate-500">Connect to a database to browse</p>
                 </div>
               )}
 
               {connected && loadingSchemas && (
-                <div className="px-4 py-4 text-xs text-gray-400 dark:text-slate-500 animate-pulse">Loading schemas…</div>
+                <div className="px-4 py-4 text-sm text-gray-400 dark:text-slate-500 animate-pulse">Loading schemas…</div>
               )}
 
               {connected && !loadingSchemas && filteredSchemas.map(s => {
@@ -1450,7 +1450,7 @@ export default function SchemaExplorer() {
                     >
                       {connected && (
                         <GripVertical
-                          size={11}
+                          size={13}
                           className="shrink-0 text-gray-300 dark:text-slate-600 group-hover:text-gray-400 dark:group-hover:text-slate-500 cursor-grab"
                         />
                       )}
@@ -1469,13 +1469,13 @@ export default function SchemaExplorer() {
                         className="flex items-center gap-1 flex-1 min-w-0 text-left"
                       >
                         {isCollapsed
-                          ? <ChevronRight size={11} className="shrink-0 text-gray-400 dark:text-slate-500" />
-                          : <ChevronDown size={11} className="shrink-0 text-gray-400 dark:text-slate-500" />
+                          ? <ChevronRight size={13} className="shrink-0 text-slate-500 dark:text-slate-400" />
+                          : <ChevronDown size={13} className="shrink-0 text-slate-500 dark:text-slate-400" />
                         }
-                        <Database size={11} className="text-blue-500 shrink-0" />
-                        <span className="text-[11px] font-semibold text-gray-600 dark:text-slate-300 flex-1 truncate ml-0.5">{s.schema}</span>
+                        <Database size={13} className="text-blue-500 shrink-0" />
+                        <span className="text-[13px] font-semibold text-gray-600 dark:text-slate-300 flex-1 truncate ml-0.5">{s.schema}</span>
                       </button>
-                      <span className="text-[10px] text-gray-400 dark:text-slate-500 shrink-0 ml-1">
+                      <span className="text-[12px] text-gray-400 dark:text-slate-500 shrink-0 ml-1">
                         {isLoadingT ? '…' : schemaTables.length}
                       </span>
                     </div>
@@ -1483,7 +1483,7 @@ export default function SchemaExplorer() {
                     {/* Table rows — hidden when collapsed */}
                     {!isCollapsed && (
                       isLoadingT ? (
-                        <div className="pl-8 py-1.5 text-[10px] text-gray-400 animate-pulse">Loading…</div>
+                        <div className="pl-8 py-1.5 text-[12px] text-gray-400 animate-pulse">Loading…</div>
                       ) : (
                         schemaTables.map(t => {
                           const key = `${t.schema}.${t.name}`;
@@ -1506,9 +1506,9 @@ export default function SchemaExplorer() {
                                 onClick={e => e.stopPropagation()}
                                 className="shrink-0 accent-blue-600 cursor-pointer"
                               />
-                              <Table2 size={11} className="shrink-0 text-gray-400 dark:text-slate-500" />
-                              <span className="text-xs flex-1 truncate">{t.name}</span>
-                              <span className="text-[10px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
+                              <Table2 size={13} className="shrink-0 text-slate-500 dark:text-slate-400" />
+                              <span className="text-sm flex-1 truncate">{t.name}</span>
+                              <span className="text-[12px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
                             </div>
                           );
                         })
@@ -1527,11 +1527,11 @@ export default function SchemaExplorer() {
             {draggingSchema && connections.length > 0 && (
               <div className="absolute inset-0 z-40 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center gap-5 p-8 pointer-events-auto">
                 <div className="flex flex-col items-center gap-1">
-                  <ArrowRightLeft size={20} className="text-white/70" />
-                  <p className="text-white font-semibold text-sm">
+                  <ArrowRightLeft size={22} className="text-white/70" />
+                  <p className="text-white font-semibold text-base">
                     Drop schema <code className="bg-white/20 px-1.5 py-0.5 rounded font-mono">&quot;{draggingSchema}&quot;</code> onto a target connection
                   </p>
-                  <p className="text-white/50 text-xs">Same DB type required — use Migration module for cross-type</p>
+                  <p className="text-white/50 text-sm">Same DB type required — use Migration module for cross-type</p>
                 </div>
                 <div className="flex flex-wrap gap-3 justify-center max-w-2xl">
                   {connections.map(conn => {
@@ -1550,20 +1550,20 @@ export default function SchemaExplorer() {
                             ? 'border-white/40 bg-white/10 hover:bg-white/20 hover:border-white/70 cursor-copy'
                             : 'border-white/10 bg-white/5 opacity-40 cursor-not-allowed'
                         }`}>
-                        <Database size={18} className="text-white" />
-                        <p className="text-xs font-semibold text-white truncate max-w-[120px]">{conn.label}</p>
-                        <p className="text-[10px] text-white/50 font-mono truncate max-w-[120px]">{conn.host}:{conn.port}</p>
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                        <Database size={20} className="text-white" />
+                        <p className="text-sm font-semibold text-white truncate max-w-[120px]">{conn.label}</p>
+                        <p className="text-[12px] text-white/50 font-mono truncate max-w-[120px]">{conn.host}:{conn.port}</p>
+                        <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
                           conn.db_type === 'mysql'
                             ? 'bg-orange-500/30 text-orange-200'
                             : 'bg-blue-500/30 text-blue-200'
                         }`}>{conn.db_type === 'mysql' ? 'MySQL' : 'PG'}</span>
-                        {!compatible && <span className="text-[9px] text-white/40">incompatible</span>}
+                        {!compatible && <span className="text-[11px] text-white/40">incompatible</span>}
                       </div>
                     );
                   })}
                 </div>
-                <p className="text-white/40 text-[11px]">Press Escape or release outside a target to cancel</p>
+                <p className="text-white/40 text-[13px]">Press Escape or release outside a target to cancel</p>
               </div>
             )}
 
@@ -1576,19 +1576,19 @@ export default function SchemaExplorer() {
                 { key: 'advisor', label: 'FK Advisor', Icon: Wand2 },
               ] as { key: ActiveTab; label: string; Icon: React.FC<{size:number}> }[]).map(({ key, label, Icon }) => (
                 <button key={key} onClick={() => setActiveTab(key)}
-                  className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+                  className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                     activeTab === key
                       ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                       : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
                   }`}>
-                  <Icon size={13} /> {label}
+                  <Icon size={15} /> {label}
                   {key === 'erd' && erdTables.size > 0 && (
-                    <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400 text-[10px] font-semibold">
+                    <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400 text-[12px] font-semibold">
                       {erdTables.size}
                     </span>
                   )}
                   {key === 'advisor' && advisorSuggestions.length > 0 && (
-                    <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 text-[10px] font-semibold">
+                    <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 text-[12px] font-semibold">
                       {advisorSuggestions.length}
                     </span>
                   )}
@@ -1601,12 +1601,12 @@ export default function SchemaExplorer() {
                   <div className="flex items-center gap-2 pr-3 mr-1 border-r border-gray-200 dark:border-slate-700">
                     <button
                       onClick={() => setActiveTab('erd')}
-                      className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+                      className="inline-flex items-center gap-1 text-[13px] text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
                       title="View in ERD"
                     >
-                      <Network size={11} /> ERD
+                      <Network size={13} /> ERD
                     </button>
-                    <span className="text-xs text-gray-400 dark:text-slate-500 font-mono">{selectedTable}</span>
+                    <span className="text-sm text-gray-400 dark:text-slate-500 font-mono">{selectedTable}</span>
                   </div>
                 )}
 
@@ -1617,35 +1617,35 @@ export default function SchemaExplorer() {
                     title="How to use Schema Explorer"
                     className="p-1.5 rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
                   >
-                    <HelpCircle size={14} />
+                    <HelpCircle size={16} />
                   </button>
                   {guideOpen && (
-                    <div className="absolute right-0 top-full mt-1 w-80 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl z-50 p-4 text-xs text-gray-600 dark:text-slate-300 space-y-3">
+                    <div className="absolute right-0 top-full mt-1 w-80 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl z-50 p-4 text-sm text-gray-600 dark:text-slate-300 space-y-3">
                       <div className="flex items-center justify-between mb-1">
-                        <p className="font-semibold text-gray-800 dark:text-slate-100 text-[13px]">Schema Explorer — Guide</p>
+                        <p className="font-semibold text-gray-800 dark:text-slate-100 text-[15px]">Schema Explorer — Guide</p>
                         <button onClick={() => setGuideOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200">
-                          <X size={13} />
+                          <X size={15} />
                         </button>
                       </div>
                       <div className="space-y-2">
                         <div>
-                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Database size={11} className="text-blue-500" /> Left Panel</p>
+                          <p className="font-medium text-slate-600 dark:text-slate-300 mb-0.5 flex items-center gap-1"><Database size={13} className="text-blue-500" /> Left Panel</p>
                           <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Click a schema name to collapse or expand its tables. Use the checkbox to select or deselect all tables in a schema for the ERD.</p>
                         </div>
                         <div>
-                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Columns size={11} className="text-blue-500" /> Columns tab</p>
+                          <p className="font-medium text-slate-600 dark:text-slate-300 mb-0.5 flex items-center gap-1"><Columns size={13} className="text-blue-500" /> Columns tab</p>
                           <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Click any table in the left panel to view its columns, data types, PK/FK keys, and sample records.</p>
                         </div>
                         <div>
-                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Network size={11} className="text-blue-500" /> ERD tab</p>
+                          <p className="font-medium text-slate-600 dark:text-slate-300 mb-0.5 flex items-center gap-1"><Network size={13} className="text-blue-500" /> ERD tab</p>
                           <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Checked tables appear on the ERD canvas. Hover over a relationship line to highlight connected tables. Use the Layout button to change direction, spacing, and algorithm.</p>
                         </div>
                         <div>
-                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><MousePointer2 size={11} className="text-blue-500" /> Area zoom</p>
+                          <p className="font-medium text-slate-600 dark:text-slate-300 mb-0.5 flex items-center gap-1"><MousePointer2 size={13} className="text-blue-500" /> Area zoom</p>
                           <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Toggle the <span className="font-mono bg-gray-100 dark:bg-slate-700 px-1 rounded">Hand / Select</span> icon in the canvas to enter select mode — drag a box around nodes to zoom into that area.</p>
                         </div>
                         <div>
-                          <p className="font-medium text-gray-700 dark:text-slate-200 mb-0.5 flex items-center gap-1"><Download size={11} className="text-blue-500" /> Export tab</p>
+                          <p className="font-medium text-slate-600 dark:text-slate-300 mb-0.5 flex items-center gap-1"><Download size={13} className="text-blue-500" /> Export tab</p>
                           <p className="text-gray-500 dark:text-slate-400 leading-relaxed">Download selected tables as SQL, XLSX, or ORM schema (Drizzle, Prisma, TypeORM). Also export the ERD canvas as a PNG or send to the printer.</p>
                         </div>
                       </div>
@@ -1663,20 +1663,20 @@ export default function SchemaExplorer() {
                 <div className="h-full overflow-auto">
                   {!selectedTable && (
                     <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-                      <Columns size={36} className="text-gray-200 dark:text-slate-700" />
-                      <p className="text-sm text-gray-400 dark:text-slate-500">Select a table from the left panel</p>
+                      <Columns size={38} className="text-slate-400 dark:text-slate-500" />
+                      <p className="text-base text-gray-400 dark:text-slate-500">Select a table from the left panel</p>
                     </div>
                   )}
                   {selectedTable && loadingCols && !selectedCols && (
-                    <div className="p-8 text-sm text-gray-400 animate-pulse">Loading columns…</div>
+                    <div className="p-8 text-base text-gray-400 animate-pulse">Loading columns…</div>
                   )}
                   {selectedTable && selectedCols && (
                     <div>
-                      <table className="w-full text-xs border-collapse">
+                      <table className="w-full text-sm border-collapse">
                         <thead>
                           <tr className="bg-gray-50 dark:bg-slate-800/60 sticky top-0">
                             {['Column', 'Type', 'Nullable', 'Default', 'Key', 'FK Reference', 'Comment'].map(h => (
-                              <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider border-b border-gray-200 dark:border-slate-700 whitespace-nowrap">
+                              <th key={h} className="text-left px-4 py-2.5 text-[13px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider border-b border-gray-200 dark:border-slate-700 whitespace-nowrap">
                                 {h}
                               </th>
                             ))}
@@ -1694,18 +1694,18 @@ export default function SchemaExplorer() {
                                   ? <span className="text-gray-400 dark:text-slate-500">YES</span>
                                   : <span className="text-rose-600 dark:text-rose-400 font-medium">NO</span>}
                               </td>
-                              <td className="px-4 py-2 text-gray-500 dark:text-slate-500 font-mono text-[11px] max-w-[140px] truncate">
+                              <td className="px-4 py-2 text-gray-500 dark:text-slate-500 font-mono text-[13px] max-w-[140px] truncate">
                                 {col.defaultValue ?? <span className="text-gray-300 dark:text-slate-600">—</span>}
                               </td>
                               <td className="px-4 py-2">
                                 <div className="flex gap-1">
-                                  {col.isPk && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400">PK</span>}
-                                  {col.isFk && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400">FK</span>}
-                                  {col.isUnique && !col.isPk && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-400">UNI</span>}
+                                  {col.isPk && <span className="px-1.5 py-0.5 rounded text-[12px] font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400">PK</span>}
+                                  {col.isFk && <span className="px-1.5 py-0.5 rounded text-[12px] font-bold bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400">FK</span>}
+                                  {col.isUnique && !col.isPk && <span className="px-1.5 py-0.5 rounded text-[12px] font-bold bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-400">UNI</span>}
                                   {!col.isPk && !col.isFk && !col.isUnique && <span className="text-gray-300 dark:text-slate-600">—</span>}
                                 </div>
                               </td>
-                              <td className="px-4 py-2 text-blue-600 dark:text-blue-400 font-mono text-[11px]">
+                              <td className="px-4 py-2 text-blue-600 dark:text-blue-400 font-mono text-[13px]">
                                 {col.fkRef ?? <span className="text-gray-300 dark:text-slate-600">—</span>}
                               </td>
                               <td className="px-4 py-2 text-gray-400 dark:text-slate-500 max-w-[180px] truncate">
@@ -1719,11 +1719,11 @@ export default function SchemaExplorer() {
                       {/* FK summary */}
                       {selectedCols.fks.length > 0 && (
                         <div className="px-4 py-3 border-t border-gray-100 dark:border-slate-800">
-                          <p className="text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-2">Foreign Keys</p>
+                          <p className="text-[13px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-2">Foreign Keys</p>
                           <div className="flex flex-wrap gap-2">
                             {selectedCols.fks.map(fk => (
                               <span key={`${fk.fromCol}->${fk.toTable}`}
-                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-blue-900">
+                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[13px] bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-blue-900">
                                 {fk.fromCol} → {fk.toSchema}.{fk.toTable}.{fk.toCol}
                               </span>
                             ))}
@@ -1734,35 +1734,35 @@ export default function SchemaExplorer() {
                       {/* Records section */}
                       <div className="border-t border-gray-100 dark:border-slate-800">
                         <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 dark:bg-slate-800/50">
-                          <p className="text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
+                          <p className="text-[13px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                             Records
                             {records && <span className="ml-2 normal-case font-normal text-gray-400 dark:text-slate-500">({records.total.toLocaleString()} total)</span>}
                           </p>
                           <button
                             onClick={() => void loadRecords(selectedTable!, recordsOffset)}
                             disabled={loadingRecords}
-                            className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors disabled:opacity-40"
+                            className="inline-flex items-center gap-1 text-[13px] text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors disabled:opacity-40"
                           >
-                            <RefreshCw size={11} className={loadingRecords ? 'animate-spin' : ''} />
+                            <RefreshCw size={13} className={loadingRecords ? 'animate-spin' : ''} />
                             {loadingRecords ? 'Loading…' : 'Reload'}
                           </button>
                         </div>
 
                         {loadingRecords && !records && (
-                          <div className="px-4 py-4 text-xs text-gray-400 animate-pulse">Loading records…</div>
+                          <div className="px-4 py-4 text-sm text-gray-400 animate-pulse">Loading records…</div>
                         )}
 
                         {records && records.rows.length === 0 && (
-                          <div className="px-4 py-4 text-xs text-gray-400 dark:text-slate-500">No records found.</div>
+                          <div className="px-4 py-4 text-sm text-gray-400 dark:text-slate-500">No records found.</div>
                         )}
 
                         {records && records.rows.length > 0 && (
                           <div className="overflow-x-auto">
-                            <table className="w-full text-xs border-collapse">
+                            <table className="w-full text-sm border-collapse">
                               <thead>
                                 <tr className="bg-gray-50 dark:bg-slate-800/60">
                                   {records.columns.map(col => (
-                                    <th key={col} className="text-left px-3 py-2 text-[11px] font-semibold text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-slate-700 whitespace-nowrap">
+                                    <th key={col} className="text-left px-3 py-2 text-[13px] font-semibold text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-slate-700 whitespace-nowrap">
                                       {col}
                                     </th>
                                   ))}
@@ -1785,21 +1785,21 @@ export default function SchemaExplorer() {
 
                             {/* Pagination */}
                             <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 dark:border-slate-800">
-                              <span className="text-[11px] text-gray-400 dark:text-slate-500">
+                              <span className="text-[13px] text-gray-400 dark:text-slate-500">
                                 {recordsOffset + 1}–{Math.min(recordsOffset + RECORDS_LIMIT, records.total)} of {records.total.toLocaleString()}
                               </span>
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => void loadRecords(selectedTable!, recordsOffset - RECORDS_LIMIT)}
                                   disabled={recordsOffset === 0 || loadingRecords}
-                                  className="px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                                  className="px-2 py-1 text-[13px] rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
                                 >
                                   ← Prev
                                 </button>
                                 <button
                                   onClick={() => void loadRecords(selectedTable!, recordsOffset + RECORDS_LIMIT)}
                                   disabled={recordsOffset + RECORDS_LIMIT >= records.total || loadingRecords}
-                                  className="px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                                  className="px-2 py-1 text-[13px] rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
                                 >
                                   Next →
                                 </button>
@@ -1821,8 +1821,8 @@ export default function SchemaExplorer() {
 
                     {erdTables.size === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-                        <Network size={36} className="text-gray-200 dark:text-slate-700" />
-                        <p className="text-sm text-gray-400 dark:text-slate-500">
+                        <Network size={38} className="text-slate-400 dark:text-slate-500" />
+                        <p className="text-base text-gray-400 dark:text-slate-500">
                           Expand a schema in the left panel — tables are added to the ERD automatically
                         </p>
                       </div>
@@ -1850,8 +1850,8 @@ export default function SchemaExplorer() {
 
                     {/* Header */}
                     <div>
-                      <h2 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-1">FK Advisor</h2>
-                      <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
+                      <h2 className="text-base font-semibold text-gray-800 dark:text-slate-200 mb-1">FK Advisor</h2>
+                      <p className="text-sm text-gray-500 dark:text-slate-400 leading-relaxed">
                         Scans loaded tables for <code className="font-mono bg-gray-100 dark:bg-slate-800 px-1 rounded">*_id</code> columns that have no FK constraint defined in the database. Suggests the most likely relationship target using naming conventions, then sends the revised schema to Schema Designer with all accepted FKs applied.
                       </p>
                     </div>
@@ -1859,8 +1859,8 @@ export default function SchemaExplorer() {
                     {/* Not connected / no columns yet */}
                     {Object.keys(columnsCache).length === 0 ? (
                       <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20">
-                        <AlertCircle size={15} className="text-amber-500 shrink-0 mt-0.5" />
-                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                        <AlertCircle size={17} className="text-amber-500 shrink-0 mt-0.5" />
+                        <p className="text-sm text-amber-700 dark:text-amber-400">
                           No table columns loaded yet. Connect to a database and load at least one schema first.
                         </p>
                       </div>
@@ -1868,23 +1868,23 @@ export default function SchemaExplorer() {
                       <>
                         {/* Scan bar */}
                         <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-500 dark:text-slate-400">
+                          <span className="text-sm text-gray-500 dark:text-slate-400">
                             <strong className="text-gray-700 dark:text-slate-300">{Object.keys(columnsCache).length}</strong> tables loaded
                             {advisorSuggestions.length > 0 && (
                               <> · <strong className="text-gray-700 dark:text-slate-300">{advisorSuggestions.length}</strong> potential FK(s) found</>
                             )}
                           </span>
                           <button onClick={computeAdvisorSuggestions}
-                            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-xs text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                            <RefreshCw size={11} /> Re-scan
+                            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                            <RefreshCw size={13} /> Re-scan
                           </button>
                         </div>
 
                         {/* No suggestions */}
                         {advisorSuggestions.length === 0 && (
                           <div className="flex items-center gap-3 p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20">
-                            <CheckCircle2 size={15} className="text-emerald-500 shrink-0" />
-                            <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                            <CheckCircle2 size={17} className="text-emerald-500 shrink-0" />
+                            <p className="text-sm text-emerald-700 dark:text-emerald-400">
                               No missing FK relationships detected — all <code className="font-mono">*_id</code> columns either already have constraints or no matching table was inferred.
                             </p>
                           </div>
@@ -1894,8 +1894,8 @@ export default function SchemaExplorer() {
                         {advisorSuggestions.length > 0 && (
                           <div className="space-y-2">
                             <div className="flex items-center gap-2">
-                              <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Suggested relationships</p>
-                              <span className="text-[10px] text-gray-400 dark:text-slate-500 ml-auto">
+                              <p className="text-sm font-medium text-gray-600 dark:text-slate-400">Suggested relationships</p>
+                              <span className="text-[12px] text-gray-400 dark:text-slate-500 ml-auto">
                                 {advisorAccepted.size} accepted · {advisorSuggestions.filter(s => !s.toTableKey && !advisorManual[s.id]).length} unresolved
                               </span>
                             </div>
@@ -1907,7 +1907,7 @@ export default function SchemaExplorer() {
                                 const canAccept = !!effectiveTarget;
 
                                 return (
-                                  <div key={s.id} className={`flex items-center gap-3 px-4 py-3 text-xs transition-colors ${
+                                  <div key={s.id} className={`flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
                                     isAccepted ? 'bg-white dark:bg-slate-900' : 'bg-gray-50/60 dark:bg-slate-800/40'
                                   }`}>
                                     {/* Accept toggle */}
@@ -1929,7 +1929,7 @@ export default function SchemaExplorer() {
                                             ? 'border-gray-300 dark:border-slate-600 text-gray-400 hover:border-emerald-400 hover:text-emerald-500'
                                             : 'border-gray-200 dark:border-slate-700 text-gray-300 dark:text-slate-700 cursor-not-allowed'
                                       }`}>
-                                      {isAccepted ? <Check size={11} /> : <Minus size={11} />}
+                                      {isAccepted ? <Check size={13} /> : <Minus size={13} />}
                                     </button>
 
                                     {/* From */}
@@ -1938,7 +1938,7 @@ export default function SchemaExplorer() {
                                       <span className="font-mono font-medium text-gray-800 dark:text-slate-200">{s.fromCol}</span>
                                     </div>
 
-                                    <ArrowRight size={13} className="shrink-0 text-gray-300 dark:text-slate-600" />
+                                    <ArrowRight size={15} className="shrink-0 text-slate-400 dark:text-slate-500" />
 
                                     {/* To — resolved or picker */}
                                     <div className="flex-1 min-w-0">
@@ -1954,7 +1954,7 @@ export default function SchemaExplorer() {
                                             setAdvisorManual(prev => ({ ...prev, [s.id]: val }));
                                             if (val) setAdvisorAccepted(prev => new Set(prev).add(s.id));
                                           }}
-                                          className="text-[11px] font-mono rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[180px]">
+                                          className="text-[13px] font-mono rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[180px]">
                                           <option value="">— pick target table —</option>
                                           {Object.keys(columnsCache).filter(k => k !== s.fromTableKey).map(k => (
                                             <option key={k} value={k}>{k}</option>
@@ -1964,7 +1964,7 @@ export default function SchemaExplorer() {
                                     </div>
 
                                     {/* Confidence badge */}
-                                    <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                                    <span className={`shrink-0 text-[12px] font-semibold px-1.5 py-0.5 rounded-full ${
                                       s.confidence === 'high'       ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400' :
                                       s.confidence === 'low'        ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400' :
                                                                       'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400'
@@ -1977,7 +1977,7 @@ export default function SchemaExplorer() {
                             </div>
 
                             {/* Legend */}
-                            <div className="flex items-center gap-4 text-[11px] text-gray-400 dark:text-slate-500 pt-1">
+                            <div className="flex items-center gap-4 text-[13px] text-gray-400 dark:text-slate-500 pt-1">
                               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-emerald-400" /> high — exact name match</span>
                               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-amber-400" /> low — plural/singular guess</span>
                               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-gray-300 dark:bg-slate-600" /> unresolved — manual pick required</span>
@@ -1989,20 +1989,20 @@ export default function SchemaExplorer() {
                         {advisorSuggestions.length > 0 && (
                           <div className="pt-5 border-t border-gray-100 dark:border-slate-800 space-y-3">
                             <div>
-                              <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-0.5">Send to Designer</h3>
-                              <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
+                              <h3 className="text-base font-semibold text-gray-800 dark:text-slate-200 mb-0.5">Send to Designer</h3>
+                              <p className="text-sm text-gray-500 dark:text-slate-400 leading-relaxed">
                                 Generates DDL for all <strong>{Object.keys(columnsCache).length}</strong> loaded tables with <strong>{advisorAccepted.size}</strong> inferred FK(s) applied as <code className="font-mono bg-gray-100 dark:bg-slate-800 px-1 rounded">REFERENCES</code> constraints, saves it as a new Schema Designer job, and opens the designer.
                               </p>
                             </div>
                             <button
                               onClick={() => void sendToDesigner()}
                               disabled={sendingToDesigner || advisorAccepted.size === 0}
-                              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors"
+                              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 text-white text-base font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors"
                             >
-                              <Send size={14} />
+                              <Send size={16} />
                               {sendingToDesigner ? 'Saving…' : `Send to Designer (${advisorAccepted.size} FK applied)`}
                             </button>
-                            <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                            <p className="text-[13px] text-gray-400 dark:text-slate-500">
                               In Schema Designer: load the saved job → review → export ORM (Drizzle / Prisma / TypeORM).
                             </p>
                           </div>
@@ -2019,16 +2019,16 @@ export default function SchemaExplorer() {
                 <div className="h-full overflow-auto p-6">
                   <div className="max-w-xl space-y-6">
                     <div>
-                      <h2 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-1">Export</h2>
-                      <p className="text-xs text-gray-500 dark:text-slate-400">
+                      <h2 className="text-base font-semibold text-gray-800 dark:text-slate-200 mb-1">Export</h2>
+                      <p className="text-sm text-gray-500 dark:text-slate-400">
                         Export selected tables ({erdTables.size} selected via ERD panel).
-                        Add tables to the ERD first using the <Network size={11} className="inline-block" /> icon.
+                        Add tables to the ERD first using the <Network size={13} className="inline-block" /> icon.
                       </p>
                     </div>
 
                     {/* Format picker */}
                     <div className="space-y-3">
-                      <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Format</p>
+                      <p className="text-sm font-medium text-gray-600 dark:text-slate-400">Format</p>
 
                       {/* Schema files */}
                       <div className="flex gap-2">
@@ -2043,17 +2043,17 @@ export default function SchemaExplorer() {
                                 : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                             }`}>
                             <div className="flex items-center gap-2">
-                              <Icon size={14} className={exportFormat === v ? 'text-blue-600' : 'text-gray-500 dark:text-slate-400'} />
-                              <span className={`text-xs font-semibold ${exportFormat === v ? 'text-blue-700 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>{label}</span>
+                              <Icon size={16} className={exportFormat === v ? 'text-blue-600' : 'text-slate-500 dark:text-slate-400'} />
+                              <span className={`text-sm font-semibold ${exportFormat === v ? 'text-blue-700 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>{label}</span>
                             </div>
-                            <p className="text-[11px] text-gray-400 dark:text-slate-500">{desc}</p>
+                            <p className="text-[13px] text-gray-400 dark:text-slate-500">{desc}</p>
                           </button>
                         ))}
                       </div>
 
                       {/* ORM */}
                       <div>
-                        <p className="text-[11px] text-gray-400 dark:text-slate-500 mb-1.5">ORM Schema</p>
+                        <p className="text-[13px] text-gray-400 dark:text-slate-500 mb-1.5">ORM Schema</p>
                         <div className="flex gap-2">
                           {([
                             { v: 'drizzle'  as const, label: 'Drizzle',  desc: 'drizzle-schema.ts' },
@@ -2066,8 +2066,8 @@ export default function SchemaExplorer() {
                                   ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/20'
                                   : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                               }`}>
-                              <span className={`text-xs font-semibold ${exportFormat === v ? 'text-violet-700 dark:text-violet-400' : 'text-gray-700 dark:text-slate-300'}`}>{label}</span>
-                              <p className="text-[11px] text-gray-400 dark:text-slate-500 font-mono">{desc}</p>
+                              <span className={`text-sm font-semibold ${exportFormat === v ? 'text-violet-700 dark:text-violet-400' : 'text-gray-700 dark:text-slate-300'}`}>{label}</span>
+                              <p className="text-[13px] text-gray-400 dark:text-slate-500 font-mono">{desc}</p>
                             </button>
                           ))}
                         </div>
@@ -2077,14 +2077,14 @@ export default function SchemaExplorer() {
                     {/* Selected tables list */}
                     {erdTables.size > 0 && (
                       <div>
-                        <p className="text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">Tables to export</p>
+                        <p className="text-sm font-medium text-gray-600 dark:text-slate-400 mb-1.5">Tables to export</p>
                         <div className="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
                           {[...erdTables].map((key, i) => (
-                            <div key={key} className={`flex items-center justify-between px-3 py-2 text-xs ${i > 0 ? 'border-t border-gray-100 dark:border-slate-800' : ''}`}>
+                            <div key={key} className={`flex items-center justify-between px-3 py-2 text-sm ${i > 0 ? 'border-t border-gray-100 dark:border-slate-800' : ''}`}>
                               <span className="font-mono text-gray-700 dark:text-slate-300">{key}</span>
                               <button onClick={() => setErdTables(p => { const n = new Set(p); n.delete(key); return n; })}
                                 className="text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors">
-                                <X size={12} />
+                                <X size={14} />
                               </button>
                             </div>
                           ))}
@@ -2095,26 +2095,26 @@ export default function SchemaExplorer() {
                     <button
                       onClick={() => void handleExport()}
                       disabled={exporting || erdTables.size === 0}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                     >
-                      <Download size={14} />
+                      <Download size={16} />
                       {exporting ? 'Exporting…' : `Export ${({ sql: 'SQL', xlsx: 'XLSX', drizzle: 'Drizzle', prisma: 'Prisma', typeorm: 'TypeORM' } as Record<string,string>)[exportFormat] ?? exportFormat}`}
                     </button>
 
                     {/* ── Canvas image export ─────────────────────────── */}
                     <div className="pt-4 border-t border-gray-100 dark:border-slate-800 space-y-3">
                       <div>
-                        <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-200 mb-0.5">Canvas Image</h3>
-                        <p className="text-xs text-gray-500 dark:text-slate-400">Print or save the ERD canvas as a PNG image.</p>
+                        <h3 className="text-base font-semibold text-gray-800 dark:text-slate-200 mb-0.5">Canvas Image</h3>
+                        <p className="text-sm text-gray-500 dark:text-slate-400">Print or save the ERD canvas as a PNG image.</p>
                       </div>
 
                       {/* Paper size */}
                       <div className="space-y-1.5">
-                        <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Paper size</p>
+                        <p className="text-sm font-medium text-gray-600 dark:text-slate-400">Paper size</p>
                         <div className="grid grid-cols-4 gap-1.5">
                           {(['a4','a3','letter','legal'] as PaperSize[]).map(s => (
                             <button key={s} onClick={() => setPaperSize(s)}
-                              className={`py-1.5 text-xs rounded-lg border transition-colors ${paperSize === s ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                              className={`py-1.5 text-sm rounded-lg border transition-colors ${paperSize === s ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
                               {PAPER_LABELS[s]}
                             </button>
                           ))}
@@ -2123,11 +2123,11 @@ export default function SchemaExplorer() {
 
                       {/* Orientation */}
                       <div className="space-y-1.5">
-                        <p className="text-xs font-medium text-gray-600 dark:text-slate-400">Orientation</p>
+                        <p className="text-sm font-medium text-gray-600 dark:text-slate-400">Orientation</p>
                         <div className="grid grid-cols-2 gap-1.5">
                           {(['landscape','portrait'] as Orientation[]).map(o => (
                             <button key={o} onClick={() => setOrientation(o)}
-                              className={`py-1.5 text-xs rounded-lg border transition-colors capitalize ${orientation === o ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
+                              className={`py-1.5 text-sm rounded-lg border transition-colors capitalize ${orientation === o ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'}`}>
                               {o}
                             </button>
                           ))}
@@ -2139,17 +2139,17 @@ export default function SchemaExplorer() {
                         <button
                           onClick={() => void captureRef.current?.triggerPrint()}
                           disabled={capturing || erdTables.size === 0}
-                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-base font-medium hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
                         >
-                          <Printer size={13} />
+                          <Printer size={15} />
                           {capturing ? 'Capturing…' : 'Print'}
                         </button>
                         <button
                           onClick={() => void captureRef.current?.triggerPng()}
                           disabled={capturing || erdTables.size === 0}
-                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-base font-medium hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
                         >
-                          <Download size={13} />
+                          <Download size={15} />
                           {capturing ? 'Capturing…' : 'Export PNG'}
                         </button>
                       </div>

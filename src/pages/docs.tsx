@@ -49,14 +49,14 @@ function Phase3PurposeHelp() {
   return (
     <details className="group relative">
       <summary className="list-none inline-flex items-center justify-center w-4 h-4 rounded-full border border-gray-300 dark:border-slate-600 text-gray-500 dark:text-slate-300 hover:text-gray-700 dark:hover:text-slate-100 cursor-pointer">
-        <HelpCircle size={12} />
+        <HelpCircle size={14} />
       </summary>
       <div className="absolute left-0 mt-2 z-50 w-[min(42rem,calc(100vw-2rem))] rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-lg dark:border-amber-700 dark:bg-slate-900">
-        <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">Phase 3: Schema Template Validation & Preparation</h3>
-        <p className="mt-1 text-xs text-amber-800 dark:text-slate-300">
+        <h3 className="text-base font-semibold text-amber-900 dark:text-amber-300">Phase 3: Schema Template Validation & Preparation</h3>
+        <p className="mt-1 text-sm text-amber-800 dark:text-slate-300">
           Validate template mappings, scan target schemas/tables, and safely generate or regenerate target structures before Phase 4 migration.
         </p>
-        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-amber-900 dark:text-slate-200">
+        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-amber-900 dark:text-slate-200">
           <div className="rounded-md border border-amber-200 bg-white/80 px-2.5 py-2 dark:border-amber-800 dark:bg-slate-800/80">
             <p className="font-semibold">Check</p>
             <p className="text-amber-800 mt-0.5 dark:text-slate-300">Run validation (individual, selected, or all configured) to detect errors/warnings and preview SQL.</p>
@@ -452,13 +452,13 @@ export default function Phase3() {
           <header className="sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center justify-between">
             <div>
               <h1 className="font-bold text-gray-900 dark:text-slate-100">Migration: Schema Template</h1>
-              <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 dark:text-slate-400">
+              <div className="mt-0.5 flex items-center gap-1 text-sm text-gray-500 dark:text-slate-400">
                 <span>Generate export documents and validate selected mappings before migration.</span>
                 <Phase3PurposeHelp />
               </div>
             </div>
             <ConnectionBadges />
-            <nav className="flex items-center gap-1 text-sm">
+            <nav className="flex items-center gap-1 text-base">
               {[
                 { label: 'Home', href: '/' },
                 { label: 'Configure Mapping', href: '/migration' },
@@ -467,7 +467,7 @@ export default function Phase3() {
                 { label: 'Migrate', href: '/migrate' },
               ].map((item, i) => (
                 <React.Fragment key={item.href}>
-                  {i > 0 && <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />}
+                  {i > 0 && <ChevronRight size={16} className="text-slate-400 dark:text-slate-500" />}
                   {item.href === '/' ? (
                     <button
                       type="button"
@@ -480,22 +480,22 @@ export default function Phase3() {
                     <Link href={item.href} className={`px-3 py-1 rounded-lg ${item.active ? 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold' : 'text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'}`}>
                       {item.label}
                       {item.label === 'Configure Mapping' && (
-                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-200/70 dark:bg-blue-800/70 text-blue-800 dark:text-blue-200 font-semibold">
+                        <span className="ml-1.5 text-[12px] px-1.5 py-0.5 rounded bg-blue-200/70 dark:bg-blue-800/70 text-blue-800 dark:text-blue-200 font-semibold">
                           {configureDone}/{configureTotal}
                         </span>
                       )}
                       {item.label === 'Assign Target' && (
-                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-200/70 dark:bg-emerald-800/70 text-emerald-800 dark:text-emerald-200 font-semibold">
+                        <span className="ml-1.5 text-[12px] px-1.5 py-0.5 rounded bg-emerald-200/70 dark:bg-emerald-800/70 text-emerald-800 dark:text-emerald-200 font-semibold">
                           {assignDone}/{assignTotal}
                         </span>
                       )}
                       {item.href === '/docs' && (
-                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-200/70 dark:bg-amber-800/70 text-amber-800 dark:text-amber-200 font-semibold">
+                        <span className="ml-1.5 text-[12px] px-1.5 py-0.5 rounded bg-amber-200/70 dark:bg-amber-800/70 text-amber-800 dark:text-amber-200 font-semibold">
                           {templateAssigned}/{assignDone}
                         </span>
                       )}
                       {item.href === '/migrate' && (
-                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-cyan-200/70 dark:bg-cyan-800/70 text-cyan-800 dark:text-cyan-200 font-semibold">
+                        <span className="ml-1.5 text-[12px] px-1.5 py-0.5 rounded bg-cyan-200/70 dark:bg-cyan-800/70 text-cyan-800 dark:text-cyan-200 font-semibold">
                           {migrateSuccess}/{migrateTotal}
                         </span>
                       )}
@@ -548,13 +548,13 @@ export default function Phase3() {
         <header className="sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-4 flex items-center justify-between">
           <div>
             <h1 className="font-bold text-gray-900 dark:text-slate-100">Migration: Schema Template</h1>
-            <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 dark:text-slate-400">
+            <div className="mt-0.5 flex items-center gap-1 text-sm text-gray-500 dark:text-slate-400">
               <span>Generate export documents and validate selected mappings before migration.</span>
               <Phase3PurposeHelp />
             </div>
           </div>
           <ConnectionBadges />
-          <nav className="flex items-center gap-1 text-sm">
+          <nav className="flex items-center gap-1 text-base">
             {[
               { label: 'Configure Mapping', href: '/migration' },
               { label: 'Assign Target', href: '/mapping' },
@@ -562,7 +562,7 @@ export default function Phase3() {
               { label: 'Migrate', href: '/migrate' },
             ].map((item, i) => (
               <React.Fragment key={item.href}>
-                {i > 0 && <ChevronRight size={14} className="text-gray-300 dark:text-slate-600" />}
+                {i > 0 && <ChevronRight size={16} className="text-slate-400 dark:text-slate-500" />}
                 {item.href === '/' ? (
                   <button
                     type="button"
@@ -575,22 +575,22 @@ export default function Phase3() {
                   <Link href={item.href} className={`px-3 py-1 rounded-lg ${item.active ? 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold' : 'text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'}`}>
                     {item.label}
                     {item.label === 'Configure Mapping' && (
-                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-200/70 dark:bg-blue-800/70 text-blue-800 dark:text-blue-200 font-semibold">
+                      <span className="ml-1.5 text-[12px] px-1.5 py-0.5 rounded bg-blue-200/70 dark:bg-blue-800/70 text-blue-800 dark:text-blue-200 font-semibold">
                         {configureDone}/{configureTotal}
                       </span>
                     )}
                     {item.label === 'Assign Target' && (
-                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-200/70 dark:bg-emerald-800/70 text-emerald-800 dark:text-emerald-200 font-semibold">
+                      <span className="ml-1.5 text-[12px] px-1.5 py-0.5 rounded bg-emerald-200/70 dark:bg-emerald-800/70 text-emerald-800 dark:text-emerald-200 font-semibold">
                         {assignDone}/{assignTotal}
                       </span>
                     )}
                     {item.href === '/docs' && (
-                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-200/70 dark:bg-amber-800/70 text-amber-800 dark:text-amber-200 font-semibold">
+                      <span className="ml-1.5 text-[12px] px-1.5 py-0.5 rounded bg-amber-200/70 dark:bg-amber-800/70 text-amber-800 dark:text-amber-200 font-semibold">
                         {templateAssigned}/{assignDone}
                       </span>
                     )}
                     {item.href === '/migrate' && (
-                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-cyan-200/70 dark:bg-cyan-800/70 text-cyan-800 dark:text-cyan-200 font-semibold">
+                      <span className="ml-1.5 text-[12px] px-1.5 py-0.5 rounded bg-cyan-200/70 dark:bg-cyan-800/70 text-cyan-800 dark:text-cyan-200 font-semibold">
                         {migrateSuccess}/{migrateTotal}
                       </span>
                     )}
@@ -608,15 +608,15 @@ export default function Phase3() {
             <div className="bg-white dark:bg-slate-900/70 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="font-semibold text-gray-800 dark:text-slate-100 text-sm">Export Documents</h3>
-                  <p className="text-xs text-gray-500 dark:text-slate-400">Generate review artifacts and run schema checks before migration.</p>
+                  <h3 className="font-semibold text-gray-800 dark:text-slate-100 text-base">Export Documents</h3>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">Generate review artifacts and run schema checks before migration.</p>
                   {templateReady?.ready && (
-                    <p className="text-xs text-emerald-700 mt-1">
+                    <p className="text-sm text-emerald-700 mt-1">
                       Template stage ready at {new Date(templateReady.readyAt).toLocaleString()} ({templateReady.assignedKeys?.length ?? templateReady.confirmedCount} tables).
                     </p>
                   )}
                   <div className="mt-2 flex items-center gap-3">
-                    <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+                    <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-slate-300 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={viewOptions.includeSource}
@@ -625,7 +625,7 @@ export default function Phase3() {
                       />
                       Source
                     </label>
-                    <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+                    <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-slate-300 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={viewOptions.includeTarget}
@@ -637,18 +637,18 @@ export default function Phase3() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button onClick={() => handleGenerateDocs('markdown')} disabled={loading} className="text-xs bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/25 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><FileText size={13} />Markdown</button>
-                  <button onClick={() => handleGenerateDocs('csv')} disabled={loading} className="text-xs bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/25 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><Table size={13} />CSV</button>
-                  <button onClick={() => handleGenerateDocs('sql')} disabled={loading} className="text-xs bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/25 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><Code2 size={13} />SQL</button>
-                  <button onClick={() => handleGenerateDocs('svg')} disabled={loading} className="text-xs bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/25 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><ImageIcon size={13} />SVG Diagram</button>
-                  <button onClick={() => handleGenerateDocs('canvas')} disabled={loading} className="text-xs bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/25 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><PenSquare size={13} />Canvas JSON</button>
-                  <button onClick={() => void handleDryRun()} disabled={loading} className="text-xs bg-green-50 hover:bg-green-100 dark:bg-emerald-900/25 dark:hover:bg-emerald-900/40 text-green-700 dark:text-emerald-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><CheckCircle size={13} />Check Selected</button>
-                  <button onClick={() => void handleDryRun(new Set(templateTables.map((t) => tableKey(t))))} disabled={loading || templateTables.length === 0} className="text-xs bg-green-50 hover:bg-green-100 dark:bg-emerald-900/25 dark:hover:bg-emerald-900/40 text-green-700 dark:text-emerald-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><CheckCircle size={13} />Check All Template</button>
-                  <button onClick={() => void handleGenerateSchemaOnTarget()} disabled={generatingTargetSchema || !pgConfig} className="text-xs bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/25 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><CheckCircle size={13} />Generate Selected</button>
-                  <button onClick={() => void handleGenerateSchemaOnTarget(new Set(templateTables.map((t) => tableKey(t))))} disabled={generatingTargetSchema || !pgConfig || templateTables.length === 0} className="text-xs bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/25 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><CheckCircle size={13} />Generate All Template</button>
-                  <button onClick={() => void handleGenerateSchemaOnTarget(undefined, { dropExisting: true })} disabled={generatingTargetSchema || !pgConfig} className="text-xs bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/25 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><RotateCcw size={13} />Regenerate Selected</button>
-                  <button onClick={() => void handleScanTarget()} disabled={loading || !pgConfig} className="text-xs bg-cyan-50 hover:bg-cyan-100 dark:bg-cyan-900/25 dark:hover:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><ShieldCheck size={13} />Scan Selected</button>
-                  <button onClick={() => void loadLatestRunStatus()} disabled={loadingRunStatus} className="text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><RefreshCw size={13} className={loadingRunStatus ? 'animate-spin' : ''} />Refresh Run Status</button>
+                  <button onClick={() => handleGenerateDocs('markdown')} disabled={loading} className="text-sm bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/25 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><FileText size={15} />Markdown</button>
+                  <button onClick={() => handleGenerateDocs('csv')} disabled={loading} className="text-sm bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/25 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><Table size={15} />CSV</button>
+                  <button onClick={() => handleGenerateDocs('sql')} disabled={loading} className="text-sm bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/25 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><Code2 size={15} />SQL</button>
+                  <button onClick={() => handleGenerateDocs('svg')} disabled={loading} className="text-sm bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/25 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><ImageIcon size={15} />SVG Diagram</button>
+                  <button onClick={() => handleGenerateDocs('canvas')} disabled={loading} className="text-sm bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/25 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><PenSquare size={15} />Canvas JSON</button>
+                  <button onClick={() => void handleDryRun()} disabled={loading} className="text-sm bg-green-50 hover:bg-green-100 dark:bg-emerald-900/25 dark:hover:bg-emerald-900/40 text-green-700 dark:text-emerald-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><CheckCircle size={15} />Check Selected</button>
+                  <button onClick={() => void handleDryRun(new Set(templateTables.map((t) => tableKey(t))))} disabled={loading || templateTables.length === 0} className="text-sm bg-green-50 hover:bg-green-100 dark:bg-emerald-900/25 dark:hover:bg-emerald-900/40 text-green-700 dark:text-emerald-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><CheckCircle size={15} />Check All Template</button>
+                  <button onClick={() => void handleGenerateSchemaOnTarget()} disabled={generatingTargetSchema || !pgConfig} className="text-sm bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/25 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><CheckCircle size={15} />Generate Selected</button>
+                  <button onClick={() => void handleGenerateSchemaOnTarget(new Set(templateTables.map((t) => tableKey(t))))} disabled={generatingTargetSchema || !pgConfig || templateTables.length === 0} className="text-sm bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/25 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><CheckCircle size={15} />Generate All Template</button>
+                  <button onClick={() => void handleGenerateSchemaOnTarget(undefined, { dropExisting: true })} disabled={generatingTargetSchema || !pgConfig} className="text-sm bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/25 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><RotateCcw size={15} />Regenerate Selected</button>
+                  <button onClick={() => void handleScanTarget()} disabled={loading || !pgConfig} className="text-sm bg-cyan-50 hover:bg-cyan-100 dark:bg-cyan-900/25 dark:hover:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><ShieldCheck size={15} />Scan Selected</button>
+                  <button onClick={() => void loadLatestRunStatus()} disabled={loadingRunStatus} className="text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"><RefreshCw size={15} className={loadingRunStatus ? 'animate-spin' : ''} />Refresh Run Status</button>
                 </div>
               </div>
             </div>
@@ -657,8 +657,8 @@ export default function Phase3() {
 
             <div className="bg-white dark:bg-slate-900/70 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-gray-800 dark:text-slate-100 text-sm">Template Tables (Phase 2 Scope)</h3>
-                <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+                <h3 className="font-semibold text-gray-800 dark:text-slate-100 text-base">Template Tables (Phase 2 Scope)</h3>
+                <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={templateTables.length > 0 && selectedTemplateTables.length === templateTables.length}
@@ -669,11 +669,11 @@ export default function Phase3() {
                 </label>
               </div>
               {templateTables.length === 0 ? (
-                <p className="text-sm text-gray-500 dark:text-slate-400">No template table found. Complete “Confirmed & Save as Template” in Phase 2.</p>
+                <p className="text-base text-gray-500 dark:text-slate-400">No template table found. Complete “Confirmed & Save as Template” in Phase 2.</p>
               ) : (
                 <ul className="space-y-1.5">
                   {templateTables.map((t) => (
-                    <li key={tableKey(t)} className="text-sm text-gray-700 dark:text-slate-200 bg-gray-50 dark:bg-slate-800/70 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 flex items-center gap-2">
+                    <li key={tableKey(t)} className="text-base text-gray-700 dark:text-slate-200 bg-gray-50 dark:bg-slate-800/70 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 flex items-center gap-2">
                       <input
                         type="checkbox"
                         checked={selectedExportTables.has(tableKey(t))}
@@ -688,7 +688,7 @@ export default function Phase3() {
                             <button
                               type="button"
                               onClick={() => void handleDryRun(new Set([tableKey(t)]), tableKey(t))}
-                              className="text-[10px] px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/25 text-blue-700 dark:text-blue-300 font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                              className="text-[12px] px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/25 text-blue-700 dark:text-blue-300 font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
                             >
                               Validate
                             </button>
@@ -696,14 +696,14 @@ export default function Phase3() {
                               type="button"
                               onClick={() => void handleGenerateSchemaOnTarget(new Set([tableKey(t)]))}
                               disabled={generatingTargetSchema || !pgConfig}
-                              className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/25 text-emerald-700 dark:text-emerald-300 font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors disabled:opacity-50"
+                              className="text-[12px] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/25 text-emerald-700 dark:text-emerald-300 font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors disabled:opacity-50"
                             >
                               Generate
                             </button>
                             <button
                               type="button"
                               onClick={() => void handleScanTarget(new Set([tableKey(t)]), tableKey(t))}
-                              className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-200 dark:border-cyan-800 bg-cyan-50 dark:bg-cyan-900/25 text-cyan-700 dark:text-cyan-300 font-semibold hover:bg-cyan-100 dark:hover:bg-cyan-900/40 transition-colors"
+                              className="text-[12px] px-1.5 py-0.5 rounded border border-cyan-200 dark:border-cyan-800 bg-cyan-50 dark:bg-cyan-900/25 text-cyan-700 dark:text-cyan-300 font-semibold hover:bg-cyan-100 dark:hover:bg-cyan-900/40 transition-colors"
                             >
                               Scan
                             </button>
@@ -711,14 +711,14 @@ export default function Phase3() {
                               type="button"
                               onClick={() => void handleGenerateSchemaOnTarget(new Set([tableKey(t)]), { dropExisting: true })}
                               disabled={generatingTargetSchema || !pgConfig}
-                              className="text-[10px] px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50"
+                              className="text-[12px] px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50"
                             >
                               Regenerate
                             </button>
                           </div>
                         </div>
                         {rowValidation[tableKey(t)] && (
-                          <p className={`text-[11px] mt-1 ${
+                          <p className={`text-[13px] mt-1 ${
                             rowValidation[tableKey(t)].valid ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'
                           }`}>
                             {rowValidation[tableKey(t)].valid ? 'Validated' : 'Validation failed'} ·
@@ -726,18 +726,18 @@ export default function Phase3() {
                           </p>
                         )}
                         {rowScan[tableKey(t)] && (
-                          <p className={`text-[11px] mt-1 ${rowScan[tableKey(t)].valid ? 'text-cyan-700 dark:text-cyan-300' : 'text-amber-700 dark:text-amber-300'}`}>
-                            {rowScan[tableKey(t)].valid ? <ShieldCheck size={11} className="inline mr-1" /> : <ShieldAlert size={11} className="inline mr-1" />}
+                          <p className={`text-[13px] mt-1 ${rowScan[tableKey(t)].valid ? 'text-cyan-700 dark:text-cyan-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                            {rowScan[tableKey(t)].valid ? <ShieldCheck size={13} className="inline mr-1" /> : <ShieldAlert size={13} className="inline mr-1" />}
                             Target scan · {rowScan[tableKey(t)].exists ? 'exists' : 'missing'} · errors: {rowScan[tableKey(t)].errors}, warnings: {rowScan[tableKey(t)].warnings}
                           </p>
                         )}
                         {rowMigration[tableKey(t)] && (
-                          <p className={`text-[11px] mt-1 ${rowMigration[tableKey(t)].status === 'completed' ? 'text-emerald-700 dark:text-emerald-300' : rowMigration[tableKey(t)].status === 'failed' ? 'text-rose-700 dark:text-rose-300' : 'text-blue-700 dark:text-blue-300'}`}>
+                          <p className={`text-[13px] mt-1 ${rowMigration[tableKey(t)].status === 'completed' ? 'text-emerald-700 dark:text-emerald-300' : rowMigration[tableKey(t)].status === 'failed' ? 'text-rose-700 dark:text-rose-300' : 'text-blue-700 dark:text-blue-300'}`}>
                             Migration {rowMigration[tableKey(t)].status} · copied {rowMigration[tableKey(t)].rowsCopied.toLocaleString()} / {(rowMigration[tableKey(t)].rowsSource ?? 0).toLocaleString()} · run {rowMigration[tableKey(t)].runId}
                           </p>
                         )}
                         {t.description?.trim() && (
-                          <p className="text-xs text-gray-500 dark:text-slate-400 italic truncate">{t.description}</p>
+                          <p className="text-sm text-gray-500 dark:text-slate-400 italic truncate">{t.description}</p>
                         )}
                       </div>
                     </li>
@@ -750,7 +750,7 @@ export default function Phase3() {
               <div className="flex justify-end">
                 <Link
                   href="/migrate"
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-2.5 rounded-xl text-base transition-colors"
                 >
                   Proceed to Phase 4: Execute Migration →
                 </Link>

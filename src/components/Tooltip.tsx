@@ -18,7 +18,7 @@ export function Tooltip({ content, children, side = 'top', align = 'center' }: T
             side={side}
             align={align}
             sideOffset={6}
-            className="z-50 max-w-[220px] rounded-lg bg-gray-900 dark:bg-slate-700 px-3 py-2 text-[11px] text-gray-100 shadow-xl leading-relaxed select-none animate-in fade-in-0 zoom-in-95"
+            className="z-50 max-w-[220px] rounded-lg bg-gray-900 dark:bg-slate-700 px-3 py-2 text-[13px] text-gray-100 shadow-xl leading-relaxed select-none animate-in fade-in-0 zoom-in-95"
           >
             {content}
             <RadixTooltip.Arrow className="fill-gray-900 dark:fill-slate-700" />

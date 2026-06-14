@@ -45,30 +45,30 @@ export default function DocumentationViewer({ title, content, format, onClose }:
           <div className="flex items-center gap-2">
             <button
               onClick={handleCopy}
-              className="flex items-center gap-1.5 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 text-base bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
             >
-              {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+              {copied ? <Check size={16} className="text-green-600" /> : <Copy size={16} />}
               {copied ? 'Copied!' : 'Copy'}
             </button>
             <button
               onClick={handleDownload}
-              className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 text-base bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors"
             >
-              <Download size={14} />
+              <Download size={16} />
               Download
             </button>
             <button
               onClick={onClose}
               className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-500"
             >
-              <X size={18} />
+              <X size={20} />
             </button>
           </div>
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-6">
-          <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap leading-relaxed">
+          <pre className="text-sm font-mono text-gray-700 whitespace-pre-wrap leading-relaxed">
             {content}
           </pre>
         </div>

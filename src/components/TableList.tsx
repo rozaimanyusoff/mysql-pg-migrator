@@ -24,10 +24,10 @@ export default function TableList({ groups, selectedTable, onSelect, doneSet, ex
   return (
     <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-600 dark:text-slate-300 uppercase tracking-wide">
+        <h2 className="text-base font-semibold text-gray-600 dark:text-slate-300 uppercase tracking-wide">
           Tables ({totalTables})
         </h2>
-        <div className="flex gap-2 text-xs text-gray-400 dark:text-slate-500">
+        <div className="flex gap-2 text-sm text-gray-400 dark:text-slate-500">
           {totalDone > 0 && <span className="text-green-600 dark:text-emerald-400">{totalDone} done</span>}
           {totalExcluded > 0 && <span className="text-red-500 dark:text-rose-400">{totalExcluded} excluded</span>}
         </div>
@@ -37,8 +37,8 @@ export default function TableList({ groups, selectedTable, onSelect, doneSet, ex
           <div key={group.database}>
             {/* Database group header */}
             <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700">
-              <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-slate-300">
-                <Database size={11} className="text-blue-400 dark:text-blue-300" />
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 dark:text-slate-300">
+                <Database size={13} className="text-blue-400 dark:text-blue-300" />
                 {group.database}
                 <span className="text-gray-400 dark:text-slate-500 font-normal">({group.tables.length})</span>
               </span>
@@ -49,7 +49,7 @@ export default function TableList({ groups, selectedTable, onSelect, doneSet, ex
                   title={`Remove ${group.database} from session`}
                   className="text-gray-300 dark:text-slate-500 hover:text-red-400 dark:hover:text-rose-400 transition-colors p-0.5 rounded"
                 >
-                  <X size={12} />
+                  <X size={14} />
                 </button>
               )}
             </div>
@@ -71,17 +71,17 @@ export default function TableList({ groups, selectedTable, onSelect, doneSet, ex
                     <button onClick={() => onSelect(key)} className={rowClass}>
                       <div className="flex items-center gap-2 min-w-0">
                         {isExcluded ? (
-                          <XCircle size={14} className="text-red-400 dark:text-rose-400 shrink-0" />
+                          <XCircle size={16} className="text-red-400 dark:text-rose-400 shrink-0" />
                         ) : isDone ? (
-                          <CheckCircle size={14} className="text-green-500 dark:text-emerald-400 shrink-0" />
+                          <CheckCircle size={16} className="text-green-500 dark:text-emerald-400 shrink-0" />
                         ) : (
-                          <Table2 size={14} className="text-gray-400 dark:text-slate-500 shrink-0" />
+                          <Table2 size={16} className="text-slate-500 dark:text-slate-400 shrink-0" />
                         )}
-                        <span className={`text-sm font-medium truncate ${isExcluded ? 'text-red-500 dark:text-rose-400 line-through' : isDone ? 'text-green-700 dark:text-emerald-300' : 'text-gray-800 dark:text-slate-100'}`}>
+                        <span className={`text-base font-medium truncate ${isExcluded ? 'text-red-500 dark:text-rose-400 line-through' : isDone ? 'text-green-700 dark:text-emerald-300' : 'text-gray-800 dark:text-slate-100'}`}>
                           {t.name}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500 shrink-0 ml-2">
+                      <div className="flex items-center gap-2 text-sm text-gray-400 dark:text-slate-500 shrink-0 ml-2">
                         <span>{t.columns.length} cols</span>
                         {t.rowCount > 0 && (
                           <span className="text-gray-300 dark:text-slate-600">·</span>
@@ -89,7 +89,7 @@ export default function TableList({ groups, selectedTable, onSelect, doneSet, ex
                         {t.rowCount > 0 && (
                           <span>{t.rowCount.toLocaleString()} rows</span>
                         )}
-                        <ChevronRight size={14} />
+                        <ChevronRight size={16} />
                       </div>
                     </button>
                   </li>
@@ -99,7 +99,7 @@ export default function TableList({ groups, selectedTable, onSelect, doneSet, ex
           </div>
         ))}
         {groups.length === 0 && (
-          <div className="px-4 py-8 text-center text-sm text-gray-400 dark:text-slate-500">
+          <div className="px-4 py-8 text-center text-base text-gray-400 dark:text-slate-500">
             No databases inspected yet
           </div>
         )}

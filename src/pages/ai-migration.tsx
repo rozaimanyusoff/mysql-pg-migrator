@@ -86,7 +86,7 @@ function DbSelect({ value, onChange, options, loading, placeholder }: {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-9 px-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg">
-        <Loader2 size={12} className="animate-spin text-gray-400" />
+        <Loader2 size={14} className="animate-spin text-slate-500 dark:text-slate-400" />
       </div>
     );
   }
@@ -96,11 +96,11 @@ function DbSelect({ value, onChange, options, loading, placeholder }: {
         <select
           value={value}
           onChange={e => onChange(e.target.value)}
-          className="w-full appearance-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 pr-7 text-xs text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+          className="w-full appearance-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 pr-7 text-sm text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
         >
           {options.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
-        <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+        <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 pointer-events-none" />
       </div>
     );
   }
@@ -109,7 +109,7 @@ function DbSelect({ value, onChange, options, loading, placeholder }: {
       value={value}
       onChange={e => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+      className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
     />
   );
 }
@@ -182,8 +182,8 @@ function ConnPanel({
   return (
     <div className="flex-1 min-w-0">
       <div className="flex items-center gap-2 mb-1.5">
-        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${accentBadge}`}>{label}</span>
-        <span className="text-[10px] text-gray-400 dark:text-slate-500">{filter === 'mysql' ? 'MySQL' : 'PostgreSQL'}</span>
+        <span className={`text-[12px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${accentBadge}`}>{label}</span>
+        <span className="text-[12px] text-gray-400 dark:text-slate-500">{filter === 'mysql' ? 'MySQL' : 'PostgreSQL'}</span>
       </div>
       <div className="flex gap-1.5 flex-wrap">
         <div className="relative flex-1 min-w-40">
@@ -194,14 +194,14 @@ function ConnPanel({
               onDbChange('');
               onSchemaChange?.('');
             }}
-            className={`w-full appearance-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 pr-7 text-xs text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 ${accentRing} truncate`}
+            className={`w-full appearance-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 pr-7 text-sm text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 ${accentRing} truncate`}
           >
             <option value="">Select connection…</option>
             {filtered.map(c => (
               <option key={c.id} value={c.id}>{c.label} — {c.host}/{c.database_name}</option>
             ))}
           </select>
-          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 pointer-events-none" />
         </div>
 
         {conn && (
@@ -220,7 +220,7 @@ function ConnPanel({
       </div>
 
       {conn && dbValue && (
-        <p className="mt-1 text-[10px] text-gray-400 dark:text-slate-500 truncate">
+        <p className="mt-1 text-[12px] text-gray-400 dark:text-slate-500 truncate">
           {conn.host}:{conn.port} /&nbsp;
           <span className="font-medium text-gray-600 dark:text-slate-300">{dbValue}</span>
           {filter === 'postgres' && schemaValue && (
@@ -250,17 +250,17 @@ function ProposalCard({ proposal, onSave }: { proposal: Proposal; onSave: () => 
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-800">
         <div className="flex items-center gap-2">
-          <Sparkles size={13} className="text-violet-600 dark:text-violet-400" />
-          <span className="text-xs font-semibold text-violet-800 dark:text-violet-300">Mapping Proposal — Dry Run Preview</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-200 dark:bg-violet-800 text-violet-700 dark:text-violet-300">
+          <Sparkles size={15} className="text-violet-600 dark:text-violet-400" />
+          <span className="text-sm font-semibold text-violet-800 dark:text-violet-300">Mapping Proposal — Dry Run Preview</span>
+          <span className="text-[12px] px-1.5 py-0.5 rounded-full bg-violet-200 dark:bg-violet-800 text-violet-700 dark:text-violet-300">
             {matched.length} table{matched.length !== 1 ? 's' : ''}
           </span>
         </div>
         <button
           onClick={onSave}
-          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold bg-violet-600 hover:bg-violet-700 text-white transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-[13px] font-semibold bg-violet-600 hover:bg-violet-700 text-white transition-colors"
         >
-          <Save size={11} />
+          <Save size={13} />
           Save as Job
         </button>
       </div>
@@ -270,8 +270,8 @@ function ProposalCard({ proposal, onSave }: { proposal: Proposal; onSave: () => 
         <div className="px-4 py-2 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800">
           {proposal.warnings.map((w, i) => (
             <div key={i} className="flex items-start gap-1.5">
-              <AlertTriangle size={11} className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-              <span className="text-[11px] text-amber-700 dark:text-amber-400">{w}</span>
+              <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <span className="text-[13px] text-amber-700 dark:text-amber-400">{w}</span>
             </div>
           ))}
         </div>
@@ -289,17 +289,17 @@ function ProposalCard({ proposal, onSave }: { proposal: Proposal; onSave: () => 
                 className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-800/40 transition-colors text-left"
               >
                 <ChevronRight
-                  size={12}
+                  size={14}
                   className={`text-gray-400 transition-transform shrink-0 ${isOpen ? 'rotate-90' : ''}`}
                 />
-                <span className="font-mono text-xs text-gray-800 dark:text-slate-200 font-medium">{t.source.table}</span>
-                <ArrowRight size={11} className="text-gray-400 shrink-0" />
-                <span className="font-mono text-xs text-violet-700 dark:text-violet-300 font-medium">{t.target.table}</span>
-                <span className={`ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${confidenceBadge[t.confidence] ?? confidenceBadge.medium}`}>
+                <span className="font-mono text-sm text-gray-800 dark:text-slate-200 font-medium">{t.source.table}</span>
+                <ArrowRight size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />
+                <span className="font-mono text-sm text-violet-700 dark:text-violet-300 font-medium">{t.target.table}</span>
+                <span className={`ml-auto text-[12px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${confidenceBadge[t.confidence] ?? confidenceBadge.medium}`}>
                   {t.confidence}
                 </span>
                 {t.columns && (
-                  <span className="text-[10px] text-gray-400 dark:text-slate-500 shrink-0">
+                  <span className="text-[12px] text-gray-400 dark:text-slate-500 shrink-0">
                     {t.columns.length} col{t.columns.length !== 1 ? 's' : ''}
                   </span>
                 )}
@@ -308,10 +308,10 @@ function ProposalCard({ proposal, onSave }: { proposal: Proposal; onSave: () => 
               {isOpen && t.columns && (
                 <div className="px-4 pb-3">
                   {t.notes && (
-                    <p className="text-[11px] text-gray-500 dark:text-slate-400 mb-2 italic">{t.notes}</p>
+                    <p className="text-[13px] text-gray-500 dark:text-slate-400 mb-2 italic">{t.notes}</p>
                   )}
                   <div className="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
-                    <table className="w-full text-[11px]">
+                    <table className="w-full text-[13px]">
                       <thead>
                         <tr className="bg-gray-50 dark:bg-slate-800/60">
                           <th className="text-left px-3 py-1.5 font-semibold text-gray-500 dark:text-slate-400">Source col</th>
@@ -332,7 +332,7 @@ function ProposalCard({ proposal, onSave }: { proposal: Proposal; onSave: () => 
                             <td className="px-3 py-1.5 font-mono text-violet-700 dark:text-violet-300">{c.targetCol}</td>
                             <td className="px-3 py-1.5 font-mono text-blue-600 dark:text-blue-400">{c.targetPgType}</td>
                             <td className="px-3 py-1.5">
-                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                              <span className={`px-1.5 py-0.5 rounded text-[12px] font-medium ${
                                 c.conversion === 'keep'
                                   ? 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-400'
                                   : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'
@@ -355,12 +355,12 @@ function ProposalCard({ proposal, onSave }: { proposal: Proposal; onSave: () => 
       {/* Unmatched */}
       {unmatched.length > 0 && (
         <div className="px-4 py-2.5 border-t border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/20">
-          <p className="text-[11px] text-gray-500 dark:text-slate-400 mb-1 font-medium">
+          <p className="text-[13px] text-gray-500 dark:text-slate-400 mb-1 font-medium">
             {unmatched.length} unmatched source table{unmatched.length !== 1 ? 's' : ''} (no target match found):
           </p>
           <div className="flex flex-wrap gap-1">
             {unmatched.map(n => (
-              <span key={n} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-400">
+              <span key={n} className="text-[12px] font-mono px-1.5 py-0.5 rounded bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-400">
                 {n}
               </span>
             ))}
@@ -384,14 +384,14 @@ function MessageBubble({ msg, onSave }: { msg: ChatMsg; onSave: (proposal: Propo
           : 'bg-gradient-to-br from-violet-500 to-blue-600 text-white'
       }`}>
         {isUser ? (
-          <span className="text-[10px] font-bold">You</span>
+          <span className="text-[12px] font-bold">You</span>
         ) : (
-          <Brain size={13} />
+          <Brain size={15} />
         )}
       </div>
 
       <div className={`flex-1 min-w-0 max-w-[85%] ${isUser ? 'flex flex-col items-end' : ''}`}>
-        <div className={`rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words ${
+        <div className={`rounded-xl px-4 py-3 text-base leading-relaxed whitespace-pre-wrap break-words ${
           isUser
             ? 'bg-violet-600 text-white rounded-tr-sm'
             : 'bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 border border-gray-200 dark:border-slate-700 rounded-tl-sm'
@@ -403,7 +403,7 @@ function MessageBubble({ msg, onSave }: { msg: ChatMsg; onSave: (proposal: Propo
           <ProposalCard proposal={msg.proposal} onSave={() => onSave(msg.proposal!)} />
         )}
 
-        <p className="mt-1 text-[10px] text-gray-400 dark:text-slate-500">
+        <p className="mt-1 text-[12px] text-gray-400 dark:text-slate-500">
           {msg.ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
         </p>
       </div>
@@ -459,41 +459,41 @@ function SaveJobDialog({
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-700 w-full max-w-md">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
-            <Save size={15} className="text-violet-600" />
+            <Save size={17} className="text-violet-600" />
             <span className="font-semibold text-gray-800 dark:text-slate-200">Save Migration Job</span>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
-            <X size={16} />
+            <X size={18} />
           </button>
         </div>
         <div className="p-5 space-y-4">
-          <div className="p-3 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-xs text-violet-700 dark:text-violet-400">
+          <div className="p-3 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-sm text-violet-700 dark:text-violet-400">
             <strong>{proposal.tables.filter(t => !t.unmatched).length}</strong> table mapping{proposal.tables.filter(t => !t.unmatched).length !== 1 ? 's' : ''} will be saved as a migration job.
             You can review and run it from the <strong>Migration</strong> module.
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">Job name</label>
+            <label className="block text-sm font-medium text-gray-600 dark:text-slate-400 mb-1.5">Job name</label>
             <input
               value={jobName}
               onChange={e => setJobName(e.target.value)}
-              className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-base text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
           </div>
           {error && (
-            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-400">
+            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-400">
               {error}
             </div>
           )}
           <div className="flex gap-2 justify-end">
-            <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+            <button onClick={onClose} className="px-4 py-2 text-base rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
               Cancel
             </button>
             <button
               onClick={save}
               disabled={!jobName.trim() || saving}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center gap-2 px-4 py-2 text-base font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
               {saving ? 'Saving…' : 'Save Job'}
             </button>
           </div>
@@ -775,15 +775,15 @@ export default function AiMigrationPage() {
           <div className="px-4 py-3">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center">
-                <Brain size={14} className="text-white" />
+                <Brain size={16} className="text-white" />
               </div>
-              <h1 className="text-base font-semibold text-gray-900 dark:text-slate-100">AI Migration Assistant</h1>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-400 font-medium">Scenario 1 · Existing Target</span>
+              <h1 className="text-lg font-semibold text-gray-900 dark:text-slate-100">AI Migration Assistant</h1>
+              <span className="text-[12px] px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-400 font-medium">Scenario 1 · Existing Target</span>
               {savedResult && (
-                <Link href="/migration" className="ml-auto flex items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400 hover:underline">
-                  <CheckCircle2 size={13} className="text-emerald-500" />
+                <Link href="/migration" className="ml-auto flex items-center gap-1.5 text-sm text-violet-600 dark:text-violet-400 hover:underline">
+                  <CheckCircle2 size={15} className="text-emerald-500" />
                   Job saved: {savedResult.jobName}
-                  <ExternalLink size={11} />
+                  <ExternalLink size={13} />
                 </Link>
               )}
             </div>
@@ -797,7 +797,7 @@ export default function AiMigrationPage() {
                 dbValue={srcDb} onDbChange={setSrcDb}
               />
               <div className="flex items-center pt-4">
-                <ArrowRight size={16} className="text-gray-300 dark:text-slate-600 shrink-0" />
+                <ArrowRight size={18} className="text-slate-400 dark:text-slate-500 shrink-0" />
               </div>
               <ConnPanel
                 label="Target" accent="blue"
@@ -820,15 +820,15 @@ export default function AiMigrationPage() {
                 <div className="flex-1 min-h-0 flex flex-col">
                   <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/60 shrink-0">
                     <div className="flex items-center gap-1.5">
-                      <Database size={12} className="text-orange-500" />
-                      <span className="text-[11px] font-semibold text-gray-600 dark:text-slate-400 uppercase tracking-wide">Source Tables</span>
+                      <Database size={14} className="text-orange-500" />
+                      <span className="text-[13px] font-semibold text-gray-600 dark:text-slate-400 uppercase tracking-wide">Source Tables</span>
                     </div>
                     <button
                       onClick={loadSourceTables}
                       disabled={!srcConn || !srcDb || loadingSrc}
-                      className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1 text-[12px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      {loadingSrc ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                      {loadingSrc ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                       Load
                     </button>
                   </div>
@@ -836,10 +836,10 @@ export default function AiMigrationPage() {
                   {srcTables.length > 0 ? (
                     <>
                       <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-100 dark:border-slate-800 shrink-0">
-                        <span className="text-[10px] text-gray-400 dark:text-slate-500">
+                        <span className="text-[12px] text-gray-400 dark:text-slate-500">
                           {selected.size}/{srcTables.length} selected
                         </span>
-                        <button onClick={toggleAll} className="text-[10px] text-violet-600 dark:text-violet-400 hover:underline">
+                        <button onClick={toggleAll} className="text-[12px] text-violet-600 dark:text-violet-400 hover:underline">
                           {selected.size === srcTables.length ? 'None' : 'All'}
                         </button>
                       </div>
@@ -854,8 +854,8 @@ export default function AiMigrationPage() {
                                 onChange={() => toggleTable(key)}
                                 className="rounded border-gray-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 w-3 h-3"
                               />
-                              <span className="text-[11px] text-gray-700 dark:text-slate-300 flex-1 truncate font-mono">{t.name}</span>
-                              <span className="text-[10px] text-gray-400 dark:text-slate-500 shrink-0 tabular-nums">
+                              <span className="text-[13px] text-gray-700 dark:text-slate-300 flex-1 truncate font-mono">{t.name}</span>
+                              <span className="text-[12px] text-gray-400 dark:text-slate-500 shrink-0 tabular-nums">
                                 {t.rowCount.toLocaleString()}
                               </span>
                             </label>
@@ -865,7 +865,7 @@ export default function AiMigrationPage() {
                     </>
                   ) : (
                     <div className="flex-1 flex items-center justify-center p-4">
-                      <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center">
+                      <p className="text-[13px] text-gray-400 dark:text-slate-500 text-center">
                         {srcConn && srcDb ? 'Click Load to fetch tables' : 'Select a MySQL connection first'}
                       </p>
                     </div>
@@ -875,21 +875,21 @@ export default function AiMigrationPage() {
                 {/* Target tables */}
                 <div className="border-t border-gray-200 dark:border-slate-700 shrink-0" style={{ maxHeight: '40%' }}>
                   <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/60">
-                    <Database size={12} className="text-blue-500" />
-                    <span className="text-[11px] font-semibold text-gray-600 dark:text-slate-400 uppercase tracking-wide">Target Tables</span>
-                    {loadingTgt && <Loader2 size={10} className="animate-spin text-gray-400 ml-auto" />}
+                    <Database size={14} className="text-blue-500" />
+                    <span className="text-[13px] font-semibold text-gray-600 dark:text-slate-400 uppercase tracking-wide">Target Tables</span>
+                    {loadingTgt && <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400 ml-auto" />}
                     {!loadingTgt && tgtTables.length > 0 && (
-                      <span className="ml-auto text-[10px] text-gray-400">{tgtTables.length}</span>
+                      <span className="ml-auto text-[12px] text-gray-400">{tgtTables.length}</span>
                     )}
                   </div>
                   <div className="overflow-y-auto" style={{ maxHeight: 'calc(40vh - 40px)' }}>
                     {tgtTables.length > 0 ? tgtTables.map(t => (
                       <div key={t.name} className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-50 dark:border-slate-800/60 last:border-0">
-                        <Table2 size={10} className="text-blue-400 shrink-0" />
-                        <span className="text-[11px] text-gray-600 dark:text-slate-400 font-mono truncate">{t.name}</span>
+                        <Table2 size={12} className="text-blue-400 shrink-0" />
+                        <span className="text-[13px] text-gray-600 dark:text-slate-400 font-mono truncate">{t.name}</span>
                       </div>
                     )) : (
-                      <p className="px-3 py-3 text-[11px] text-gray-400 dark:text-slate-500">
+                      <p className="px-3 py-3 text-[13px] text-gray-400 dark:text-slate-500">
                         {tgtConn && tgtDb ? 'Loading…' : 'Select target connection'}
                       </p>
                     )}
@@ -901,13 +901,13 @@ export default function AiMigrationPage() {
                   <button
                     onClick={handleAnalyze}
                     disabled={!ready || isLoading}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-700 hover:to-blue-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-base font-semibold bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-700 hover:to-blue-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
                   >
-                    {isLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                    {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                     {isLoading ? 'Analyzing…' : 'Analyze & Map'}
                   </button>
                   {!ready && (
-                    <p className="mt-1.5 text-[10px] text-center text-gray-400 dark:text-slate-500">
+                    <p className="mt-1.5 text-[12px] text-center text-gray-400 dark:text-slate-500">
                       {!srcConn || !srcDb ? 'Select source connection' :
                         !tgtConn || !tgtDb ? 'Select target connection' :
                         selected.size === 0 ? 'Select tables to analyze' : ''}
@@ -927,13 +927,13 @@ export default function AiMigrationPage() {
                   {messages.length === 0 && !isLoading && (
                     <div className="flex flex-col items-center justify-center h-full text-center space-y-4 py-16">
                       <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center shadow-lg">
-                        <Brain size={24} className="text-white" />
+                        <Brain size={26} className="text-white" />
                       </div>
                       <div>
-                        <h2 className="text-base font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                        <h2 className="text-lg font-semibold text-gray-700 dark:text-slate-300 mb-1">
                           AI Migration Assistant
                         </h2>
-                        <p className="text-sm text-gray-400 dark:text-slate-500 max-w-sm leading-relaxed">
+                        <p className="text-base text-gray-400 dark:text-slate-500 max-w-sm leading-relaxed">
                           Select your source (MySQL) and target (PostgreSQL) connections, load source tables, then click <strong className="text-violet-600 dark:text-violet-400">Analyze & Map</strong> to start.
                         </p>
                       </div>
@@ -945,8 +945,8 @@ export default function AiMigrationPage() {
                           { icon: Save, text: 'Saves confirmed mapping as a migration job' },
                         ].map(({ icon: Icon, text }, i) => (
                           <div key={i} className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800">
-                            <Icon size={13} className="text-violet-500 shrink-0" />
-                            <span className="text-xs text-gray-600 dark:text-slate-400">{text}</span>
+                            <Icon size={15} className="text-violet-500 shrink-0" />
+                            <span className="text-sm text-gray-600 dark:text-slate-400">{text}</span>
                           </div>
                         ))}
                       </div>
@@ -961,17 +961,17 @@ export default function AiMigrationPage() {
                   {isLoading && (
                     <div className="flex gap-2.5">
                       <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center shrink-0 mt-0.5">
-                        <Brain size={13} className="text-white" />
+                        <Brain size={15} className="text-white" />
                       </div>
                       <div className="flex-1 max-w-[85%]">
                         {statusMsg && (
-                          <div className="flex items-center gap-2 mb-2 text-xs text-gray-400 dark:text-slate-500">
-                            <Loader2 size={11} className="animate-spin" />
+                          <div className="flex items-center gap-2 mb-2 text-sm text-gray-400 dark:text-slate-500">
+                            <Loader2 size={13} className="animate-spin" />
                             {statusMsg}
                           </div>
                         )}
                         {pendingText && (
-                          <div className="rounded-xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 border border-gray-200 dark:border-slate-700 whitespace-pre-wrap">
+                          <div className="rounded-xl rounded-tl-sm px-4 py-3 text-base leading-relaxed bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 border border-gray-200 dark:border-slate-700 whitespace-pre-wrap">
                             {pendingText}
                             <span className="inline-block w-1.5 h-4 bg-violet-500 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
                           </div>
@@ -992,16 +992,16 @@ export default function AiMigrationPage() {
                 <div className="shrink-0 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
                   {latestProposal && !isLoading && (
                     <div className="flex items-center gap-2 mb-2.5">
-                      <Info size={11} className="text-violet-500 shrink-0" />
-                      <span className="text-[11px] text-gray-500 dark:text-slate-400">
+                      <Info size={13} className="text-violet-500 shrink-0" />
+                      <span className="text-[13px] text-gray-500 dark:text-slate-400">
                         Proposal ready — {latestProposal.tables.filter(t => !t.unmatched).length} table mapping{latestProposal.tables.filter(t => !t.unmatched).length !== 1 ? 's' : ''}.
                         Ask AI to refine, or save it.
                       </span>
                       <button
                         onClick={() => openSaveDialog(latestProposal)}
-                        className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold bg-violet-600 hover:bg-violet-700 text-white transition-colors"
+                        className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-lg text-[13px] font-semibold bg-violet-600 hover:bg-violet-700 text-white transition-colors"
                       >
-                        <Save size={11} />
+                        <Save size={13} />
                         Save as Job
                       </button>
                     </div>
@@ -1020,14 +1020,14 @@ export default function AiMigrationPage() {
                           : 'Ask AI to refine the mapping… (Enter to send, Shift+Enter for newline)'
                       }
                       disabled={isLoading}
-                      className="flex-1 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none disabled:opacity-50"
+                      className="flex-1 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-base text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none disabled:opacity-50"
                     />
                     <button
                       onClick={handleSend}
                       disabled={!input.trim() || isLoading}
                       className="flex items-center justify-center w-10 h-10 rounded-xl bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
                     >
-                      {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                      {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                     </button>
                   </div>
                 </div>

@@ -558,7 +558,7 @@ function Popover({ trigger, children }: { trigger: React.ReactNode; children: Re
     <div ref={ref} className="relative inline-block">
       <div onClick={() => setOpen(v => !v)} className="cursor-pointer">{trigger}</div>
       {open && (
-        <div className="absolute left-0 top-full mt-1.5 z-50 w-80 max-h-80 overflow-y-auto rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl text-xs p-4 space-y-2.5">
+        <div className="absolute left-0 top-full mt-1.5 z-50 w-80 max-h-80 overflow-y-auto rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl text-sm p-4 space-y-2.5">
           {children}
         </div>
       )}
@@ -568,20 +568,20 @@ function Popover({ trigger, children }: { trigger: React.ReactNode; children: Re
 
 function SeedAnalysisBadge({ a }: { a: SeedAnalysis }) {
   const strategyColor = { uuid: 'text-violet-700 dark:text-violet-400', sequential: 'text-amber-700 dark:text-amber-400', mixed: 'text-blue-700 dark:text-blue-400', none: 'text-gray-500 dark:text-slate-400' }[a.idStrategy];
-  const strategyIcon = { uuid: <Fingerprint size={11} />, sequential: <Hash size={11} />, mixed: <Layers size={11} />, none: <Info size={11} /> }[a.idStrategy];
+  const strategyIcon = { uuid: <Fingerprint size={13} />, sequential: <Hash size={13} />, mixed: <Layers size={13} />, none: <Info size={13} /> }[a.idStrategy];
   return (
     <Popover trigger={
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20 text-xs text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/40 transition-colors select-none">
-        <Info size={11} />
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20 text-sm text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/40 transition-colors select-none">
+        <Info size={13} />
         <span className="font-medium">{a.tables.length} table{a.tables.length !== 1 ? 's' : ''}</span>
         <span className="opacity-70">· {a.totalRows} row{a.totalRows !== 1 ? 's' : ''}</span>
         <span className={`flex items-center gap-1 ${strategyColor}`}>{strategyIcon} {a.idStrategy}</span>
         <span className="opacity-50">— click for details</span>
       </div>
     }>
-      <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 mb-2">Seed Analysis</p>
+      <p className="text-sm font-semibold text-gray-700 dark:text-slate-200 mb-2">Seed Analysis</p>
       <div>
-        <p className="flex items-center gap-1.5 font-medium text-gray-600 dark:text-slate-300 mb-1.5"><Table2 size={11} /> Rows per table</p>
+        <p className="flex items-center gap-1.5 font-medium text-slate-600 dark:text-slate-300 mb-1.5"><Table2 size={13} /> Rows per table</p>
         <div className="space-y-1">
           {a.tables.map(t => (
             <div key={t} className="flex items-center justify-between">
@@ -601,15 +601,15 @@ function SeedAnalysisBadge({ a }: { a: SeedAnalysis }) {
 function JobRunCard({ job }: { job: SchemaJob }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className={`rounded-lg border text-xs overflow-hidden ${job.status === 'success' ? 'border-emerald-200 dark:border-emerald-800/60' : job.status === 'failed' ? 'border-rose-200 dark:border-rose-800/60' : 'border-gray-200 dark:border-slate-700'}`}>
+    <div className={`rounded-lg border text-sm overflow-hidden ${job.status === 'success' ? 'border-emerald-200 dark:border-emerald-800/60' : job.status === 'failed' ? 'border-rose-200 dark:border-rose-800/60' : 'border-gray-200 dark:border-slate-700'}`}>
       <div className="flex items-center gap-2 px-3 py-2">
-        <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded font-semibold text-[10px] ${job.status === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : job.status === 'failed' ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'}`}>{job.status}</span>
-        <span className="flex items-center gap-1 text-gray-400 dark:text-slate-500 shrink-0"><Clock size={9} />{timeAgo(job.created_at)}</span>
+        <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded font-semibold text-[12px] ${job.status === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : job.status === 'failed' ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300'}`}>{job.status}</span>
+        <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400 shrink-0"><Clock size={11} />{timeAgo(job.created_at)}</span>
         {job.target_database && <span className="text-gray-500 dark:text-slate-400 truncate flex-1">{job.target_database}</span>}
         <div className="flex items-center gap-1 ml-auto shrink-0">
           {job.log && job.log.length > 0 && (
             <button onClick={() => setExpanded(v => !v)} className="p-0.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
-              {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
           )}
         </div>
@@ -618,8 +618,8 @@ function JobRunCard({ job }: { job: SchemaJob }) {
         <div className="border-t border-gray-100 dark:border-slate-800 px-3 py-2 space-y-1 font-mono bg-gray-950/90 dark:bg-slate-950/80 max-h-32 overflow-y-auto">
           {job.log.map((line, i) => (
             <div key={i} className={`flex items-start gap-1.5 ${line.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {line.ok ? <CheckCircle2 size={10} className="mt-0.5 shrink-0" /> : <XCircle size={10} className="mt-0.5 shrink-0" />}
-              <span className="text-[10px] leading-relaxed"><span className="opacity-50 mr-1">[{line.step}]</span>{line.text}</span>
+              {line.ok ? <CheckCircle2 size={12} className="mt-0.5 shrink-0" /> : <XCircle size={12} className="mt-0.5 shrink-0" />}
+              <span className="text-[12px] leading-relaxed"><span className="opacity-50 mr-1">[{line.step}]</span>{line.text}</span>
             </div>
           ))}
         </div>
@@ -668,9 +668,9 @@ function ExportDropdown({ showExport, onToggle, onClose, isDdl, slug, onSql, onM
       <button
         ref={btnRef}
         onClick={onToggle}
-        className="flex items-center gap-0.5 px-2 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
+        className="flex items-center gap-0.5 px-2 py-0.5 rounded text-[12px] font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
       >
-        <Download size={9} /> Export
+        <Download size={11} /> Export
       </button>
       {showExport && pos && typeof document !== 'undefined' && createPortal(
         <div
@@ -678,26 +678,26 @@ function ExportDropdown({ showExport, onToggle, onClose, isDdl, slug, onSql, onM
           style={{ position: 'fixed', top: pos.top, right: pos.right, zIndex: 9999 }}
           className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden min-w-[140px]"
         >
-          <button onClick={onSql} className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
-            <FileCode2 size={10} className="text-emerald-500" /> SQL
+          <button onClick={onSql} className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+            <FileCode2 size={12} className="text-emerald-500" /> SQL
           </button>
           {isDdl ? (
             <>
-              <button onClick={onMd} className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
-                <FileText size={10} className="text-blue-500" /> Markdown
+              <button onClick={onMd} className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                <FileText size={12} className="text-blue-500" /> Markdown
               </button>
-              <button onClick={onJson} className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
-                <Braces size={10} className="text-amber-500" /> JSON
+              <button onClick={onJson} className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                <Braces size={12} className="text-amber-500" /> JSON
               </button>
               <div className="border-t border-gray-100 dark:border-slate-700 my-0.5" />
               {(['drizzle', 'prisma', 'typeorm'] as OrmTarget[]).map(t => (
-                <button key={t} onClick={() => onOrm(t)} className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors capitalize">
-                  <Layers size={10} className="text-violet-500" /> {t}
+                <button key={t} onClick={() => onOrm(t)} className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors capitalize">
+                  <Layers size={12} className="text-violet-500" /> {t}
                 </button>
               ))}
             </>
           ) : (
-            <div className="px-3 py-1.5 text-[10px] text-gray-400 dark:text-slate-500 italic">
+            <div className="px-3 py-1.5 text-[12px] text-gray-400 dark:text-slate-500 italic">
               Load into designer for ORM export
             </div>
           )}
@@ -869,35 +869,35 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
             value={renameVal}
             onChange={e => setRenameVal(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(false); }}
-            className="flex-1 text-[11px] font-medium bg-white dark:bg-slate-700 border border-blue-400 rounded px-1 py-0.5 text-gray-800 dark:text-slate-200 outline-none"
+            className="flex-1 text-[13px] font-medium bg-white dark:bg-slate-700 border border-blue-400 rounded px-1 py-0.5 text-gray-800 dark:text-slate-200 outline-none"
           />
         ) : (
-          <p className="text-[11px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">{group.job_name}</p>
+          <p className="text-[13px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">{group.job_name}</p>
         )}
         {renaming ? (
           <div className="flex items-center gap-0.5 shrink-0">
-            <button onClick={commitRename} className="p-0.5 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"><Check size={11} /></button>
-            <button onClick={() => setRenaming(false)} className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"><X size={11} /></button>
+            <button onClick={commitRename} className="p-0.5 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"><Check size={13} /></button>
+            <button onClick={() => setRenaming(false)} className="p-0.5 rounded text-slate-500 dark:text-slate-400 hover:text-slate-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"><X size={13} /></button>
           </div>
         ) : (
-          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${statusCls}`}>{statusLabel}</span>
+          <span className={`text-[12px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${statusCls}`}>{statusLabel}</span>
         )}
       </div>
       {/* Row 2: description */}
       {latest.description && (
-        <p className="text-[10px] text-gray-400 dark:text-slate-500 truncate mb-0.5">{latest.description}</p>
+        <p className="text-[12px] text-gray-400 dark:text-slate-500 truncate mb-0.5">{latest.description}</p>
       )}
       {/* Row 3: runs count + date + expand */}
       <div className="flex items-center gap-1 mb-1.5">
-        <p className="text-[10px] text-gray-400 dark:text-slate-500 flex-1">
+        <p className="text-[12px] text-gray-400 dark:text-slate-500 flex-1">
           {group.runs.length} run{group.runs.length !== 1 ? 's' : ''} · {timeAgo(latest.created_at)}
           {latest.target_database && <span className="ml-1 font-mono">· {latest.target_database}</span>}
         </p>
         <button
           onClick={() => setExpanded(v => !v)}
-          className="flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+          className="flex items-center gap-0.5 text-[12px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
         >
-          {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+          {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
       </div>
       {/* Expanded: run list */}
@@ -910,8 +910,8 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
               <div className="border border-gray-100 dark:border-slate-700 rounded overflow-hidden">
                 {tbls.map(t => (
                   <div key={t} className="flex items-center gap-1.5 px-2 py-1 border-b border-gray-50 dark:border-slate-800 last:border-0">
-                    <Table2 size={9} className="text-blue-400 shrink-0" />
-                    <span className="text-[10px] font-mono text-gray-600 dark:text-slate-300 truncate">{t}</span>
+                    <Table2 size={11} className="text-blue-400 shrink-0" />
+                    <span className="text-[12px] font-mono text-gray-600 dark:text-slate-300 truncate">{t}</span>
                   </div>
                 ))}
               </div>
@@ -926,7 +926,7 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
       {/* Row 4: actions */}
       <div className="flex items-center gap-1">
         {isActive && (
-          <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>
+          <span className="text-[11px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-medium">active</span>
         )}
 
         {/* Export dropdown — portal-rendered to escape overflow-hidden ancestors */}
@@ -981,7 +981,7 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
         <button
           onClick={() => onLoad(latest)}
           title="Load latest schema into designer"
-          className={`${latest.schema_sql ? '' : 'ml-auto '}px-2 py-0.5 rounded text-[10px] font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors`}
+          className={`${latest.schema_sql ? '' : 'ml-auto '}px-2 py-0.5 rounded text-[12px] font-medium bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors`}
         >
           Load
         </button>
@@ -992,7 +992,7 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
             title="Verify schema against live DB"
             className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50 transition-colors"
           >
-            {verifying ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+            {verifying ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
           </button>
         )}
         {onRename && (
@@ -1001,7 +1001,7 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
             title="Rename job"
             className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
           >
-            <Pencil size={11} />
+            <Pencil size={13} />
           </button>
         )}
         {onDelete && (
@@ -1010,7 +1010,7 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
             title="Delete job"
             className="p-1 rounded text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
           >
-            <Trash2 size={11} />
+            <Trash2 size={13} />
           </button>
         )}
       </div>
@@ -1019,18 +1019,18 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
         <div className="mt-1 space-y-0.5">
           <button
             onClick={() => { if (syncResult.missing.length > 0 || syncResult.issues.length > 0) setSyncExpanded(v => !v); }}
-            className={`w-full flex items-center gap-1 text-[10px] px-0.5 text-left ${
+            className={`w-full flex items-center gap-1 text-[12px] px-0.5 text-left ${
               syncResult.matched === -1 ? 'text-rose-500 dark:text-rose-400' :
               syncResult.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
             }`}
           >
             {syncResult.matched === -1 ? (
-              <><XCircle size={9} className="shrink-0" /> Connection failed</>
+              <><XCircle size={11} className="shrink-0" /> Connection failed</>
             ) : syncResult.ok ? (
-              <><CheckCircle2 size={9} className="shrink-0" /> {syncResult.total} tables — columns, FK, constraints verified</>
+              <><CheckCircle2 size={11} className="shrink-0" /> {syncResult.total} tables — columns, FK, constraints verified</>
             ) : (
               <>
-                <AlertTriangle size={9} className="shrink-0" />
+                <AlertTriangle size={11} className="shrink-0" />
                 {syncResult.missing.length > 0 && <span>{syncResult.missing.length} table{syncResult.missing.length > 1 ? 's' : ''} missing</span>}
                 {syncResult.missing.length > 0 && syncResult.issues.length > 0 && <span>·</span>}
                 {syncResult.issues.length > 0 && <span>{syncResult.issues.length} table{syncResult.issues.length > 1 ? 's' : ''} with issues</span>}
@@ -1043,15 +1043,15 @@ function JobGroupCard({ group, onLoad, onRename, onDelete, isActive, connections
           {syncExpanded && (
             <div className="rounded border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 px-2 py-1.5 space-y-1.5">
               {syncResult.missing.map(t => (
-                <div key={t} className="flex items-center gap-1 text-[10px] text-rose-600 dark:text-rose-400">
-                  <XCircle size={8} className="shrink-0" /> table <span className="font-mono">{t}</span> not in DB
+                <div key={t} className="flex items-center gap-1 text-[12px] text-rose-600 dark:text-rose-400">
+                  <XCircle size={10} className="shrink-0" /> table <span className="font-mono">{t}</span> not in DB
                 </div>
               ))}
               {syncResult.issues.map(({ table, problems }) => (
                 <div key={table} className="space-y-0.5">
-                  <div className="text-[10px] font-medium text-amber-700 dark:text-amber-400 font-mono">{table}</div>
+                  <div className="text-[12px] font-medium text-amber-700 dark:text-amber-400 font-mono">{table}</div>
                   {problems.map((p, i) => (
-                    <div key={i} className="flex items-start gap-1 text-[10px] text-amber-700 dark:text-amber-400 pl-2">
+                    <div key={i} className="flex items-start gap-1 text-[12px] text-amber-700 dark:text-amber-400 pl-2">
                       <span className="shrink-0 mt-0.5">·</span> {p}
                     </div>
                   ))}
@@ -1085,26 +1085,26 @@ function SaveJobModal({ onSave, onSkip, defaultName, defaultDesc, existingNames 
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800">
-          <div className="flex items-center gap-2"><Save size={15} className="text-blue-500" /><p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Save Job Record</p></div>
-          <button onClick={onSkip} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
+          <div className="flex items-center gap-2"><Save size={17} className="text-blue-500" /><p className="font-semibold text-slate-700 dark:text-slate-200 text-base">Save Job Record</p></div>
+          <button onClick={onSkip} className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-4">
           {/* Existing job picker */}
           {(defaultName || others.length > 0) && (
             <div>
-              <p className="text-[10px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">Save to existing job</p>
+              <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">Save to existing job</p>
               <div className="flex flex-wrap gap-1.5">
                 {defaultName && (
                   <button
                     onClick={() => setName(defaultName)}
-                    className={`px-2 py-1 text-[11px] rounded-lg border transition-colors ${name.trim() === defaultName ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                    className={`px-2 py-1 text-[13px] rounded-lg border transition-colors ${name.trim() === defaultName ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
                   >
-                    <FolderOpen size={9} className="inline mr-1" />{defaultName}
+                    <FolderOpen size={11} className="inline mr-1" />{defaultName}
                   </button>
                 )}
                 {others.map(n => (
                   <button key={n} onClick={() => setName(n)}
-                    className={`px-2 py-1 text-[11px] rounded-lg border transition-colors ${name.trim() === n ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                    className={`px-2 py-1 text-[13px] rounded-lg border transition-colors ${name.trim() === n ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
                   >
                     {n}
                   </button>
@@ -1113,28 +1113,28 @@ function SaveJobModal({ onSave, onSkip, defaultName, defaultDesc, existingNames 
             </div>
           )}
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Job Name <span className="text-rose-500">*</span></label>
+            <label className="block text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Job Name <span className="text-rose-500">*</span></label>
             <input ref={ref} value={name} onChange={e => setName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && name.trim()) onSave(name.trim(), desc.trim()); }}
               placeholder="e.g. Initial schema — project_x"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full px-3 py-2 text-base rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
-            <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1">
+            <p className="text-[12px] text-gray-400 dark:text-slate-500 mt-1">
               {isRevision ? 'New revision will be added under this job.' : 'New job name — creates a separate job group.'}
             </p>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Description (optional)</label>
+            <label className="block text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Description (optional)</label>
             <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="Notes about this run…" rows={2}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+              className="w-full px-3 py-2 text-base rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
             />
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
-          <button onClick={onSkip} className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">Skip</button>
+          <button onClick={onSkip} className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">Skip</button>
           <button onClick={() => name.trim() && onSave(name.trim(), desc.trim())} disabled={!name.trim()}
-            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors">
-            <Save size={13} /> {isRevision ? 'Save Revision' : 'Save New'}
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors">
+            <Save size={15} /> {isRevision ? 'Save Revision' : 'Save New'}
           </button>
         </div>
       </div>
@@ -1167,28 +1167,28 @@ function FkPickerModal({ tables, currentTableId, value, onSelect, onClose }: {
       <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <Link2 size={15} className="text-blue-500" />
-            <p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">Set Foreign Key Reference</p>
+            <Link2 size={17} className="text-blue-500" />
+            <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">Set Foreign Key Reference</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
+          <button onClick={onClose} className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={18} /></button>
         </div>
         <div className="flex overflow-hidden" style={{ height: 320 }}>
           {/* Tables list */}
           <div className="w-44 shrink-0 border-r border-gray-100 dark:border-slate-800 overflow-y-auto">
-            <p className="px-3 py-2 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider sticky top-0 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
+            <p className="px-3 py-2 text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider sticky top-0 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
               Tables ({otherTables.length})
             </p>
             {otherTables.length === 0
-              ? <p className="px-3 py-4 text-[11px] text-gray-400 dark:text-slate-500 text-center">No other tables in designer</p>
+              ? <p className="px-3 py-4 text-[13px] text-gray-400 dark:text-slate-500 text-center">No other tables in designer</p>
               : otherTables.map(t => (
                 <button key={t.id} onClick={() => setPickedTable(t)}
                   className={`w-full flex items-center gap-2 px-3 py-2.5 text-left border-b border-gray-50 dark:border-slate-800/50 transition-colors ${pickedTable?.id === t.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30 text-gray-700 dark:text-slate-300'}`}>
-                  <Table2 size={11} className={`shrink-0 ${pickedTable?.id === t.id ? 'text-blue-400' : 'text-gray-400 dark:text-slate-500'}`} />
+                  <Table2 size={13} className={`shrink-0 ${pickedTable?.id === t.id ? 'text-blue-400' : 'text-slate-500 dark:text-slate-400'}`} />
                   <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-medium truncate">{t.name}</p>
-                    {t.schema && t.schema !== 'public' && <p className="text-[9px] text-gray-400 dark:text-slate-500 font-mono">{t.schema}</p>}
+                    <p className="text-[13px] font-medium truncate">{t.name}</p>
+                    {t.schema && t.schema !== 'public' && <p className="text-[11px] text-gray-400 dark:text-slate-500 font-mono">{t.schema}</p>}
                   </div>
-                  <span className="text-[10px] text-gray-400 dark:text-slate-600 shrink-0">{t.columns.length}</span>
+                  <span className="text-[12px] text-gray-400 dark:text-slate-600 shrink-0">{t.columns.length}</span>
                 </button>
               ))
             }
@@ -1197,7 +1197,7 @@ function FkPickerModal({ tables, currentTableId, value, onSelect, onClose }: {
           <div className="flex-1 overflow-y-auto">
             {pickedTable ? (
               <>
-                <p className="px-4 py-2 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider sticky top-0 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
+                <p className="px-4 py-2 text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider sticky top-0 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
                   {pickedTable.name} — pick column
                 </p>
                 {pickedTable.columns.map(col => {
@@ -1209,29 +1209,29 @@ function FkPickerModal({ tables, currentTableId, value, onSelect, onClose }: {
                     <button key={col.id} onClick={() => { onSelect(ref); onClose(); }}
                       className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left border-b border-gray-50 dark:border-slate-800/50 transition-colors ${selected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}>
                       <span className="w-4 shrink-0 flex justify-center">
-                        {col.isPk ? <KeyRound size={11} className="text-amber-500" />
-                          : col.isUnique ? <Fingerprint size={11} className="text-purple-400" />
+                        {col.isPk ? <KeyRound size={13} className="text-amber-500" />
+                          : col.isUnique ? <Fingerprint size={13} className="text-purple-400" />
                             : <span className="w-1.5 h-1.5 rounded-full bg-gray-200 dark:bg-slate-600 inline-block" />}
                       </span>
-                      <span className={`flex-1 text-[11px] font-mono font-medium truncate ${selected ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-slate-300'}`}>{col.name}</span>
-                      <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 shrink-0">{col.type}</span>
-                      {selected && <Check size={11} className="text-blue-500 shrink-0" />}
+                      <span className={`flex-1 text-[13px] font-mono font-medium truncate ${selected ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-slate-300'}`}>{col.name}</span>
+                      <span className="text-[12px] font-mono text-gray-400 dark:text-slate-500 shrink-0">{col.type}</span>
+                      {selected && <Check size={13} className="text-blue-500 shrink-0" />}
                     </button>
                   );
                 })}
-                {pickedTable.columns.length === 0 && <p className="px-4 py-4 text-[11px] text-gray-400 dark:text-slate-500">No columns in this table.</p>}
+                {pickedTable.columns.length === 0 && <p className="px-4 py-4 text-[13px] text-gray-400 dark:text-slate-500">No columns in this table.</p>}
               </>
             ) : (
-              <div className="flex items-center justify-center h-full"><p className="text-[11px] text-gray-400 dark:text-slate-500">Select a table on the left</p></div>
+              <div className="flex items-center justify-center h-full"><p className="text-[13px] text-gray-400 dark:text-slate-500">Select a table on the left</p></div>
             )}
           </div>
         </div>
         <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-800 flex items-center justify-between">
           {value
-            ? <button onClick={() => { onSelect(''); onClose(); }} className="inline-flex items-center gap-1.5 text-[11px] text-rose-500 hover:text-rose-600 transition-colors"><X size={11} /> Remove FK</button>
+            ? <button onClick={() => { onSelect(''); onClose(); }} className="inline-flex items-center gap-1.5 text-[13px] text-rose-500 hover:text-rose-600 transition-colors"><X size={13} /> Remove FK</button>
             : <span />
           }
-          <button onClick={onClose} className="px-4 py-1.5 text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">Cancel</button>
+          <button onClick={onClose} className="px-4 py-1.5 text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">Cancel</button>
         </div>
       </div>
     </div>
@@ -1254,12 +1254,12 @@ function ColHeaderTip({ label, desc, example, align = 'center' }: {
       onMouseLeave={() => setShow(false)}
     >
       {label}
-      <Info size={8} className="text-gray-300 dark:text-slate-600 shrink-0" />
+      <Info size={10} className="text-slate-400 dark:text-slate-500 shrink-0" />
       {show && (
         <div className={`absolute top-full ${left} mt-1.5 z-[200] w-56 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-2xl p-2.5 text-left pointer-events-none`}>
-          <p className="text-[10px] leading-relaxed text-gray-600 dark:text-slate-300">{desc}</p>
+          <p className="text-[12px] leading-relaxed text-gray-600 dark:text-slate-300">{desc}</p>
           {example && (
-            <code className="mt-1.5 block text-[10px] font-mono bg-gray-50 dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 px-2 py-1 rounded border border-gray-100 dark:border-slate-700 whitespace-pre">
+            <code className="mt-1.5 block text-[12px] font-mono bg-gray-50 dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 px-2 py-1 rounded border border-gray-100 dark:border-slate-700 whitespace-pre">
               {example}
             </code>
           )}
@@ -1384,28 +1384,28 @@ function DesignerErdTableNode({ data }: { data: { label: string; columns: Design
   const targetPos = isLR ? Position.Left : Position.Top;
   const sourcePos = isLR ? Position.Right : Position.Bottom;
   return (
-    <div className={`group/node bg-white dark:bg-slate-800 border rounded-lg shadow-md min-w-[220px] text-xs overflow-hidden transition-all duration-150 ${isHighlighted ? 'border-amber-400 dark:border-amber-500 shadow-amber-200/50 dark:shadow-amber-900/40 shadow-lg' : 'border-gray-300 dark:border-slate-600'}`}>
+    <div className={`group/node bg-white dark:bg-slate-800 border rounded-lg shadow-md min-w-[220px] text-sm overflow-hidden transition-all duration-150 ${isHighlighted ? 'border-amber-400 dark:border-amber-500 shadow-amber-200/50 dark:shadow-amber-900/40 shadow-lg' : 'border-gray-300 dark:border-slate-600'}`}>
       <Handle type="target" position={targetPos} id="__table__" className="!bg-blue-500 !w-3 !h-3" />
       <div className={`group/header flex items-center gap-1.5 text-white px-3 py-1.5 transition-colors duration-150 ${isHighlighted ? 'bg-amber-500 dark:bg-amber-600' : 'bg-blue-600 dark:bg-blue-700'}`}>
-        <span className="font-semibold text-[11px] tracking-wide truncate flex-1">{data.label}</span>
+        <span className="font-semibold text-[13px] tracking-wide truncate flex-1">{data.label}</span>
         {data.onHide && (
           <button
             onClick={e => { e.stopPropagation(); data.onHide!(); }}
             title="Hide this table from ERD"
             className="opacity-0 group-hover/header:opacity-100 p-0.5 rounded hover:bg-white/20 transition-all shrink-0"
           >
-            <X size={10} />
+            <X size={12} />
           </button>
         )}
       </div>
       <div className="divide-y divide-gray-100 dark:divide-slate-700">
         {data.columns.map(col => (
           <div key={col.id} className="relative flex items-center gap-1.5 px-3 py-1 hover:bg-gray-50 dark:hover:bg-slate-700/50">
-            <span className="shrink-0 w-8 text-[10px] font-bold">
+            <span className="shrink-0 w-8 text-[12px] font-bold">
               {col.isPk ? <span className="text-amber-500">PK</span> : col.fkRef ? <span className="text-blue-500">FK</span> : <span className="text-gray-300 dark:text-slate-600">—</span>}
             </span>
             <span className="font-medium text-gray-800 dark:text-slate-200 truncate flex-1">{col.name}</span>
-            <span className="text-gray-400 dark:text-slate-500 shrink-0 text-[10px]">{col.type}{col.length ? `(${col.length})` : ''}</span>
+            <span className="text-gray-400 dark:text-slate-500 shrink-0 text-[12px]">{col.type}{col.length ? `(${col.length})` : ''}</span>
             {/* Source handle — visible on node hover, larger hit area */}
             <Handle
               type="source"
@@ -1501,7 +1501,7 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
     onFkCreate?.(source, sourceHandle, target);
   }, [setEdges, onFkCreate]);
 
-  const btnBase = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors';
+  const btnBase = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-medium transition-colors';
   const btnActive = `${btnBase} bg-blue-600 text-white shadow-sm`;
   const btnInactive = `${btnBase} bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700`;
 
@@ -1509,10 +1509,10 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
     <div className="fixed inset-0 z-[300] flex flex-col bg-black/60 backdrop-blur-sm">
       {/* Minimal header — title only */}
       <div className="flex items-center gap-3 px-5 py-2.5 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 shrink-0">
-        <Network size={14} className="text-blue-500" />
-        <span className="font-semibold text-sm text-gray-800 dark:text-slate-100">ERD — Schema Studio</span>
-        <span className="text-[11px] text-gray-400 dark:text-slate-500">{tables.length} table{tables.length !== 1 ? 's' : ''}</span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
+        <Network size={16} className="text-blue-500" />
+        <span className="font-semibold text-base text-gray-800 dark:text-slate-100">ERD — Schema Studio</span>
+        <span className="text-[13px] text-gray-400 dark:text-slate-500">{tables.length} table{tables.length !== 1 ? 's' : ''}</span>
+        <span className="text-[12px] px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
           Drag column handle → table to create FK
         </span>
       </div>
@@ -1536,15 +1536,15 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
               {/* Zoom */}
               <div className="flex items-center gap-1 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
                 <button onClick={() => zoomOut({ duration: 200 })} title="Zoom out"
-                  className="flex-1 flex items-center justify-center py-1.5 text-[13px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                  className="flex-1 flex items-center justify-center py-1.5 text-[15px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
                   −
                 </button>
                 <button onClick={() => fitView({ padding: 0.12, duration: 300 })} title="Fit view"
-                  className="flex-1 flex items-center justify-center py-1.5 text-[10px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors border-x border-gray-200 dark:border-slate-700">
+                  className="flex-1 flex items-center justify-center py-1.5 text-[12px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors border-x border-gray-200 dark:border-slate-700">
                   ⊡
                 </button>
                 <button onClick={() => zoomIn({ duration: 200 })} title="Zoom in"
-                  className="flex-1 flex items-center justify-center py-1.5 text-[13px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                  className="flex-1 flex items-center justify-center py-1.5 text-[15px] font-medium text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
                   +
                 </button>
               </div>
@@ -1556,16 +1556,16 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
                 <button
                   onClick={() => setOrientation('LR')}
                   title="Horizontal layout (left → right)"
-                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium transition-colors ${orientation === 'LR' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[13px] font-medium transition-colors ${orientation === 'LR' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
                 >
-                  <ArrowRight size={11} />LR
+                  <ArrowRight size={13} />LR
                 </button>
                 <button
                   onClick={() => setOrientation('TB')}
                   title="Vertical layout (top → bottom)"
-                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium transition-colors ${orientation === 'TB' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[13px] font-medium transition-colors ${orientation === 'TB' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
                 >
-                  <ArrowRight size={11} className="rotate-90" />TB
+                  <ArrowRight size={13} className="rotate-90" />TB
                 </button>
               </div>
 
@@ -1574,7 +1574,7 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
                 onClick={() => setShowEdges(v => !v)}
                 className={showEdges ? btnInactive : btnActive}
               >
-                <Network size={11} />
+                <Network size={13} />
                 {showEdges ? 'Hide refs' : 'Show refs'}
               </button>
 
@@ -1584,7 +1584,7 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
                   onClick={() => setHiddenNodes(new Set())}
                   className={btnInactive}
                 >
-                  <Plus size={11} />
+                  <Plus size={13} />
                   Show hidden ({hiddenNodes.size})
                 </button>
               )}
@@ -1593,7 +1593,7 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
 
               {/* Close */}
               <button onClick={onClose} className={btnInactive}>
-                <X size={11} /> Back
+                <X size={13} /> Back
               </button>
             </div>
           </Panel>
@@ -1602,7 +1602,7 @@ function ErdPreviewInner({ tables, onClose, onFkCreate }: {
 
       {tables.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <p className="text-gray-400 dark:text-slate-500 text-sm">No tables to preview — add tables in the designer first.</p>
+          <p className="text-gray-400 dark:text-slate-500 text-base">No tables to preview — add tables in the designer first.</p>
         </div>
       )}
     </div>
@@ -1647,40 +1647,40 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
   );
 
   const cbClass = 'w-3.5 h-3.5 cursor-pointer accent-blue-500 rounded';
-  const inputClass = 'w-full bg-transparent outline-none text-gray-900 dark:text-slate-100 font-mono text-[11px] px-1 py-0.5 rounded border border-transparent hover:bg-gray-100 dark:hover:bg-slate-700/50 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-400 transition-colors';
+  const inputClass = 'w-full bg-transparent outline-none text-gray-900 dark:text-slate-100 font-mono text-[13px] px-1 py-0.5 rounded border border-transparent hover:bg-gray-100 dark:hover:bg-slate-700/50 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-400 transition-colors';
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Table header */}
       <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <Table2 size={15} className="text-blue-500 shrink-0" />
+        <Table2 size={17} className="text-blue-500 shrink-0" />
         <input
-          className="text-sm font-semibold bg-transparent border-0 outline-none text-gray-900 dark:text-slate-100 focus:ring-0 min-w-0 w-32"
+          className="text-base font-semibold bg-transparent border-0 outline-none text-gray-900 dark:text-slate-100 focus:ring-0 min-w-0 w-32"
           value={table.name}
           onChange={e => onUpdate({ ...table, name: e.target.value })}
           placeholder="table_name"
         />
         <>
           <span className="text-gray-300 dark:text-slate-600">·</span>
-          <span className="text-[11px] text-gray-400 dark:text-slate-500">schema:</span>
+          <span className="text-[13px] text-gray-400 dark:text-slate-500">schema:</span>
           <input
-            className="text-[11px] bg-transparent border-0 outline-none text-gray-500 dark:text-slate-400 font-mono w-24 focus:ring-0"
+            className="text-[13px] bg-transparent border-0 outline-none text-gray-500 dark:text-slate-400 font-mono w-24 focus:ring-0"
             value={table.schema}
             onChange={e => onUpdate({ ...table, schema: e.target.value })}
             placeholder="public"
           />
         </>
-        <span className="ml-auto text-[11px] text-gray-400 dark:text-slate-500">{table.columns.length} column{table.columns.length !== 1 ? 's' : ''}</span>
+        <span className="ml-auto text-[13px] text-gray-400 dark:text-slate-500">{table.columns.length} column{table.columns.length !== 1 ? 's' : ''}</span>
         <button onClick={onDeleteTable} title="Delete table" className="p-1 text-gray-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
-          <Trash2 size={13} />
+          <Trash2 size={15} />
         </button>
       </div>
 
       {/* Column table + Add Column + FK — all scroll together */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full text-[11px] border-collapse" style={{ minWidth: 880 }}>
+        <table className="w-full text-[13px] border-collapse" style={{ minWidth: 880 }}>
           <thead className="sticky top-0 z-10">
-            <tr className="text-left text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider bg-gray-50 dark:bg-slate-800/60">
+            <tr className="text-left text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider bg-gray-50 dark:bg-slate-800/60">
               <th className="px-3 py-2 w-36">Name</th>
               <th className="px-3 py-2 w-32 overflow-visible">
                 <ColHeaderTip label="Type" align="left"
@@ -1727,7 +1727,7 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
                 <td className="px-2 py-1"><input className={inputClass} value={col.name} onChange={e => updateCol(col.id, { name: e.target.value })} /></td>
                 <td className="px-2 py-1">
                   <select
-                    className="w-full bg-transparent outline-none text-gray-900 dark:text-slate-100 text-[11px] px-1 py-0.5 rounded border border-transparent hover:bg-gray-100 dark:hover:bg-slate-700/50 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-400 cursor-pointer font-mono transition-colors"
+                    className="w-full bg-transparent outline-none text-gray-900 dark:text-slate-100 text-[13px] px-1 py-0.5 rounded border border-transparent hover:bg-gray-100 dark:hover:bg-slate-700/50 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-400 cursor-pointer font-mono transition-colors"
                     value={col.type}
                     onChange={e => {
                       const t = e.target.value;
@@ -1768,21 +1768,21 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
                       <button
                         onClick={() => setFkPickerColId(col.id)}
                         title={`FK → ${col.fkRef} (click to change)`}
-                        className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-[10px] font-mono text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors max-w-[100px] min-w-0"
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-[12px] font-mono text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors max-w-[100px] min-w-0"
                       >
-                        <Link2 size={8} className="shrink-0" />
+                        <Link2 size={10} className="shrink-0" />
                         <span className="truncate">{col.fkRef}</span>
                       </button>
                       <button onClick={() => updateCol(col.id, { fkRef: '' })} title="Remove FK" className="shrink-0 p-0.5 text-gray-300 dark:text-slate-700 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
-                        <X size={10} />
+                        <X size={12} />
                       </button>
                     </div>
                   ) : (
                     <button
                       onClick={() => setFkPickerColId(col.id)}
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-gray-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[12px] text-gray-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
                     >
-                      <Link2 size={10} /> Set FK
+                      <Link2 size={12} /> Set FK
                     </button>
                   )}
                 </td>
@@ -1791,21 +1791,21 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
                 </td>
                 <td className="px-2 py-1 text-center">
                   <button onClick={() => delCol(col.id)} className="p-0.5 text-gray-300 dark:text-slate-700 hover:text-rose-500 dark:hover:text-rose-400 transition-colors">
-                    <X size={12} />
+                    <X size={14} />
                   </button>
                 </td>
               </tr>
             ))}
             {table.columns.length === 0 && (
-              <tr><td colSpan={11} className="px-4 py-6 text-center text-[11px] text-gray-400 dark:text-slate-500">No columns. Click Add Column.</td></tr>
+              <tr><td colSpan={11} className="px-4 py-6 text-center text-[13px] text-gray-400 dark:text-slate-500">No columns. Click Add Column.</td></tr>
             )}
           </tbody>
         </table>
 
         {/* Add Column — right-aligned, immediately after last row */}
         <div className="flex justify-end px-4 py-2.5 border-t border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-          <button onClick={addCol} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
-            <Plus size={11} /> Add Column
+          <button onClick={addCol} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+            <Plus size={13} /> Add Column
           </button>
         </div>
 
@@ -1814,12 +1814,12 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
           <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/40 space-y-2.5">
             {fkCols.length > 0 && (
               <div>
-                <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                  <Link2 size={10} /> Outgoing FK{fkCols.length !== 1 ? 's' : ''} ({fkCols.length})
+                <p className="text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                  <Link2 size={12} /> Outgoing FK{fkCols.length !== 1 ? 's' : ''} ({fkCols.length})
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {fkCols.map(c => (
-                    <div key={c.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 text-[10px]">
+                    <div key={c.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 text-[12px]">
                       <span className="font-mono font-medium text-gray-700 dark:text-slate-200">{c.name}</span>
                       <span className="text-blue-400">→</span>
                       <span className="font-mono text-blue-600 dark:text-blue-400">{c.fkRef}</span>
@@ -1830,12 +1830,12 @@ function ColumnEditorPanel({ table, tables, onUpdate, onDeleteTable }: {
             )}
             {incomingFks.length > 0 && (
               <div>
-                <p className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                  <ChevronRight size={10} /> Referenced by ({incomingFks.length})
+                <p className="text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                  <ChevronRight size={12} /> Referenced by ({incomingFks.length})
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {incomingFks.map(({ fromTable, fromCol }) => (
-                    <div key={`${fromTable.id}-${fromCol.id}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 text-[10px]">
+                    <div key={`${fromTable.id}-${fromCol.id}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 text-[12px]">
                       <span className="font-mono text-purple-600 dark:text-purple-400">{fromTable.name}.{fromCol.name}</span>
                       <span className="text-purple-400">→</span>
                       <span className="font-mono font-medium text-gray-600 dark:text-slate-300">this</span>
@@ -1891,8 +1891,8 @@ function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd
           <div key={schema}>
             {/* Schema label */}
             <div className="flex items-center group/schema px-3 py-1.5">
-              <div className="flex-1 flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">
-                <Layers size={10} />
+              <div className="flex-1 flex items-center gap-1.5 text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">
+                <Layers size={12} />
                 <span>{schema || 'public'}</span>
                 {schemaTables.length > 0 && <span className="opacity-60">({schemaTables.length})</span>}
               </div>
@@ -1902,14 +1902,14 @@ function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd
                   title={`Add table to ${schema}`}
                   className="opacity-0 group-hover/schema:opacity-100 p-1 text-gray-400 hover:text-blue-500 dark:text-slate-500 dark:hover:text-blue-400 transition-all shrink-0"
                 >
-                  <Plus size={11} />
+                  <Plus size={13} />
                 </button>
               )}
             </div>
 
             {/* Tables under schema — always visible */}
             {schemaTables.length === 0 ? (
-              <p className="pl-7 pb-1.5 text-[10px] italic text-gray-300 dark:text-slate-700">
+              <p className="pl-7 pb-1.5 text-[12px] italic text-gray-300 dark:text-slate-700">
                 Empty — hover + to add table
               </p>
             ) : schemaTables.map(t => {
@@ -1924,16 +1924,16 @@ function TableTreePanel({ tables, selectedId, schemas, onSelect, onDelete, onAdd
                       ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
                       : 'hover:bg-gray-50 dark:hover:bg-slate-800/30 text-gray-700 dark:text-slate-300'}`}
                 >
-                  <Table2 size={11} className={`shrink-0 ${selectedId === t.id ? 'text-blue-500' : 'text-gray-400 dark:text-slate-500'}`} />
-                  <span className="flex-1 text-[11px] font-medium truncate">{t.name}</span>
-                  {hasFk && <span title="Has FK references"><Link2 size={9} className="text-blue-400 dark:text-blue-500 shrink-0" /></span>}
-                  {isReferenced && <span title="Referenced by other tables"><ChevronRight size={9} className="text-purple-400 dark:text-purple-500 shrink-0 -rotate-90" /></span>}
-                  <span className="text-[10px] text-gray-400 dark:text-slate-600">{t.columns.length}</span>
+                  <Table2 size={13} className={`shrink-0 ${selectedId === t.id ? 'text-blue-500' : 'text-slate-500 dark:text-slate-400'}`} />
+                  <span className="flex-1 text-[13px] font-medium truncate">{t.name}</span>
+                  {hasFk && <span title="Has FK references"><Link2 size={11} className="text-blue-400 dark:text-blue-500 shrink-0" /></span>}
+                  {isReferenced && <span title="Referenced by other tables"><ChevronRight size={11} className="text-purple-400 dark:text-purple-500 shrink-0 -rotate-90" /></span>}
+                  <span className="text-[12px] text-gray-400 dark:text-slate-600">{t.columns.length}</span>
                   <button
                     onClick={e => { e.stopPropagation(); onDelete(t.id); }}
                     className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition-all shrink-0"
                   >
-                    <X size={11} />
+                    <X size={13} />
                   </button>
                 </div>
               );
@@ -2084,8 +2084,8 @@ function ImportPanel({ connections, onMerge }: {
   const sectionHeaderClass = 'flex items-center gap-3 px-5 py-3.5 bg-gray-50 dark:bg-slate-800/50 border-b border-gray-100 dark:border-slate-800';
   const applyBtn = (onClick: () => void, disabled: boolean, label: string) => (
     <button onClick={onClick} disabled={disabled}
-      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors">
-      <Download size={12} /> {label}
+      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors">
+      <Download size={14} /> {label}
     </button>
   );
 
@@ -2095,10 +2095,10 @@ function ImportPanel({ connections, onMerge }: {
       {/* From DB */}
       <div className={sectionClass}>
         <div className={sectionHeaderClass}>
-          <Database size={14} className="text-blue-500" />
+          <Database size={16} className="text-blue-500" />
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">From Database</p>
-            <p className="text-[11px] text-gray-400 dark:text-slate-500">Import existing tables as designer definitions</p>
+            <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">From Database</p>
+            <p className="text-[13px] text-gray-400 dark:text-slate-500">Import existing tables as designer definitions</p>
           </div>
         </div>
         {/* Connection + DB picker */}
@@ -2106,7 +2106,7 @@ function ImportPanel({ connections, onMerge }: {
           <select
             value={importConnId ?? ''}
             onChange={e => setImportConnId(e.target.value ? Number(e.target.value) : null)}
-            className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[160px] focus:outline-none focus:border-blue-400 cursor-pointer"
+            className="px-2 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[160px] focus:outline-none focus:border-blue-400 cursor-pointer"
           >
             <option value="">— select connection —</option>
             {connections.filter(c => c.db_type === 'postgres').map(c => (
@@ -2115,12 +2115,12 @@ function ImportPanel({ connections, onMerge }: {
           </select>
           {importConn && (
             loadingImportDbs
-              ? <span className="text-xs text-gray-400 animate-pulse">Loading…</span>
+              ? <span className="text-sm text-gray-400 animate-pulse">Loading…</span>
               : (
                 <select
                   value={importDb}
                   onChange={e => { setImportDb(e.target.value); setDbSchemas([]); setDbTables({}); }}
-                  className="px-2 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[120px] focus:outline-none focus:border-blue-400 cursor-pointer font-mono"
+                  className="px-2 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 min-w-[120px] focus:outline-none focus:border-blue-400 cursor-pointer font-mono"
                 >
                   {importDbs.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
@@ -2128,12 +2128,12 @@ function ImportPanel({ connections, onMerge }: {
           )}
           {importConn && importDb && (
             <button onClick={() => void loadDbSchemas()} disabled={loadingDbSchema}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
-              {loadingDbSchema ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
+              {loadingDbSchema ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
               Load Schemas
             </button>
           )}
-          {!importConn && <span className="text-[11px] text-gray-400 dark:text-slate-500">Select a PostgreSQL connection to browse tables.</span>}
+          {!importConn && <span className="text-[13px] text-gray-400 dark:text-slate-500">Select a PostgreSQL connection to browse tables.</span>}
         </div>
         {dbSchemas.length > 0 && (
           <div className="divide-y divide-gray-100 dark:divide-slate-800 max-h-64 overflow-auto">
@@ -2141,18 +2141,18 @@ function ImportPanel({ connections, onMerge }: {
               <div key={s.schema}>
                 <button onClick={() => void toggleDbSchema(s.schema)}
                   className="w-full flex items-center gap-2 px-5 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors text-left">
-                  {dbExpanded.has(s.schema) ? <ChevronDown size={11} className="text-gray-400" /> : <ChevronRight size={11} className="text-gray-400" />}
-                  <span className="text-xs font-medium text-gray-700 dark:text-slate-200">{s.schema}</span>
-                  <span className="text-[10px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</span>
+                  {dbExpanded.has(s.schema) ? <ChevronDown size={13} className="text-slate-500 dark:text-slate-400" /> : <ChevronRight size={13} className="text-slate-500 dark:text-slate-400" />}
+                  <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{s.schema}</span>
+                  <span className="text-[12px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</span>
                 </button>
                 {dbExpanded.has(s.schema) && (dbTables[s.schema] ?? []).map(t => {
                   const key = `${t.schema}.${t.name}`;
                   return (
                     <label key={key} className="flex items-center gap-2.5 pl-10 pr-5 py-1.5 hover:bg-gray-50 dark:hover:bg-slate-800/20 cursor-pointer">
                       <input type="checkbox" className="w-3.5 h-3.5 accent-blue-500 rounded" checked={dbSelected.has(key)} onChange={() => toggleDbTable(key)} />
-                      <Table2 size={11} className="text-gray-400 dark:text-slate-500 shrink-0" />
-                      <span className="text-[11px] text-gray-700 dark:text-slate-300">{t.name}</span>
-                      <span className="text-[10px] text-gray-400 dark:text-slate-500 ml-auto">{t.columnCount} cols</span>
+                      <Table2 size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />
+                      <span className="text-[13px] text-gray-700 dark:text-slate-300">{t.name}</span>
+                      <span className="text-[12px] text-gray-400 dark:text-slate-500 ml-auto">{t.columnCount} cols</span>
                     </label>
                   );
                 })}
@@ -2163,7 +2163,7 @@ function ImportPanel({ connections, onMerge }: {
         {dbSchemas.length > 0 && (
           <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-800 flex items-center gap-3">
             {applyBtn(() => void importFromDb(), importingFromDb || !dbSelected.size, importingFromDb ? 'Importing…' : `Import Selected (${dbSelected.size})`)}
-            {dbSelected.size > 0 && <button onClick={() => setDbSelected(new Set())} className="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">Clear</button>}
+            {dbSelected.size > 0 && <button onClick={() => setDbSelected(new Set())} className="text-[13px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">Clear</button>}
           </div>
         )}
       </div>
@@ -2171,33 +2171,33 @@ function ImportPanel({ connections, onMerge }: {
       {/* SQL import */}
       <div className={sectionClass}>
         <div className={sectionHeaderClass}>
-          <FileCode2 size={14} className="text-emerald-500" />
+          <FileCode2 size={16} className="text-emerald-500" />
           <div className="flex-1">
-            <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">From SQL</p>
-            <p className="text-[11px] text-gray-400 dark:text-slate-500">Paste or upload a .sql file with CREATE TABLE statements</p>
+            <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">From SQL</p>
+            <p className="text-[13px] text-gray-400 dark:text-slate-500">Paste or upload a .sql file with CREATE TABLE statements</p>
           </div>
           <button onClick={() => sqlFileRef.current?.click()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-            <Upload size={11} /> Upload .sql
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+            <Upload size={13} /> Upload .sql
           </button>
           <input ref={sqlFileRef} type="file" accept=".sql,.txt" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) handleSqlFile(f); e.target.value = ''; }} />
         </div>
         <div className="p-4 space-y-3">
           <textarea
-            className="w-full h-32 text-[11px] font-mono rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 text-gray-700 dark:text-slate-300 p-3 resize-none focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20 placeholder-gray-300 dark:placeholder-slate-600"
+            className="w-full h-32 text-[13px] font-mono rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 text-gray-700 dark:text-slate-300 p-3 resize-none focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20 placeholder-gray-300 dark:placeholder-slate-600"
             placeholder="-- Paste CREATE TABLE statements here…"
             value={sqlText}
             onChange={e => setSqlText(e.target.value)}
           />
           <div className="flex items-center gap-3">
             <button onClick={parseSql} disabled={!sqlText.trim()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
-              <RefreshCw size={11} /> Parse
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
+              <RefreshCw size={13} /> Parse
             </button>
             {sqlParsed.length > 0 && (
               <>
-                <span className="text-[11px] text-emerald-600 dark:text-emerald-400">{sqlParsed.length} table{sqlParsed.length !== 1 ? 's' : ''} found</span>
+                <span className="text-[13px] text-emerald-600 dark:text-emerald-400">{sqlParsed.length} table{sqlParsed.length !== 1 ? 's' : ''} found</span>
                 {applyBtn(() => { onMerge(sqlParsed); setSqlParsed([]); }, false, 'Add to Designer')}
               </>
             )}
@@ -2205,8 +2205,8 @@ function ImportPanel({ connections, onMerge }: {
           {sqlParsed.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {sqlParsed.map(t => (
-                <span key={t.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-900/20 text-[10px] text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                  <Table2 size={9} /> {t.name} <span className="opacity-60">({t.columns.length})</span>
+                <span key={t.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-900/20 text-[12px] text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                  <Table2 size={11} /> {t.name} <span className="opacity-60">({t.columns.length})</span>
                 </span>
               ))}
             </div>
@@ -2217,14 +2217,14 @@ function ImportPanel({ connections, onMerge }: {
       {/* XLSX import */}
       <div className={sectionClass}>
         <div className={sectionHeaderClass}>
-          <FileSpreadsheet size={14} className="text-green-500" />
+          <FileSpreadsheet size={16} className="text-green-500" />
           <div className="flex-1">
-            <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">From XLSX / Excel</p>
-            <p className="text-[11px] text-gray-400 dark:text-slate-500">Each sheet becomes a table. Column types are inferred from data.</p>
+            <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">From XLSX / Excel</p>
+            <p className="text-[13px] text-gray-400 dark:text-slate-500">Each sheet becomes a table. Column types are inferred from data.</p>
           </div>
           <button onClick={() => xlsxRef.current?.click()} disabled={xlsxLoading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
-            {xlsxLoading ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
+            {xlsxLoading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
             Upload .xlsx
           </button>
           <input ref={xlsxRef} type="file" accept=".xlsx,.xls" className="hidden"
@@ -2234,8 +2234,8 @@ function ImportPanel({ connections, onMerge }: {
           <div className="p-4 space-y-3">
             <div className="flex flex-wrap gap-1.5">
               {xlsxParsed.map(t => (
-                <span key={t.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-50 dark:bg-green-900/20 text-[10px] text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800">
-                  <Table2 size={9} /> {t.name} <span className="opacity-60">({t.columns.length})</span>
+                <span key={t.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-50 dark:bg-green-900/20 text-[12px] text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800">
+                  <Table2 size={11} /> {t.name} <span className="opacity-60">({t.columns.length})</span>
                 </span>
               ))}
             </div>
@@ -2247,23 +2247,23 @@ function ImportPanel({ connections, onMerge }: {
       {/* CSV import */}
       <div className={sectionClass}>
         <div className={sectionHeaderClass}>
-          <FileText size={14} className="text-orange-500" />
+          <FileText size={16} className="text-orange-500" />
           <div className="flex-1">
-            <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">From CSV</p>
-            <p className="text-[11px] text-gray-400 dark:text-slate-500">First row as headers. Column types inferred from sample rows.</p>
+            <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">From CSV</p>
+            <p className="text-[13px] text-gray-400 dark:text-slate-500">First row as headers. Column types inferred from sample rows.</p>
           </div>
           <button onClick={() => csvRef.current?.click()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-            <Upload size={11} /> Upload .csv
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+            <Upload size={13} /> Upload .csv
           </button>
           <input ref={csvRef} type="file" accept=".csv" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) handleCsvFile(f); e.target.value = ''; }} />
         </div>
         <div className="p-4 space-y-3">
           <div className="flex items-center gap-2">
-            <label className="text-[11px] text-gray-500 dark:text-slate-400 shrink-0">Table name:</label>
+            <label className="text-[13px] text-gray-500 dark:text-slate-400 shrink-0">Table name:</label>
             <input
-              className="flex-1 text-[11px] font-mono px-2 py-1 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
+              className="flex-1 text-[13px] font-mono px-2 py-1 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
               placeholder="my_table"
               value={csvName}
               onChange={e => { setCsvName(e.target.value); if (csvText) setCsvParsed(parseCsvToTable(csvText, e.target.value)); }}
@@ -2271,10 +2271,10 @@ function ImportPanel({ connections, onMerge }: {
           </div>
           {csvParsed && (
             <div className="space-y-2">
-              <p className="text-[11px] text-gray-500 dark:text-slate-400">{csvParsed.columns.length} column{csvParsed.columns.length !== 1 ? 's' : ''} detected:</p>
+              <p className="text-[13px] text-gray-500 dark:text-slate-400">{csvParsed.columns.length} column{csvParsed.columns.length !== 1 ? 's' : ''} detected:</p>
               <div className="flex flex-wrap gap-1.5">
                 {csvParsed.columns.map(c => (
-                  <span key={c.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-50 dark:bg-orange-900/20 text-[10px] text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800">
+                  <span key={c.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-50 dark:bg-orange-900/20 text-[12px] text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800">
                     {c.name} <span className="opacity-60">{c.type}</span>
                   </span>
                 ))}
@@ -2370,14 +2370,14 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
         {/* DDL Preview — top half */}
         <div className="flex flex-col overflow-hidden" style={{ flex: '1 1 50%' }}>
           <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <FileCode2 size={14} className="text-emerald-500" />
-            <span className="text-xs font-semibold text-gray-700 dark:text-slate-200">Generated DDL</span>
-            <span className="text-[11px] text-gray-400 dark:text-slate-500 ml-1">(postgresql)</span>
+            <FileCode2 size={16} className="text-emerald-500" />
+            <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">Generated DDL</span>
+            <span className="text-[13px] text-gray-400 dark:text-slate-500 ml-1">(postgresql)</span>
             <div className="ml-auto flex items-center gap-2">
               {/* ORM export buttons */}
               {(['drizzle', 'prisma', 'typeorm'] as OrmTarget[]).map(target => (
                 <button key={target} onClick={() => downloadOrm(target)} disabled={!ddlText} title={`Export ${target} schema`}
-                  className="px-2 py-1 text-[10px] font-medium rounded-lg border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors capitalize">
+                  className="px-2 py-1 text-[12px] font-medium rounded-lg border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors capitalize">
                   {target}
                 </button>
               ))}
@@ -2385,27 +2385,27 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
               <button
                 onClick={() => downloadBlob(generateJsonSchema(tables, 'schema'), 'schema.json', 'application/json')}
                 disabled={!ddlText} title="Export JSON schema (AI-friendly)"
-                className="px-2 py-1 text-[10px] font-medium rounded-lg border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-30 transition-colors">
+                className="px-2 py-1 text-[12px] font-medium rounded-lg border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-30 transition-colors">
                 JSON
               </button>
               <div className="w-px h-4 bg-gray-200 dark:bg-slate-700" />
               <button onClick={downloadDdl} disabled={!ddlText} title="Download .sql"
                 className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 transition-colors">
-                <Download size={13} />
+                <Download size={15} />
               </button>
               <button onClick={() => void copyDdl()} disabled={!ddlText}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
-                {copied ? <><Check size={11} className="text-emerald-500" /> Copied</> : <><Copy size={11} /> Copy</>}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
+                {copied ? <><Check size={13} className="text-emerald-500" /> Copied</> : <><Copy size={13} /> Copy</>}
               </button>
             </div>
           </div>
           <div className="flex-1 overflow-auto bg-slate-950 p-4">
             {ddlText ? (
-              <pre className="text-[11px] font-mono text-slate-300 leading-relaxed whitespace-pre-wrap">{ddlText}</pre>
+              <pre className="text-[13px] font-mono text-slate-300 leading-relaxed whitespace-pre-wrap">{ddlText}</pre>
             ) : (
               <div className="flex flex-col items-center justify-center h-full gap-2">
-                <FileCode2 size={28} className="text-slate-700" />
-                <p className="text-xs text-slate-600">No tables in designer yet.</p>
+                <FileCode2 size={30} className="text-slate-700" />
+                <p className="text-sm text-slate-600">No tables in designer yet.</p>
               </div>
             )}
           </div>
@@ -2414,22 +2414,22 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
         {/* Seed SQL — bottom half */}
         <div className="flex flex-col overflow-hidden border-t border-gray-200 dark:border-slate-800" style={{ flex: '1 1 50%' }}>
           <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <Sprout size={14} className="text-emerald-500" />
-            <span className="text-xs font-semibold text-gray-700 dark:text-slate-200">Seed SQL</span>
-            <span className="text-[11px] text-gray-400 dark:text-slate-500">optional INSERT data</span>
+            <Sprout size={16} className="text-emerald-500" />
+            <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">Seed SQL</span>
+            <span className="text-[13px] text-gray-400 dark:text-slate-500">optional INSERT data</span>
             {seedAnalysis && <SeedAnalysisBadge a={seedAnalysis} />}
             <div className="ml-auto flex items-center gap-2">
               {seedSql.trim() && (
                 <button onClick={() => void copySeed()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                  {copiedSeed ? <><Check size={11} className="text-emerald-500" /> Copied</> : <><Copy size={11} /> Copy</>}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                  {copiedSeed ? <><Check size={13} className="text-emerald-500" /> Copied</> : <><Copy size={13} /> Copy</>}
                 </button>
               )}
             </div>
           </div>
           <div className="flex-1 overflow-auto bg-slate-950 p-4">
             <textarea
-              className="w-full h-full min-h-[80px] text-[11px] font-mono bg-transparent text-slate-300 resize-none focus:outline-none placeholder-slate-600 leading-relaxed"
+              className="w-full h-full min-h-[80px] text-[13px] font-mono bg-transparent text-slate-300 resize-none focus:outline-none placeholder-slate-600 leading-relaxed"
               placeholder="-- Optional: paste INSERT INTO statements here to seed data after DDL…"
               value={seedSql}
               onChange={e => onSeedSqlChange(e.target.value)}
@@ -2442,24 +2442,24 @@ function ExecutePanel({ tables, seedSql, onSeedSqlChange, onSaveJob, jobs, loadi
       <div className="w-full xl:w-96 shrink-0 flex flex-col overflow-hidden bg-white dark:bg-slate-900">
         <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-gray-200 dark:border-slate-800">
           <div className="flex items-center gap-2">
-            <Clock size={13} className="text-gray-400 dark:text-slate-500" />
-            <span className="text-xs font-semibold text-gray-700 dark:text-slate-200">Saved Jobs</span>
-            {loadingJobs && <Loader2 size={10} className="animate-spin text-gray-400" />}
+            <Clock size={15} className="text-slate-500 dark:text-slate-400" />
+            <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">Saved Jobs</span>
+            {loadingJobs && <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400" />}
           </div>
           <button
             onClick={onSaveJob}
             disabled={tables.length === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
           >
-            <Save size={11} /> Save Current Schema
+            <Save size={13} /> Save Current Schema
           </button>
         </div>
 
         <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
           {groupedJobs.length === 0 && !loadingJobs ? (
             <div className="py-8 text-center">
-              <Save size={22} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
-              <p className="text-[11px] text-gray-400 dark:text-slate-500">No saved jobs yet</p>
+              <Save size={24} className="mx-auto text-slate-400 dark:text-slate-500 mb-2" />
+              <p className="text-[13px] text-gray-400 dark:text-slate-500">No saved jobs yet</p>
             </div>
           ) : groupedJobs.map(g => (
             <JobGroupCard key={g.job_name} group={g} onLoad={onLoadJob} />
@@ -2491,19 +2491,19 @@ function NewTableDialog({ defaultSchema, onConfirm, onClose }: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-80 p-6 space-y-4">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">New Table</h3>
+        <h3 className="text-base font-semibold text-gray-900 dark:text-slate-100">New Table</h3>
         <div className="space-y-1">
-          <label className="text-[11px] text-gray-500 dark:text-slate-400">Schema</label>
+          <label className="text-[13px] text-gray-500 dark:text-slate-400">Schema</label>
           <input
-            className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
+            className="w-full px-3 py-2 text-base rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
             value={schema} onChange={e => setSchema(e.target.value)} placeholder="public"
           />
         </div>
         <div className="space-y-1">
-          <label className="text-[11px] text-gray-500 dark:text-slate-400">Table name</label>
+          <label className="text-[13px] text-gray-500 dark:text-slate-400">Table name</label>
           <input
             ref={nameRef}
-            className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
+            className="w-full px-3 py-2 text-base rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
             value={name} onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onClose(); }}
             placeholder="my_table"
@@ -2511,10 +2511,10 @@ function NewTableDialog({ defaultSchema, onConfirm, onClose }: {
         </div>
         <div className="flex gap-2 pt-1">
           <button onClick={submit} disabled={!name.trim()}
-            className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
+            className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
             Create
           </button>
-          <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+          <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-base text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
             Cancel
           </button>
         </div>
@@ -2537,21 +2537,21 @@ function GuidePopover() {
   }, [open]);
 
   const pill = (text: string) => (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{text}</span>
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[12px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{text}</span>
   );
-  const h3 = 'flex items-center gap-1.5 text-xs font-semibold text-gray-800 dark:text-slate-100';
-  const sec = 'mt-2 space-y-1.5 text-[11px] text-gray-600 dark:text-slate-300 leading-relaxed';
+  const h3 = 'flex items-center gap-1.5 text-sm font-semibold text-gray-800 dark:text-slate-100';
+  const sec = 'mt-2 space-y-1.5 text-[13px] text-gray-600 dark:text-slate-300 leading-relaxed';
   const div = 'border-t border-gray-100 dark:border-slate-800';
 
   return (
     <div ref={ref} className="relative flex items-center">
       <button
         onClick={() => setOpen(v => !v)}
-        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors border ${open
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors border ${open
           ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
           : 'text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-transparent hover:border-blue-200 dark:hover:border-blue-800'}`}
       >
-        <HelpCircle size={13} /> Guide
+        <HelpCircle size={15} /> Guide
       </button>
 
       {open && (
@@ -2559,17 +2559,17 @@ function GuidePopover() {
 
           {/* Header */}
           <div className="shrink-0 flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <BookOpen size={14} className="text-blue-500" />
-            <p className="flex-1 font-semibold text-sm text-gray-900 dark:text-slate-100">Schema Designer Guide</p>
-            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"><X size={14} /></button>
+            <BookOpen size={16} className="text-blue-500" />
+            <p className="flex-1 font-semibold text-base text-gray-900 dark:text-slate-100">Schema Designer Guide</p>
+            <button onClick={() => setOpen(false)} className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"><X size={16} /></button>
           </div>
 
           {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-[11px]">
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-[13px]">
 
             {/* Workflow */}
             <div>
-              <p className={h3}><Info size={12} className="text-blue-500" /> Workflow</p>
+              <p className={h3}><Info size={14} className="text-blue-500" /> Workflow</p>
               <div className={sec}>
                 <p>Design tables <strong>locally</strong> first — no connection or database required upfront.</p>
                 <p>When ready, click <strong>Execute</strong> in the header → pick a connection + database in the modal → SQL runs against the database. Nothing is written until Execute.</p>
@@ -2580,7 +2580,7 @@ function GuidePopover() {
 
             {/* Layout */}
             <div>
-              <p className={h3}><Layers size={12} className="text-purple-500" /> Layout</p>
+              <p className={h3}><Layers size={14} className="text-purple-500" /> Layout</p>
               <div className={sec}>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
                   <li><strong>Left panel</strong> — mode toggle (Create / Import SQL) + schema & table tree.</li>
@@ -2594,11 +2594,11 @@ function GuidePopover() {
 
             {/* Left Panel */}
             <div>
-              <p className={h3}><Table2 size={12} className="text-blue-500" /> Left Panel</p>
+              <p className={h3}><Table2 size={14} className="text-blue-500" /> Left Panel</p>
               <div className={sec}>
                 <p><strong>Create mode</strong></p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
-                  <li>{pill('+ Schema')} — adds a schema node; generates <code className="text-[10px]">CREATE SCHEMA IF NOT EXISTS</code> at execute time.</li>
+                  <li>{pill('+ Schema')} — adds a schema node; generates <code className="text-[12px]">CREATE SCHEMA IF NOT EXISTS</code> at execute time.</li>
                   <li>{pill('+ Table')} — disabled until at least one schema exists. Schema is pre-filled when adding via the schema's {pill('+')} hover button.</li>
                   <li>Hover a table row → {pill('×')} appears to delete it.</li>
                   <li>Blue link icon on a table = has outgoing FKs. Purple arrow = referenced by other tables.</li>
@@ -2616,7 +2616,7 @@ function GuidePopover() {
 
             {/* Column Editor */}
             <div>
-              <p className={h3}><Columns size={12} className="text-teal-500" /> Column Editor</p>
+              <p className={h3}><Columns size={14} className="text-teal-500" /> Column Editor</p>
               <div className={sec}>
                 <p>Click any table in the tree to open its column editor in the middle panel. The DDL strip above auto-updates to show that table's generated SQL.</p>
                 <div className="mt-2 space-y-1.5">
@@ -2630,8 +2630,8 @@ function GuidePopover() {
                     ['Comment', 'Column comment', 'Emitted as COMMENT ON COLUMN in the DDL.'],
                   ].map(([flag, name, note]) => (
                     <div key={flag} className="flex items-start gap-2">
-                      <span className="shrink-0 w-11 text-center inline-block px-1 py-0.5 rounded font-mono text-[10px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{flag}</span>
-                      <span className="text-[11px] text-gray-600 dark:text-slate-300"><span className="font-medium text-gray-700 dark:text-slate-200">{name}</span> — {note}</span>
+                      <span className="shrink-0 w-11 text-center inline-block px-1 py-0.5 rounded font-mono text-[12px] font-semibold bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700">{flag}</span>
+                      <span className="text-[13px] text-gray-600 dark:text-slate-300"><span className="font-medium text-gray-700 dark:text-slate-200">{name}</span> — {note}</span>
                     </div>
                   ))}
                 </div>
@@ -2643,7 +2643,7 @@ function GuidePopover() {
 
             {/* FK Picker */}
             <div>
-              <p className={h3}><Link2 size={12} className="text-blue-500" /> FK Relationship Picker</p>
+              <p className={h3}><Link2 size={14} className="text-blue-500" /> FK Relationship Picker</p>
               <div className={sec}>
                 <p>Click {pill('Set FK')} in the FK Ref column to open the two-panel picker:</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
@@ -2660,10 +2660,10 @@ function GuidePopover() {
 
             {/* Save & Execute */}
             <div>
-              <p className={h3}><Save size={12} className="text-rose-500" /> Save & Execute</p>
+              <p className={h3}><Save size={14} className="text-rose-500" /> Save & Execute</p>
               <div className={sec}>
                 <p><strong>Save</strong> button (header) — appears when tables exist. Turns <span className="text-amber-500 font-semibold">amber</span> when the loaded job has unsaved changes. Label changes to <em>Save Revision</em> when saving under the same job name.</p>
-                <p className="mt-1">In Import mode, a <strong>Schema Assign</strong> dialog appears before saving if any tables still have <code className="text-[10px]">schema = public</code> — pick an existing schema or type a new one.</p>
+                <p className="mt-1">In Import mode, a <strong>Schema Assign</strong> dialog appears before saving if any tables still have <code className="text-[12px]">schema = public</code> — pick an existing schema or type a new one.</p>
                 <p className="mt-1"><strong>Execute</strong> button (header) — opens a modal to pick a saved connection + database, then runs the generated DDL. Execution log is shown inline and a new run record is saved to Job History on completion.</p>
                 <p className="mt-1"><strong>Saved Jobs</strong> (right panel) — grouped by job name. The {pill('Load')} button on the group card restores the design into the designer. Run rows expand with a chevron to show the execution log.</p>
               </div>
@@ -2698,24 +2698,24 @@ function SchemaAssignModal({ existingSchemas, onAssign, onSkip, onClose }: {
       <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
-            <Layers size={15} className="text-blue-500" />
-            <p className="font-semibold text-sm text-gray-900 dark:text-slate-100">Assign Schema</p>
+            <Layers size={17} className="text-blue-500" />
+            <p className="font-semibold text-base text-gray-900 dark:text-slate-100">Assign Schema</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
+          <button onClick={onClose} className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-xs text-gray-500 dark:text-slate-400">
+          <p className="text-sm text-gray-500 dark:text-slate-400">
             Imported tables without an explicit schema (defaulted to <span className="font-mono text-gray-700 dark:text-slate-200">public</span>) will be reassigned to:
           </p>
           {hasExisting && (
-            <div className="flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden text-xs font-medium">
+            <div className="flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden text-sm font-medium">
               <button onClick={() => setMode('existing')} className={`flex-1 py-1.5 transition-colors ${mode === 'existing' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>Use existing</button>
               <button onClick={() => setMode('new')} className={`flex-1 py-1.5 border-l border-gray-200 dark:border-slate-700 transition-colors ${mode === 'new' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>New schema</button>
             </div>
           )}
           {mode === 'existing' && hasExisting && (
             <select value={selected} onChange={e => setSelected(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono focus:outline-none focus:border-blue-400 cursor-pointer">
+              className="w-full px-3 py-2 text-base rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 font-mono focus:outline-none focus:border-blue-400 cursor-pointer">
               {existingSchemas.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           )}
@@ -2723,15 +2723,15 @@ function SchemaAssignModal({ existingSchemas, onAssign, onSkip, onClose }: {
             <input ref={ref} value={custom} onChange={e => setCustom(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && sanitized) onAssign(sanitized); }}
               placeholder="schema_name"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
+              className="w-full px-3 py-2 text-base rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
             />
           )}
         </div>
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
-          <button onClick={onSkip} className="px-4 py-2 text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">Keep public</button>
+          <button onClick={onSkip} className="px-4 py-2 text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">Keep public</button>
           <button onClick={() => value && onAssign(value)} disabled={!value}
-            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
-            <Layers size={13} /> Assign & Save
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
+            <Layers size={15} /> Assign & Save
           </button>
         </div>
       </div>
@@ -2754,29 +2754,29 @@ function NewSchemaDialog({ onConfirm, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-80 p-6 space-y-4">
         <div className="flex items-center gap-2">
-          <Layers size={15} className="text-blue-500" />
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Add Schema</h3>
+          <Layers size={17} className="text-blue-500" />
+          <h3 className="text-base font-semibold text-gray-900 dark:text-slate-100">Add Schema</h3>
         </div>
         <div className="space-y-1">
-          <label className="text-[11px] text-gray-500 dark:text-slate-400">Schema name (PostgreSQL)</label>
+          <label className="text-[13px] text-gray-500 dark:text-slate-400">Schema name (PostgreSQL)</label>
           <input
             ref={ref}
-            className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
+            className="w-full px-3 py-2 text-base rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20"
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && sanitized) onConfirm(sanitized); if (e.key === 'Escape') onClose(); }}
             placeholder="my_schema"
           />
           {name && name !== sanitized && (
-            <p className="text-[10px] text-gray-400 dark:text-slate-500">Will be saved as: <span className="font-mono">{sanitized || '—'}</span></p>
+            <p className="text-[12px] text-gray-400 dark:text-slate-500">Will be saved as: <span className="font-mono">{sanitized || '—'}</span></p>
           )}
         </div>
         <div className="flex gap-2 pt-1">
           <button onClick={() => sanitized && onConfirm(sanitized)} disabled={!sanitized}
-            className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
+            className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors">
             Add Schema
           </button>
-          <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+          <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-base text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
             Cancel
           </button>
         </div>
@@ -2857,23 +2857,23 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
       <div className="w-full max-w-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[85vh]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5">
-            <Play size={15} className="text-emerald-500" />
+            <Play size={17} className="text-emerald-500" />
             <div>
-              <p className="font-semibold text-gray-900 dark:text-slate-100 text-sm">{job.job_name}</p>
-              <p className="text-[10px] text-gray-400 dark:text-slate-500">Select a connection and database to execute against</p>
+              <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">{job.job_name}</p>
+              <p className="text-[12px] text-gray-400 dark:text-slate-500">Select a connection and database to execute against</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={16} /></button>
+          <button onClick={onClose} className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={18} /></button>
         </div>
 
         <div className="flex-1 overflow-auto p-5 space-y-4">
           <div className="space-y-3">
             <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">Connection</label>
+              <label className="block text-sm font-medium text-gray-500 dark:text-slate-400 mb-1.5">Connection</label>
               <select
                 value={selectedConnId ?? ''}
                 onChange={e => setSelectedConnId(e.target.value ? Number(e.target.value) : null)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer"
+                className="w-full px-3 py-2 text-base rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer"
               >
                 <option value="">— select connection —</option>
                 {connections.filter(c => c.db_type === 'postgres').map(c => (
@@ -2883,12 +2883,12 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
             </div>
             {selectedConn && (
               <div>
-                <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">Database</label>
+                <label className="block text-sm font-medium text-gray-500 dark:text-slate-400 mb-1.5">Database</label>
                 {loadingDbs
-                  ? <span className="text-xs text-gray-400 animate-pulse">Loading databases…</span>
+                  ? <span className="text-sm text-gray-400 animate-pulse">Loading databases…</span>
                   : (
                     <select value={selectedDb} onChange={e => setSelectedDb(e.target.value)}
-                      className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer font-mono">
+                      className="w-full px-3 py-2 text-base rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 cursor-pointer font-mono">
                       {databases.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
                   )}
@@ -2899,14 +2899,14 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
           {execLog.length > 0 && (
             <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700">
               <div className="flex items-center gap-3 px-4 py-2 bg-gray-50 dark:bg-slate-800/50 border-b border-gray-100 dark:border-slate-800">
-                <span className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">Execution Log</span>
-                {successCount > 0 && <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{successCount} ok</span>}
-                {failCount > 0 && <span className="text-[10px] text-rose-600 dark:text-rose-400">{failCount} failed</span>}
+                <span className="text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">Execution Log</span>
+                {successCount > 0 && <span className="text-[12px] text-emerald-600 dark:text-emerald-400">{successCount} ok</span>}
+                {failCount > 0 && <span className="text-[12px] text-rose-600 dark:text-rose-400">{failCount} failed</span>}
               </div>
               <div className="bg-slate-950 p-3 max-h-52 overflow-auto space-y-1 font-mono">
                 {execLog.map((line, i) => (
-                  <div key={i} className={`flex items-start gap-2 text-[10px] leading-relaxed ${line.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {line.ok ? <CheckCircle2 size={10} className="mt-0.5 shrink-0" /> : <XCircle size={10} className="mt-0.5 shrink-0" />}
+                  <div key={i} className={`flex items-start gap-2 text-[12px] leading-relaxed ${line.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {line.ok ? <CheckCircle2 size={12} className="mt-0.5 shrink-0" /> : <XCircle size={12} className="mt-0.5 shrink-0" />}
                     <span className="break-all">{line.text}</span>
                   </div>
                 ))}
@@ -2915,20 +2915,20 @@ function ExecuteJobModal({ job, connections, onClose, onJobDone }: {
           )}
 
           {done && allOk && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-700 dark:text-emerald-400">
-              <CheckCircle2 size={12} /> Schema applied successfully. Run saved to Job History.
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 text-[13px] text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 size={14} /> Schema applied successfully. Run saved to Job History.
             </div>
           )}
         </div>
 
         <div className="shrink-0 flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
             {done ? 'Close' : 'Cancel'}
           </button>
           {!done && (
             <button onClick={() => void handleExecute()} disabled={!canRun}
-              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-40 transition-colors">
-              {executing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-base font-medium hover:bg-emerald-700 disabled:opacity-40 transition-colors">
+              {executing ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
               {executing ? 'Executing…' : 'Execute'}
             </button>
           )}
@@ -3681,22 +3681,22 @@ function SchemaDesignerInner() {
 
       {/* ── Migration pre-load notice ── */}
       {migNotice && (
-        <div className="shrink-0 flex items-center gap-2 px-5 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-800 text-xs text-violet-700 dark:text-violet-400">
-          <Layers size={12} className="shrink-0" />
+        <div className="shrink-0 flex items-center gap-2 px-5 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-800 text-sm text-violet-700 dark:text-violet-400">
+          <Layers size={14} className="shrink-0" />
           <span className="flex-1">{migNotice}</span>
-          <button onClick={() => setMigNotice(null)} className="p-0.5 hover:text-violet-900 dark:hover:text-violet-200 transition-colors"><X size={12} /></button>
+          <button onClick={() => setMigNotice(null)} className="p-0.5 hover:text-violet-900 dark:hover:text-violet-200 transition-colors"><X size={14} /></button>
         </div>
       )}
 
       {/* ── Toolbar ── */}
       <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-1.5">
-        <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 dark:text-slate-300">
-          <Columns size={13} className="text-blue-500" /> Schema Studio
+        <div className="flex items-center gap-2 text-sm font-semibold text-gray-600 dark:text-slate-300">
+          <Columns size={15} className="text-blue-500" /> Schema Studio
           {tables.length > 0 && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">{tables.length} tables</span>
+            <span className="text-[12px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">{tables.length} tables</span>
           )}
           {refactorLoaded && alterStmts.length > 0 && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400">{alterStmts.length} changes</span>
+            <span className="text-[12px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400">{alterStmts.length} changes</span>
           )}
         </div>
         <div className="ml-auto pr-1 flex items-center gap-2">
@@ -3704,26 +3704,26 @@ function SchemaDesignerInner() {
             <>
               <button
                 onClick={handleSaveClick}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border transition-colors
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium border transition-colors
                   ${isDirty && loadedJob
                     ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
                     : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
               >
-                <Save size={12} /> {isDirty && loadedJob ? 'Save Changes' : 'Save Job'}
+                <Save size={14} /> {isDirty && loadedJob ? 'Save Changes' : 'Save Job'}
               </button>
               <button
                 onClick={() => setShowErdPreview(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
               >
-                <Network size={12} /> ERD Preview
+                <Network size={14} /> ERD Preview
               </button>
               {refactorLoaded && alterStmts.length > 0 && (
                 <button
                   onClick={() => void applyAlterDDL()}
                   disabled={alterApplying}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
                 >
-                  {alterApplying ? <><Loader2 size={12} className="animate-spin" /> Applying…</> : <><Play size={12} /> Apply Changes</>}
+                  {alterApplying ? <><Loader2 size={14} className="animate-spin" /> Applying…</> : <><Play size={14} /> Apply Changes</>}
                 </button>
               )}
             </>
@@ -3747,7 +3747,7 @@ function SchemaDesignerInner() {
                   <select
                     value={refactorConnId ?? ''}
                     onChange={e => setRefactorConnId(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-amber-400 cursor-pointer"
+                    className="w-full px-2 py-1 text-[13px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-amber-400 cursor-pointer"
                   >
                     <option value="">— select connection —</option>
                     {connections.filter(c => c.db_type === 'postgres').map(c => (
@@ -3757,12 +3757,12 @@ function SchemaDesignerInner() {
                   {refactorConnId && (
                     <div className="flex gap-1">
                       {refactorLoadingDbs
-                        ? <Loader2 size={11} className="animate-spin text-gray-400 self-center" />
+                        ? <Loader2 size={13} className="animate-spin text-slate-500 dark:text-slate-400 self-center" />
                         : (
                           <select
                             value={refactorDatabase}
                             onChange={e => setRefactorDatabase(e.target.value)}
-                            className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-amber-400 cursor-pointer font-mono"
+                            className="flex-1 min-w-0 px-2 py-1 text-[13px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-amber-400 cursor-pointer font-mono"
                           >
                             {!refactorDatabase && <option value="">— db —</option>}
                             {refactorDbs.map(d => <option key={d} value={d}>{d}</option>)}
@@ -3773,7 +3773,7 @@ function SchemaDesignerInner() {
                         <select
                           value={refactorSchema}
                           onChange={e => setRefactorSchema(e.target.value)}
-                          className="w-20 shrink-0 px-2 py-1 text-[11px] rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 focus:outline-none cursor-pointer font-mono"
+                          className="w-20 shrink-0 px-2 py-1 text-[13px] rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 focus:outline-none cursor-pointer font-mono"
                         >
                           {refactorSchemas.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
@@ -3783,21 +3783,21 @@ function SchemaDesignerInner() {
                   <button
                     onClick={() => void loadRefactorSchema()}
                     disabled={!refactorConnId || !refactorDatabase || refactorLoading}
-                    className="w-full flex items-center justify-center gap-1 py-1 text-[11px] font-medium rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="w-full flex items-center justify-center gap-1 py-1 text-[13px] font-medium rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
-                    {refactorLoading ? <><Loader2 size={10} className="animate-spin" /> Loading…</> : <><RefreshCw size={10} /> Load Schema</>}
+                    {refactorLoading ? <><Loader2 size={12} className="animate-spin" /> Loading…</> : <><RefreshCw size={12} /> Load Schema</>}
                   </button>
                   {refactorLoaded && (
                     <>
-                      <p className="text-[9px] text-amber-600 dark:text-amber-500 text-center">
+                      <p className="text-[11px] text-amber-600 dark:text-amber-500 text-center">
                         {tables.length} table{tables.length !== 1 ? 's' : ''} loaded · edit then Apply
                       </p>
                       <button
                         onClick={() => void handleScanSuggestions()}
                         disabled={scanningSchema}
-                        className="w-full flex items-center justify-center gap-1 py-1 text-[11px] font-medium rounded border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/30 hover:bg-violet-100 dark:hover:bg-violet-950/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        className="w-full flex items-center justify-center gap-1 py-1 text-[13px] font-medium rounded border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/30 hover:bg-violet-100 dark:hover:bg-violet-950/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
-                        {scanningSchema ? <><Loader2 size={10} className="animate-spin" /> Scanning…</> : <><Info size={10} /> Scan Suggestions</>}
+                        {scanningSchema ? <><Loader2 size={12} className="animate-spin" /> Scanning…</> : <><Info size={12} /> Scan Suggestions</>}
                       </button>
                     </>
                   )}
@@ -3825,23 +3825,23 @@ function SchemaDesignerInner() {
               {activeEditTable && (
                 <div className="shrink-0 flex flex-col border-b border-gray-200 dark:border-slate-800" style={{ height: 200 }}>
                   <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
-                    <FileCode2 size={13} className="text-emerald-500" />
-                    <span className="text-[11px] font-semibold text-gray-600 dark:text-slate-300">DDL Generator</span>
-                    <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 ml-1">
+                    <FileCode2 size={15} className="text-emerald-500" />
+                    <span className="text-[13px] font-semibold text-gray-600 dark:text-slate-300">DDL Generator</span>
+                    <span className="text-[12px] font-mono text-gray-400 dark:text-slate-500 ml-1">
                       {activeEditTable.schema}.{activeEditTable.name}
                     </span>
                     <div className="ml-auto flex items-center gap-1.5">
                       <button
                         onClick={() => void navigator.clipboard.writeText(activeEditTableDdl).then(() => { setTableDdlCopied(true); setTimeout(() => setTableDdlCopied(false), 1500); })}
                         disabled={!activeEditTableDdl}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[13px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
                       >
-                        {tableDdlCopied ? <><Check size={10} className="text-emerald-500" /> Copied</> : <><Copy size={10} /> Copy</>}
+                        {tableDdlCopied ? <><Check size={12} className="text-emerald-500" /> Copied</> : <><Copy size={12} /> Copy</>}
                       </button>
                     </div>
                   </div>
                   <div className="flex-1 sidebar-scroll overflow-auto bg-gray-50 dark:bg-slate-950 px-4 py-3">
-                    <pre className="text-[10px] font-mono text-gray-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{activeEditTableDdl}</pre>
+                    <pre className="text-[12px] font-mono text-gray-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{activeEditTableDdl}</pre>
                   </div>
                 </div>
               )}
@@ -3862,42 +3862,42 @@ function SchemaDesignerInner() {
                         <button
                           key={key}
                           onClick={() => { setImportSource(key); setImportParsed([]); }}
-                          className={`flex items-center gap-1 px-2 py-1 text-[10px] font-medium border-l first:border-l-0 border-gray-200 dark:border-slate-700 transition-colors
+                          className={`flex items-center gap-1 px-2 py-1 text-[12px] font-medium border-l first:border-l-0 border-gray-200 dark:border-slate-700 transition-colors
                             ${importSource === key ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
                         >
-                          <Icon size={10} /> {label}
+                          <Icon size={12} /> {label}
                         </button>
                       ))}
                     </div>
                     <div className="ml-auto flex items-center gap-1.5">
                       {importSource === 'paste' && (
                         <button onClick={handleParseImport} disabled={!importSql.trim()}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
-                          <RefreshCw size={10} /> Parse
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
+                          <RefreshCw size={12} /> Parse
                         </button>
                       )}
                       {importSource === 'sql-file' && (
                         <button onClick={() => importSqlFileRef.current?.click()}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                          <Upload size={10} /> Choose .sql
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                          <Upload size={12} /> Choose .sql
                         </button>
                       )}
                       {importSource === 'csv' && (
                         <button onClick={() => importCsvFileRef.current?.click()}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                          <Upload size={10} /> Choose .csv
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                          <Upload size={12} /> Choose .csv
                         </button>
                       )}
                       {importSource === 'xlsx' && (
                         <button onClick={() => importXlsxFileRef.current?.click()} disabled={importXlsxLoading}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
-                          {importXlsxLoading ? <Loader2 size={10} className="animate-spin" /> : <Upload size={10} />} Choose .xlsx
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors">
+                          {importXlsxLoading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} Choose .xlsx
                         </button>
                       )}
                       {importSource === 'db' && importDbSelected.size > 0 && (
                         <button onClick={() => void importFromLiveDb()} disabled={importDbImporting}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 disabled:opacity-40 transition-colors">
-                          {importDbImporting ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium rounded-lg border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 disabled:opacity-40 transition-colors">
+                          {importDbImporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
                           Import Selected ({importDbSelected.size})
                         </button>
                       )}
@@ -3910,7 +3910,7 @@ function SchemaDesignerInner() {
                       <select
                         value={importDbConnId ?? ''}
                         onChange={e => setImportDbConnId(e.target.value ? Number(e.target.value) : null)}
-                        className="text-[10px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500"
+                        className="text-[12px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500"
                       >
                         <option value="">— connection —</option>
                         {connections.map(c => (
@@ -3920,12 +3920,12 @@ function SchemaDesignerInner() {
                       {importDbConn && (
                         <>
                           {importDbLoadingDbs ? (
-                            <Loader2 size={10} className="animate-spin text-gray-400 dark:text-slate-500" />
+                            <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400" />
                           ) : (
                             <select
                               value={importDbDatabase}
                               onChange={e => setImportDbDatabase(e.target.value)}
-                              className="text-[10px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500"
+                              className="text-[12px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500"
                             >
                               <option value="">— database —</option>
                               {importDbDbs.map(d => <option key={d} value={d}>{d}</option>)}
@@ -3934,9 +3934,9 @@ function SchemaDesignerInner() {
                           <button
                             onClick={() => void loadImportDbSchemas()}
                             disabled={!importDbDatabase || importDbLoadingSchemas}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
                           >
-                            {importDbLoadingSchemas ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />} Load
+                            {importDbLoadingSchemas ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Load
                           </button>
                         </>
                       )}
@@ -3947,7 +3947,7 @@ function SchemaDesignerInner() {
                   <div className="flex-1 overflow-hidden bg-gray-50 dark:bg-slate-950">
                     {importSource === 'paste' && (
                       <textarea
-                        className="w-full h-full px-4 py-3 text-[10px] font-mono text-gray-700 dark:text-slate-300 bg-transparent resize-none focus:outline-none placeholder-gray-400 dark:placeholder-slate-600 leading-relaxed"
+                        className="w-full h-full px-4 py-3 text-[12px] font-mono text-gray-700 dark:text-slate-300 bg-transparent resize-none focus:outline-none placeholder-gray-400 dark:placeholder-slate-600 leading-relaxed"
                         placeholder={'-- Paste CREATE TABLE statements here…\n-- e.g. CREATE TABLE users (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL);'}
                         value={importSql}
                         onChange={e => { setImportSql(e.target.value); if (importParsed.length) setImportParsed([]); }}
@@ -3957,17 +3957,17 @@ function SchemaDesignerInner() {
                       <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
                         {importParsed.length > 0 ? (
                           <>
-                            <CheckCircle2 size={20} className="text-emerald-500" />
-                            <p className="text-[11px] text-gray-500 dark:text-slate-400">{importParsed.length} table{importParsed.length !== 1 ? 's' : ''} parsed — click Merge in the left panel</p>
-                            <button onClick={() => importSqlFileRef.current?.click()} className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
+                            <CheckCircle2 size={22} className="text-emerald-500" />
+                            <p className="text-[13px] text-gray-500 dark:text-slate-400">{importParsed.length} table{importParsed.length !== 1 ? 's' : ''} parsed — click Merge in the left panel</p>
+                            <button onClick={() => importSqlFileRef.current?.click()} className="text-[12px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
                           </>
                         ) : (
                           <>
-                            <Upload size={20} className="text-gray-400 dark:text-slate-600" />
-                            <p className="text-[11px] text-gray-500 dark:text-slate-500">Upload a .sql file with CREATE TABLE statements</p>
+                            <Upload size={22} className="text-slate-500 dark:text-slate-400" />
+                            <p className="text-[13px] text-gray-500 dark:text-slate-500">Upload a .sql file with CREATE TABLE statements</p>
                             <button onClick={() => importSqlFileRef.current?.click()}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[11px] transition-colors">
-                              <Upload size={11} /> Choose File
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[13px] transition-colors">
+                              <Upload size={13} /> Choose File
                             </button>
                           </>
                         )}
@@ -3976,9 +3976,9 @@ function SchemaDesignerInner() {
                     {importSource === 'csv' && (
                       <div className="flex flex-col gap-2 px-4 py-3 h-full">
                         <div className="flex items-center gap-2 shrink-0">
-                          <label className="text-[11px] text-gray-500 dark:text-slate-400 shrink-0">Table name:</label>
+                          <label className="text-[13px] text-gray-500 dark:text-slate-400 shrink-0">Table name:</label>
                           <input
-                            className="flex-1 text-[11px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500 placeholder-gray-400 dark:placeholder-slate-600"
+                            className="flex-1 text-[13px] font-mono px-2 py-1 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:outline-none focus:border-blue-500 placeholder-gray-400 dark:placeholder-slate-600"
                             placeholder="my_table"
                             value={importCsvName}
                             onChange={e => setImportCsvName(e.target.value)}
@@ -3987,19 +3987,19 @@ function SchemaDesignerInner() {
                         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center">
                           {importParsed.length > 0 ? (
                             <>
-                              <CheckCircle2 size={18} className="text-emerald-500" />
-                              <p className="text-[11px] text-gray-500 dark:text-slate-400">
+                              <CheckCircle2 size={20} className="text-emerald-500" />
+                              <p className="text-[13px] text-gray-500 dark:text-slate-400">
                                 <span className="font-mono">{importParsed[0].name}</span> — {importParsed[0].columns.length} columns detected
                               </p>
-                              <button onClick={() => importCsvFileRef.current?.click()} className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
+                              <button onClick={() => importCsvFileRef.current?.click()} className="text-[12px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
                             </>
                           ) : (
                             <>
-                              <FileText size={18} className="text-gray-400 dark:text-slate-600" />
-                              <p className="text-[11px] text-gray-500 dark:text-slate-500">First row as headers · types inferred from data</p>
+                              <FileText size={20} className="text-slate-500 dark:text-slate-400" />
+                              <p className="text-[13px] text-gray-500 dark:text-slate-500">First row as headers · types inferred from data</p>
                               <button onClick={() => importCsvFileRef.current?.click()}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[11px] transition-colors">
-                                <Upload size={11} /> Choose File
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[13px] transition-colors">
+                                <Upload size={13} /> Choose File
                               </button>
                             </>
                           )}
@@ -4009,20 +4009,20 @@ function SchemaDesignerInner() {
                     {importSource === 'xlsx' && (
                       <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
                         {importXlsxLoading ? (
-                          <><Loader2 size={20} className="text-gray-400 dark:text-slate-500 animate-spin" /><p className="text-[11px] text-gray-500 dark:text-slate-500">Parsing…</p></>
+                          <><Loader2 size={22} className="text-slate-500 dark:text-slate-400 animate-spin" /><p className="text-[13px] text-slate-500 dark:text-slate-400">Parsing…</p></>
                         ) : importParsed.length > 0 ? (
                           <>
-                            <CheckCircle2 size={20} className="text-emerald-500" />
-                            <p className="text-[11px] text-gray-500 dark:text-slate-400">{importParsed.length} sheet{importParsed.length !== 1 ? 's' : ''} parsed as tables</p>
-                            <button onClick={() => importXlsxFileRef.current?.click()} className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
+                            <CheckCircle2 size={22} className="text-emerald-500" />
+                            <p className="text-[13px] text-gray-500 dark:text-slate-400">{importParsed.length} sheet{importParsed.length !== 1 ? 's' : ''} parsed as tables</p>
+                            <button onClick={() => importXlsxFileRef.current?.click()} className="text-[12px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline transition-colors">Upload another</button>
                           </>
                         ) : (
                           <>
-                            <FileSpreadsheet size={20} className="text-gray-400 dark:text-slate-600" />
-                            <p className="text-[11px] text-gray-500 dark:text-slate-500">Each sheet becomes a table · types inferred from data</p>
+                            <FileSpreadsheet size={22} className="text-slate-500 dark:text-slate-400" />
+                            <p className="text-[13px] text-gray-500 dark:text-slate-500">Each sheet becomes a table · types inferred from data</p>
                             <button onClick={() => importXlsxFileRef.current?.click()}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[11px] transition-colors">
-                              <Upload size={11} /> Choose File
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 text-[13px] transition-colors">
+                              <Upload size={13} /> Choose File
                             </button>
                           </>
                         )}
@@ -4032,18 +4032,18 @@ function SchemaDesignerInner() {
                       <div className="h-full overflow-y-auto sidebar-scroll">
                         {!importDbConn ? (
                           <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
-                            <Database size={20} className="text-gray-300 dark:text-slate-700" />
-                            <p className="text-[11px] text-gray-400 dark:text-slate-500">Select a connection above to browse live schemas</p>
+                            <Database size={22} className="text-slate-400 dark:text-slate-500" />
+                            <p className="text-[13px] text-gray-400 dark:text-slate-500">Select a connection above to browse live schemas</p>
                           </div>
                         ) : importDbLoadingSchemas ? (
                           <div className="flex flex-col items-center justify-center h-full gap-2">
-                            <Loader2 size={18} className="animate-spin text-gray-400 dark:text-slate-500" />
-                            <p className="text-[11px] text-gray-400 dark:text-slate-500">Loading schemas…</p>
+                            <Loader2 size={20} className="animate-spin text-slate-500 dark:text-slate-400" />
+                            <p className="text-[13px] text-gray-400 dark:text-slate-500">Loading schemas…</p>
                           </div>
                         ) : importDbSchemas.length === 0 ? (
                           <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
-                            <Layers size={18} className="text-gray-300 dark:text-slate-700" />
-                            <p className="text-[11px] text-gray-400 dark:text-slate-500">Choose a database and click Load to browse schemas</p>
+                            <Layers size={20} className="text-slate-400 dark:text-slate-500" />
+                            <p className="text-[13px] text-gray-400 dark:text-slate-500">Choose a database and click Load to browse schemas</p>
                           </div>
                         ) : (
                           <div className="py-1">
@@ -4057,21 +4057,21 @@ function SchemaDesignerInner() {
                                 <div key={s.schema}>
                                   <div className="flex items-center gap-1 px-2 py-1 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-pointer"
                                     onClick={() => void toggleImportDbSchema(s.schema)}>
-                                    {expanded ? <ChevronDown size={10} className="text-gray-400 dark:text-slate-500 shrink-0" /> : <ChevronRight size={10} className="text-gray-400 dark:text-slate-500 shrink-0" />}
+                                    {expanded ? <ChevronDown size={12} className="text-slate-500 dark:text-slate-400 shrink-0" /> : <ChevronRight size={12} className="text-slate-500 dark:text-slate-400 shrink-0" />}
                                     <input type="checkbox" checked={allChecked} ref={el => { if (el) el.indeterminate = !allChecked && someChecked; }}
                                       onChange={e => { e.stopPropagation(); toggleImportDbAll(s.schema); }}
                                       onClick={e => e.stopPropagation()}
                                       className="w-3 h-3 rounded accent-blue-500 shrink-0" />
-                                    <Layers size={10} className="text-blue-400 dark:text-blue-500 shrink-0" />
-                                    <span className="text-[10px] font-semibold text-gray-600 dark:text-slate-300 truncate">{s.schema}</span>
-                                    <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500">{s.tableCount}</span>
+                                    <Layers size={12} className="text-blue-400 dark:text-blue-500 shrink-0" />
+                                    <span className="text-[12px] font-semibold text-gray-600 dark:text-slate-300 truncate">{s.schema}</span>
+                                    <span className="ml-auto text-[12px] text-gray-400 dark:text-slate-500">{s.tableCount}</span>
                                   </div>
                                   {expanded && (
                                     <div className="pl-6">
                                       {schemaTables.length === 0 ? (
                                         <div className="flex items-center gap-1 px-2 py-1">
-                                          <Loader2 size={9} className="animate-spin text-gray-400 dark:text-slate-600" />
-                                          <span className="text-[10px] text-gray-400 dark:text-slate-500">Loading…</span>
+                                          <Loader2 size={11} className="animate-spin text-slate-500 dark:text-slate-400" />
+                                          <span className="text-[12px] text-gray-400 dark:text-slate-500">Loading…</span>
                                         </div>
                                       ) : schemaTables.map(t => {
                                         const key = `${t.schema}.${t.name}`;
@@ -4081,10 +4081,10 @@ function SchemaDesignerInner() {
                                             <input type="checkbox" checked={checked}
                                               onChange={() => setImportDbSelected(p => { const n = new Set(p); checked ? n.delete(key) : n.add(key); return n; })}
                                               className="w-3 h-3 rounded accent-blue-500 shrink-0" />
-                                            <Table2 size={9} className="text-gray-400 dark:text-slate-500 shrink-0" />
-                                            <span className="text-[10px] font-mono text-gray-600 dark:text-slate-300 truncate">{t.name}</span>
+                                            <Table2 size={11} className="text-slate-500 dark:text-slate-400 shrink-0" />
+                                            <span className="text-[12px] font-mono text-gray-600 dark:text-slate-300 truncate">{t.name}</span>
                                             {t.rowCount !== undefined && (
-                                              <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500">{t.rowCount.toLocaleString()}</span>
+                                              <span className="ml-auto text-[12px] text-gray-400 dark:text-slate-500">{t.rowCount.toLocaleString()}</span>
                                             )}
                                           </label>
                                         );
@@ -4121,8 +4121,8 @@ function SchemaDesignerInner() {
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
-                    <Columns size={32} className="text-gray-200 dark:text-slate-700" />
-                    <p className="text-sm text-gray-400 dark:text-slate-500">
+                    <Columns size={34} className="text-slate-400 dark:text-slate-500" />
+                    <p className="text-base text-gray-400 dark:text-slate-500">
                       {!refactorLoaded
                         ? 'Load a PostgreSQL schema from the left panel to start refactoring.'
                         : designerSchemas.length === 0
@@ -4144,33 +4144,33 @@ function SchemaDesignerInner() {
                 {rightPanelOpen && designerMode === 'refactor' && (
                   <>
                     <button onClick={() => setRightPanelTab('jobs')}
-                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${rightPanelTab === 'jobs' ? 'bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200' : 'text-gray-400 hover:text-gray-600 dark:hover:text-slate-300'}`}>
-                      <Save size={9} /> Jobs
+                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium transition-colors ${rightPanelTab === 'jobs' ? 'bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200' : 'text-gray-400 hover:text-gray-600 dark:hover:text-slate-300'}`}>
+                      <Save size={11} /> Jobs
                     </button>
                     <button onClick={() => setRightPanelTab('suggest')}
-                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${rightPanelTab === 'suggest' ? 'bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300' : 'text-gray-400 hover:text-violet-600 dark:hover:text-violet-400'}`}>
-                      <Info size={9} /> Suggest
-                      {activeSuggestions.length > 0 && <span className="ml-0.5 px-1 rounded-full bg-violet-500 text-white text-[9px]">{activeSuggestions.length}</span>}
+                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium transition-colors ${rightPanelTab === 'suggest' ? 'bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300' : 'text-gray-400 hover:text-violet-600 dark:hover:text-violet-400'}`}>
+                      <Info size={11} /> Suggest
+                      {activeSuggestions.length > 0 && <span className="ml-0.5 px-1 rounded-full bg-violet-500 text-white text-[11px]">{activeSuggestions.length}</span>}
                     </button>
                     <button onClick={() => setRightPanelTab('alter')}
-                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${rightPanelTab === 'alter' ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300' : 'text-gray-400 hover:text-amber-600 dark:hover:text-amber-400'}`}>
-                      <Pencil size={9} /> ALTER
-                      {alterStmts.length > 0 && <span className="ml-0.5 px-1 rounded-full bg-amber-500 text-white text-[9px]">{alterStmts.length}</span>}
+                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium transition-colors ${rightPanelTab === 'alter' ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300' : 'text-gray-400 hover:text-amber-600 dark:hover:text-amber-400'}`}>
+                      <Pencil size={11} /> ALTER
+                      {alterStmts.length > 0 && <span className="ml-0.5 px-1 rounded-full bg-amber-500 text-white text-[11px]">{alterStmts.length}</span>}
                     </button>
                   </>
                 )}
                 {rightPanelOpen && designerMode !== 'refactor' && (
                   <>
-                    <Save size={11} className="text-gray-400 shrink-0" />
-                    <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">Saved Jobs</span>
-                    {groupedJobs.length > 0 && <span className="text-[10px] text-gray-400 shrink-0">{groupedJobs.length}</span>}
+                    <Save size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />
+                    <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">Saved Jobs</span>
+                    {groupedJobs.length > 0 && <span className="text-[12px] text-gray-400 shrink-0">{groupedJobs.length}</span>}
                   </>
                 )}
                 <button
                   onClick={() => setRightPanelOpen(o => !o)}
                   className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ml-auto"
                 >
-                  {rightPanelOpen ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+                  {rightPanelOpen ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
                 </button>
               </div>
 
@@ -4181,20 +4181,20 @@ function SchemaDesignerInner() {
                   {/* Apply All header */}
                   {activeSuggestions.filter(s => s.alterSql).length > 0 && (
                     <div className="flex items-center gap-1.5 pb-1 border-b border-gray-100 dark:border-slate-800">
-                      <span className="text-[10px] text-gray-500 dark:text-slate-400 flex-1">{activeSuggestions.length} suggestion{activeSuggestions.length !== 1 ? 's' : ''}</span>
+                      <span className="text-[12px] text-gray-500 dark:text-slate-400 flex-1">{activeSuggestions.length} suggestion{activeSuggestions.length !== 1 ? 's' : ''}</span>
                       <button
                         onClick={() => void handleApplyAllSuggestions()}
                         disabled={applyingAll || !!applyingSuggestionId}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
                       >
-                        {applyingAll ? <><Loader2 size={9} className="animate-spin" /> Applying…</> : <><Check size={9} /> Apply All</>}
+                        {applyingAll ? <><Loader2 size={11} className="animate-spin" /> Applying…</> : <><Check size={11} /> Apply All</>}
                       </button>
                     </div>
                   )}
                   {activeSuggestions.length === 0 ? (
                     <div className="py-8 text-center">
-                      <CheckCircle2 size={22} className="mx-auto text-emerald-300 dark:text-emerald-700 mb-2" />
-                      <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                      <CheckCircle2 size={24} className="mx-auto text-emerald-300 dark:text-emerald-700 mb-2" />
+                      <p className="text-[13px] text-gray-400 dark:text-slate-500">
                         {suggestions.length === 0 ? 'Load a schema then click Scan Suggestions.' : 'All suggestions dismissed.'}
                       </p>
                     </div>
@@ -4209,9 +4209,9 @@ function SchemaDesignerInner() {
                       <div key={tbl} className="space-y-1">
                         {/* Table header */}
                         <div className="flex items-center gap-1.5">
-                          <Table2 size={10} className="text-blue-400 shrink-0" />
-                          <span className="text-[10px] font-semibold font-mono text-gray-700 dark:text-slate-300 flex-1 truncate">{tbl}</span>
-                          <span className="text-[9px] px-1 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400">{items.length}</span>
+                          <Table2 size={12} className="text-blue-400 shrink-0" />
+                          <span className="text-[12px] font-semibold font-mono text-gray-700 dark:text-slate-300 flex-1 truncate">{tbl}</span>
+                          <span className="text-[11px] px-1 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400">{items.length}</span>
                         </div>
                         {/* Suggestions for this table */}
                         {items.map(s => {
@@ -4229,17 +4229,17 @@ function SchemaDesignerInner() {
                           };
                           const km = KIND_META[s.kind] ?? KIND_META.suboptimal_type;
                           return (
-                            <div key={s.id} className={`rounded-lg border p-2 text-[11px] space-y-1.5 ml-3 ${km.border}`}>
+                            <div key={s.id} className={`rounded-lg border p-2 text-[13px] space-y-1.5 ml-3 ${km.border}`}>
                               <div className="flex items-center gap-1">
-                                <span className={`shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-0.5 rounded ${km.badge}`}>
-                                  <km.Icon size={9} /> {km.label}
+                                <span className={`shrink-0 inline-flex items-center gap-0.5 text-[11px] font-bold px-1 py-0.5 rounded ${km.badge}`}>
+                                  <km.Icon size={11} /> {km.label}
                                 </span>
-                                {s.column && <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500 truncate flex-1">.{s.column}</span>}
+                                {s.column && <span className="text-[12px] font-mono text-gray-400 dark:text-slate-500 truncate flex-1">.{s.column}</span>}
                               </div>
                               <p className="text-gray-700 dark:text-slate-300 leading-snug">{s.message}</p>
                               {s.alterSql && (
                                 <div className="bg-slate-900 dark:bg-slate-950 rounded px-2 py-1.5">
-                                  <code className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap break-all">{s.alterSql}</code>
+                                  <code className="text-[12px] font-mono text-slate-300 whitespace-pre-wrap break-all">{s.alterSql}</code>
                                 </div>
                               )}
                               <div className="flex items-center gap-1 pt-0.5">
@@ -4247,14 +4247,14 @@ function SchemaDesignerInner() {
                                   <button
                                     onClick={() => void handleApplySuggestion(s)}
                                     disabled={!!applyingSuggestionId}
-                                    className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
+                                    className="flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors"
                                   >
-                                    {isApplying ? <><Loader2 size={9} className="animate-spin" /> Applying…</> : <><Check size={9} /> Apply</>}
+                                    {isApplying ? <><Loader2 size={11} className="animate-spin" /> Applying…</> : <><Check size={11} /> Apply</>}
                                   </button>
                                 )}
                                 <button
                                   onClick={() => setDismissedSuggestions(prev => new Set([...prev, s.id]))}
-                                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
+                                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium border border-gray-200 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
                                 >
                                   Ignore
                                 </button>
@@ -4271,8 +4271,8 @@ function SchemaDesignerInner() {
                 <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
                   {groupedJobs.length === 0 && !loadingJobs ? (
                     <div className="py-8 text-center">
-                      <Save size={22} className="mx-auto text-gray-200 dark:text-slate-700 mb-2" />
-                      <p className="text-[11px] text-gray-400 dark:text-slate-500">No saved jobs</p>
+                      <Save size={24} className="mx-auto text-slate-400 dark:text-slate-500 mb-2" />
+                      <p className="text-[13px] text-gray-400 dark:text-slate-500">No saved jobs</p>
                     </div>
                   ) : groupedJobs.map(g => (
                     <JobGroupCard key={g.job_name} group={g} onLoad={handleLoadJob} onRename={handleRenameGroup} onDelete={handleDeleteJobGroup} isActive={loadedJob?.job_name === g.job_name} connections={connections} onVerifyPass={handleVerifyPass} />
@@ -4282,8 +4282,8 @@ function SchemaDesignerInner() {
                 /* ── Refactor: ALTER SQL diff panel ── */
                 <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-slate-900 min-w-0">
                   <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800 bg-amber-50/40 dark:bg-amber-900/10">
-                    <Pencil size={12} className="text-amber-500 shrink-0" />
-                    <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 flex-1">ALTER SQL</span>
+                    <Pencil size={14} className="text-amber-500 shrink-0" />
+                    <span className="text-sm font-semibold text-amber-700 dark:text-amber-400 flex-1">ALTER SQL</span>
                     {alterStmts.length > 0 && (
                       <>
                         <button
@@ -4291,14 +4291,14 @@ function SchemaDesignerInner() {
                           title="Copy ALTER SQL"
                           className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
                         >
-                          {alterCopied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+                          {alterCopied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
                         </button>
                         <button
                           onClick={() => void applyAlterDDL()}
                           disabled={alterApplying || !refactorConnId || !refactorDatabase}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-40 transition-colors"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[13px] font-medium bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-40 transition-colors"
                         >
-                          {alterApplying ? <><Loader2 size={9} className="animate-spin" /> Applying…</> : <><Play size={9} /> Apply</>}
+                          {alterApplying ? <><Loader2 size={11} className="animate-spin" /> Applying…</> : <><Play size={11} /> Apply</>}
                         </button>
                       </>
                     )}
@@ -4306,32 +4306,32 @@ function SchemaDesignerInner() {
                   <div className="flex-1 overflow-auto p-3 space-y-2">
                     {!refactorLoaded ? (
                       <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-3">
-                        <Pencil size={22} className="text-amber-200 dark:text-amber-800" />
-                        <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                        <Pencil size={24} className="text-amber-200 dark:text-amber-800" />
+                        <p className="text-[13px] text-gray-400 dark:text-slate-500">
                           Load a schema from a live DB, then edit tables and columns to generate ALTER statements.
                         </p>
                       </div>
                     ) : alterStmts.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-3">
-                        <CheckCircle2 size={22} className="text-emerald-400" />
-                        <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">No changes</p>
-                        <p className="text-[10px] text-gray-400 dark:text-slate-500">Schema matches the loaded snapshot.</p>
+                        <CheckCircle2 size={24} className="text-emerald-400" />
+                        <p className="text-[13px] text-emerald-600 dark:text-emerald-400 font-medium">No changes</p>
+                        <p className="text-[12px] text-gray-400 dark:text-slate-500">Schema matches the loaded snapshot.</p>
                       </div>
                     ) : (
                       <>
                         <div className="bg-slate-900 dark:bg-slate-950 rounded-lg overflow-hidden">
-                          <pre className="text-[11px] font-mono text-slate-300 leading-relaxed p-3 whitespace-pre-wrap">{alterText}</pre>
+                          <pre className="text-[13px] font-mono text-slate-300 leading-relaxed p-3 whitespace-pre-wrap">{alterText}</pre>
                         </div>
-                        <p className="text-[10px] text-gray-400 dark:text-slate-500">{alterStmts.length} statement{alterStmts.length !== 1 ? 's' : ''}</p>
+                        <p className="text-[12px] text-gray-400 dark:text-slate-500">{alterStmts.length} statement{alterStmts.length !== 1 ? 's' : ''}</p>
                       </>
                     )}
                     {/* Apply log */}
                     {alterLog.length > 0 && (
                       <div className="border-t border-gray-100 dark:border-slate-800 pt-2 space-y-1">
-                        <p className="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Apply Log</p>
+                        <p className="text-[12px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Apply Log</p>
                         {alterLog.map((l, i) => (
-                          <div key={i} className={`flex items-start gap-1.5 text-[10px] font-mono ${l.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                            {l.ok ? <Check size={9} className="shrink-0 mt-0.5" /> : <X size={9} className="shrink-0 mt-0.5" />}
+                          <div key={i} className={`flex items-start gap-1.5 text-[12px] font-mono ${l.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                            {l.ok ? <Check size={11} className="shrink-0 mt-0.5" /> : <X size={11} className="shrink-0 mt-0.5" />}
                             <span className="break-all">{l.text}</span>
                           </div>
                         ))}
@@ -4345,8 +4345,8 @@ function SchemaDesignerInner() {
                   {/* Schema-generator jobs */}
                   {groupedJobs.length === 0 && !loadingJobs ? (
                     <div className="py-4 text-center">
-                      <Save size={20} className="mx-auto text-gray-200 dark:text-slate-700 mb-1.5" />
-                      <p className="text-[11px] text-gray-400 dark:text-slate-500">No schema jobs</p>
+                      <Save size={22} className="mx-auto text-slate-400 dark:text-slate-500 mb-1.5" />
+                      <p className="text-[13px] text-gray-400 dark:text-slate-500">No schema jobs</p>
                     </div>
                   ) : groupedJobs.map(g => (
                     <JobGroupCard
@@ -4371,31 +4371,31 @@ function SchemaDesignerInner() {
       {execConsoleOpen && (
         <div className="shrink-0 border-t border-gray-200 dark:border-slate-700 bg-slate-950 flex flex-col" style={{ height: 200 }}>
           <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800 shrink-0">
-            <Play size={11} className="text-emerald-400 shrink-0" />
-            <span className="text-[11px] font-semibold text-slate-300 flex-1">Execution Console</span>
+            <Play size={13} className="text-emerald-400 shrink-0" />
+            <span className="text-[13px] font-semibold text-slate-300 flex-1">Execution Console</span>
             {execConsoleLog.length > 0 && (
               <>
-                <span className="text-[10px] text-emerald-400">{execConsoleLog.filter(l => l.ok).length} ok</span>
+                <span className="text-[12px] text-emerald-400">{execConsoleLog.filter(l => l.ok).length} ok</span>
                 {execConsoleLog.some(l => !l.ok) && (
-                  <span className="text-[10px] text-rose-400">{execConsoleLog.filter(l => !l.ok).length} failed</span>
+                  <span className="text-[12px] text-rose-400">{execConsoleLog.filter(l => !l.ok).length} failed</span>
                 )}
               </>
             )}
-            {alterApplying && <Loader2 size={10} className="animate-spin text-amber-400 shrink-0" />}
+            {alterApplying && <Loader2 size={12} className="animate-spin text-amber-400 shrink-0" />}
             <button
               onClick={() => { setExecConsoleLog([]); setExecConsoleOpen(false); }}
               className="p-0.5 rounded text-slate-600 hover:text-slate-400 transition-colors"
             >
-              <X size={11} />
+              <X size={13} />
             </button>
           </div>
           <div className="flex-1 overflow-auto panel-scroll p-3 space-y-0.5 font-mono">
             {execConsoleLog.length === 0 && alterApplying && (
-              <p className="text-[10px] text-slate-500 animate-pulse">Running statements…</p>
+              <p className="text-[12px] text-slate-500 animate-pulse">Running statements…</p>
             )}
             {execConsoleLog.map((line, i) => (
-              <div key={i} className={`flex items-start gap-2 text-[10px] leading-relaxed ${line.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {line.ok ? <CheckCircle2 size={9} className="mt-0.5 shrink-0" /> : <XCircle size={9} className="mt-0.5 shrink-0" />}
+              <div key={i} className={`flex items-start gap-2 text-[12px] leading-relaxed ${line.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {line.ok ? <CheckCircle2 size={11} className="mt-0.5 shrink-0" /> : <XCircle size={11} className="mt-0.5 shrink-0" />}
                 <span className="break-all">{line.text}</span>
               </div>
             ))}

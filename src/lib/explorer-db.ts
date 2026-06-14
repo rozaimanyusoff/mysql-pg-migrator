@@ -19,7 +19,7 @@ export async function withPg<T>(conn: ExplorerConn, fn: (client: Client) => Prom
     database: conn.database || 'postgres',
     user: conn.username,
     password: conn.password,
-    connectionTimeoutMillis: 8000,
+    connectionTimeoutMillis: 15000,
     ssl: false,
   });
   await client.connect();
@@ -37,7 +37,7 @@ export async function withMysql<T>(conn: ExplorerConn, fn: (c: mysql.Connection)
     database: conn.database || undefined,
     user: conn.username,
     password: conn.password,
-    connectTimeout: 8000,
+    connectTimeout: 15000,
     multipleStatements: false,
   });
   try {

@@ -24,22 +24,22 @@ const variantConfig: Record<AlertVariant, {
   confirmBtn: string;
 }> = {
   confirm: {
-    icon: <Info size={18} className="text-blue-600 dark:text-blue-400" />,
+    icon: <Info size={20} className="text-blue-600 dark:text-blue-400" />,
     iconBg: 'bg-blue-100 dark:bg-blue-950/50',
     confirmBtn: 'bg-blue-600 hover:bg-blue-700 text-white',
   },
   destructive: {
-    icon: <XCircle size={18} className="text-rose-600 dark:text-rose-400" />,
+    icon: <XCircle size={20} className="text-rose-600 dark:text-rose-400" />,
     iconBg: 'bg-rose-100 dark:bg-rose-950/50',
     confirmBtn: 'bg-rose-600 hover:bg-rose-700 text-white',
   },
   warning: {
-    icon: <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400" />,
+    icon: <AlertTriangle size={20} className="text-amber-600 dark:text-amber-400" />,
     iconBg: 'bg-amber-100 dark:bg-amber-950/50',
     confirmBtn: 'bg-amber-500 hover:bg-amber-600 text-white',
   },
   error: {
-    icon: <XCircle size={18} className="text-rose-600 dark:text-rose-400" />,
+    icon: <XCircle size={20} className="text-rose-600 dark:text-rose-400" />,
     iconBg: 'bg-rose-100 dark:bg-rose-950/50',
     confirmBtn: 'bg-rose-600 hover:bg-rose-700 text-white',
   },
@@ -82,11 +82,11 @@ export function AlertDialog({
                   {cfg.icon}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <Radix.Title className="text-sm font-semibold text-gray-900 dark:text-slate-100 leading-snug">
+                  <Radix.Title className="text-base font-semibold text-gray-900 dark:text-slate-100 leading-snug">
                     {title}
                   </Radix.Title>
                   {description && (
-                    <Radix.Description className="mt-1 text-xs text-gray-500 dark:text-slate-400 leading-relaxed whitespace-pre-line">
+                    <Radix.Description className="mt-1 text-sm text-gray-500 dark:text-slate-400 leading-relaxed whitespace-pre-line">
                       {description}
                     </Radix.Description>
                   )}
@@ -99,14 +99,14 @@ export function AlertDialog({
               {!isErrorOnly && (
                 <Radix.Cancel asChild>
                   <button onClick={handleCancel}
-                    className="px-3.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
+                    className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
                     {cancelLabel ?? 'Cancel'}
                   </button>
                 </Radix.Cancel>
               )}
               <Radix.Action asChild>
                 <button onClick={handleConfirm}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${cfg.confirmBtn}`}>
+                  className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${cfg.confirmBtn}`}>
                   {confirmLabel ?? (isErrorOnly ? 'OK' : 'Confirm')}
                 </button>
               </Radix.Action>

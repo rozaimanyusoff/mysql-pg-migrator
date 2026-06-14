@@ -14,10 +14,10 @@ export default function PgHelpPopover({ top, left, onClose }: Props) {
          style={{ top, left, maxHeight: '80vh' }}
       >
          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">PostgreSQL Quick Reference</p>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={13} /></button>
+            <p className="text-sm font-semibold text-gray-700 uppercase tracking-wide">PostgreSQL Quick Reference</p>
+            <button onClick={onClose} className="text-slate-500 dark:text-slate-400 hover:text-slate-600"><X size={15} /></button>
          </div>
-         <div className="space-y-4 text-xs">
+         <div className="space-y-4 text-sm">
 
             <div>
                <p className="font-semibold text-blue-600 mb-1.5">① Access psql</p>

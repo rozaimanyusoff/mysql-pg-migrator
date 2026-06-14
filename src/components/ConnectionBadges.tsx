@@ -63,14 +63,14 @@ export default function ConnectionBadges() {
                      type="button"
                      onClick={() => goToConnectionPanel(b.label === 'MySQL' ? 'mysql' : 'pg')}
                      key={b.label}
-                     className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium border ${b.connected
+                     className={`flex items-center gap-1.5 text-sm px-2.5 py-1 rounded-full font-medium border ${b.connected
                         ? 'bg-green-50 dark:bg-emerald-950/30 text-green-700 dark:text-emerald-300 border-green-200 dark:border-emerald-800'
                         : 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-400 border-gray-200 dark:border-slate-700'
                         } hover:opacity-90 transition-opacity`}
                   >
                      {b.connected
-                        ? <Plug size={11} className="text-green-500 dark:text-emerald-400" />
-                        : <PlugZap size={11} className="text-gray-300 dark:text-slate-500" />
+                        ? <Plug size={13} className="text-green-500 dark:text-emerald-400" />
+                        : <PlugZap size={13} className="text-slate-400 dark:text-slate-500" />
                      }
                      {b.label}
                      {b.connected && b.detail ? `: ${b.detail}` : ''}

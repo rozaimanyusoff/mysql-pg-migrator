@@ -2,6 +2,298 @@
 
 ---
 
+## 2026-06-14
+- **implement** — Reliability bundle for large-scale scheduled runs: pre-flight, crash-safe/resumable runs, email notify
+  - **Pre-flight check** (`src/lib/migv2/preflight.ts` + `src/pages/api/migv2/preflight.ts`): `runPreflight(job, source, target)` validates a saved job before a long run. Checks source/target connectivity (`SELECT 1`), real per-table source **row counts** (applying the job's range filter + incremental watermark, mirroring runner), target-table existence (`information_schema`), static type/FK sanity (serial→uuid target type, target-only NOT NULL without default, FK-parent ordering), and a duration **ETA** (~2,000 rows/s). Returns `{ ok, totalRows, estimatedSeconds, tables[], globalIssues[] }`. Self-contained DB helpers; no client imports.
+  - **Crash-safe / resumable runs**: `MigRun` gains `heartbeatAt` (stamped each advance loop by the shared driver) + `interrupted`. `reconcileStaleRuns()` in `run-store.ts` marks any `running` run with a heartbeat older than 90s as `failed` + `interrupted` (orphaned by a process restart) — called from `run/status.ts` before listing. New `src/pages/api/migv2/run/resume.ts` reopens an interrupted/failed run, re-arms mid-chunk tables (`running`→`pending`), and continues from saved offsets via the shared driver (idempotent `ON CONFLICT` inserts make re-processing the in-flight chunk safe).
+  - **Shared run plumbing**: extracted `src/lib/migv2/resolve-conns.ts` (`resolveJobConns` — looks up passwords from `dbt_connections` by host/port/user/type; jobs never store passwords) and `src/lib/migv2/run-driver.ts` (`driveRun` — advance loop + heartbeat + watermark persistence + schedule update + email notify). `scheduler/[id]/run.ts` refactored to use both (removed ~80 lines of inline duplication).
+  - **Email notification**: `CronSchedule` gains optional `notifyEmail`. On a scheduled run reaching terminal state, `driveRun` emails a run summary (rows migrated, per-table status, errors) via existing `mailer.ts`. Best-effort — never fails a run.
+  - **Scheduler UI** (`src/pages/scheduler.tsx`): **Pre-flight** button (always available per job) opens a modal with verdict banner, summary stats (tables/rows/ETA/connectivity), global + per-table issues. **Resume** button on failed/aborted runs + an `interrupted` badge. **Notify-email** field in the Add/Edit Schedule form. Poll loop now also runs while any run (not just a schedule) is `running`, covering resumed runs.
+  - Build verified: compiles, 0 type errors; `/api/migv2/preflight` + `/api/migv2/run/resume` registered.
+  - Status: done
+
+- **implement** — Standalone CLI migration-script generator (Node .mjs) + scheduler/sync UX
+  - **Script generator** (`src/lib/migv2/script-generator.ts`): pure function `generateMigrationScript(job)` emits a self-contained Node ESM `.mjs` script that migrates a job's tables with **no running app required**. Depends only on `pg` + `mysql2`. Replicates runner.ts exactly: `seqToUUID` (SHA-256 namespace), `coerceValue`, `transformRow`, `buildWhere`, `buildCreateTableSQL`, chunked read + `ON CONFLICT`/`ON DUPLICATE KEY` insert. Module imports no DB libs (only `import type`).
+    - Generated script CLI: `--table <schema.table>`, `--from`/`--to` (override job filter), `--chunk <n>`, `--resume` (state file `migration-state-<jobId>.json` skips done chunks), `--dry-run` (counts + plan, no writes), `--help`. Passwords are placeholders (`YOUR_SOURCE_PASSWORD`/`YOUR_TARGET_PASSWORD`, or `SOURCE_PASSWORD`/`TARGET_PASSWORD` env). Per-chunk progress `[schema.table] 5000/1000000 (0.5%) — chunk 10`.
+    - MySQL identifier quoting in the generated runtime uses a `BT = String.fromCharCode(96)` constant to avoid backticks inside the `String.raw` template.
+    - Verified: transpiled standalone, generated a sample script, `node --check` passed, `seqToUUID` parity confirmed.
+  - **Route** `src/pages/api/migv2/jobs/export-script.ts`: rewritten to use the new generator and serve `migration-<slug>.mjs` (was a dead Python generator). Removed dead `src/lib/migv2/script-gen.ts` (Python, unwired).
+  - **Migration UI** (`src/pages/migration.tsx`): per-job **Export CLI script** button (Terminal icon) in the saved-jobs sidebar action bar via `handleExportJobScript`. Post-save **toast** (sonner) "Go to Scheduler" → navigates to `/scheduler?highlight=<jobId>`. Incremental-sync **badge** (`⟳ Inc · since <watermark>`) on target table rows when `syncMode==='incremental'`.
+  - **Scheduler UX** (`src/pages/scheduler.tsx`): reads `?highlight=<jobId>` — auto-selects the job and opens the Add Schedule form pre-filled (fires once, then cleans the URL). New **incremental-sync summary** card listing each incremental table, its watermark column, and last-synced value.
+  - **Types** (`types.ts` + `job-store.ts`): `MigJobTableSummary` enriched with `syncMode`/`incrementalCol`/`lastSyncedValue` so the scheduler can render the sync summary without a full-job fetch.
+  - Covers Scenario 1 (save → schedule handoff), Scenario 2 (incremental sync visibility), Scenario 3 (1000+ tables × 1M+ rows via terminal script with resume/row-range).
+  - Build verified: compiles successfully, 0 type errors.
+  - Status: done
+
+- **implement** — MCP Server + AI Diagnostics Agent
+  - **MCP Server** (`mcp/server.mjs`): pure ESM Node.js server using `@modelcontextprotocol/sdk`. Exposes 8 tools Claude can call in conversation:
+    - `list_jobs` — all saved migration jobs with filter settings
+    - `get_job` — full job with table + column mappings
+    - `list_runs` — recent runs with status, row counts, error count (filterable by jobId)
+    - `get_run_status` — detailed per-table states for a run
+    - `get_run_errors` — global + per-table errors for a run
+    - `list_schedules` / `get_schedule` — cron schedule info
+    - `get_failed_tables` — aggregated failure count per table across all runs of a job
+  - Registered via `.mcp.json` at project root — Claude Code picks it up automatically on restart
+  - **AI Diagnostics API** (`src/pages/api/ai/diagnose.ts`): POST endpoint using Anthropic claude-sonnet-4-6. Accepts `error`, `sourceKey`, `targetKey`, `columnMappings`, optional `runId`. Returns structured `DiagnoseResult` (`rootCause`, `explanation`, `suggestedFix`, `columnFixes[]`, `severity`)
+  - **Diagnose UI** in `migration.tsx`: violet Sparkles button appears on failed target table rows that have an error message. Opens a modal that calls `/api/ai/diagnose` and displays the structured diagnosis with severity badge, root cause, explanation, fix steps, and per-column fixes
+  - Added `@modelcontextprotocol/sdk` to dependencies
+  - Build verified: 0 type errors
+  - Files: `mcp/server.mjs`, `.mcp.json`, `src/pages/api/ai/diagnose.ts`, `src/pages/migration.tsx`
+  - Status: done
+
+## 2026-06-13
+- **implement** — Migration: row-range filter UI in Save Job dialog
+  - Added timestamp column + from/to date inputs inside Save Job dialog under a "Row-range filter" section
+  - Fields wired to existing `filterCol`, `filterFrom`, `filterTo` state; inline preview shows the effective filter predicate when a column is entered
+  - Backend was already complete: `types.ts` fields, `runner.ts` `buildWhere`, `run/start.ts`, `scheduler/[id]/run.ts` all pass these through
+  - State is restored when loading a saved job via `handleLoadJob`
+  - Build verified: 0 type errors
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Scheduler module — cron-based migration job runner
+  - New module at `/scheduler` for scheduling and running migration jobs
+  - **Data layer**: `CronSchedule` type added to `src/lib/migv2/types.ts`; `src/lib/migv2/schedule-store.ts` (file-based JSON store at `data/migv2/schedules/`)
+  - **API routes**:
+    - `GET/POST /api/scheduler` — list all schedules, create new schedule
+    - `GET/PATCH/DELETE /api/scheduler/[id]` — read, update (cronExpr, jobId, enabled, lastRun*), delete
+    - `POST /api/scheduler/[id]/run` — trigger a full migration run in the background; resolves connection passwords from `dbt_connections`, creates `MigRun`, calls `advanceRun` in a loop until completion, updates schedule `lastRunAt/lastRunStatus/lastRunId`, returns `{ runId }` immediately
+  - **CLI script** `scripts/run-job.js` — pure Node.js, no compilation; calls `POST /api/scheduler/[id]/run`, then polls `/api/migv2/run/status` every 5s, prints per-table progress, exits 0/1; usage: `node scripts/run-job.js --schedule-id <id>`
+  - **UI** `src/pages/scheduler.tsx`: left panel with schedule list (toggle enable/disable, Run Now, edit, delete), right panel with schedule details + crontab command + run history with per-table progress bars (expandable)
+  - Polling every 3s when a schedule has `lastRunStatus: 'running'`
+  - Cron presets dropdown (12 common schedules) + custom expression input with inline human-readable description
+  - Added `/scheduler` to `Navbar.tsx` MODULE_LABELS and to home page modules list with `Calendar` icon
+  - Status: done
+
+
+- **update** — Home: hide Data Normalization & Flow-to-Database Designer cards
+  - Commented out both entries in the `modules` array in `src/pages/index.tsx` while cron job module is being built
+  - Status: done
+
+- **fix** — Migration: target schema restore when schema doesn't exist yet
+  - Root cause: saved job's `target.schema = "assetdata"` but current target DB only had `"assetmain"` — schema not created yet (tables are created on first run)
+  - Old restore guard `tgtSchemas.includes(restoreSchema)` always failed, leaving `tgtDefaultSchema = "assetmain"` so none of the target rows matched any `tableMaps` entry (`match:0`)
+  - Fix: changed restore effect to depend only on `tgtConnected` (fires once when target connects) and removed the `includes` guard — the schema dropdown already supports a `"(new)"` option for non-existent schemas
+  - File: `src/pages/migration.tsx`
+  - Status: done
+- **implement** — Migration: source→target label on mapped source rows, scroll/highlight, view-data border, progress bar cap
+  - Clicking a source table row (mapped or not) now also scrolls the target panel to its paired target row and flash-highlights it blue for 1.5 s; uses `tgtRowRefs` map + `highlightTgtKey` state + `scrollIntoView({ block: 'nearest' })`
+  - Mapped source table rows now show `→ schema.table` inline label (dim, truncated) pointing to their paired target — table name column is capped at 45% width when a mapping exists so the label always has room
+  - Eye "view data" button on source table rows: always visible (was `opacity-0 group-hover:opacity-100`), added `border border-slate-300 dark:border-slate-500` to match other action buttons
+  - Progress bar in target table rows: capped at `max-w-80` to prevent it from stretching across the full panel on wide screens
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+
+- **revision** — Migration: button border + dark mode text + job restore connections
+  - Added `border` to per-table row icon buttons (Play, Pause, Stop, Resume, Rollback/Undo2, Sync/Inc toggle) — `border-slate-300 dark:border-slate-500` with brighter default text `dark:text-slate-200`
+  - Brightened unset "Set" button in dark mode: `dark:border-slate-500 dark:text-slate-300`
+  - Enlarged and brightened the `→` mapping header arrow: `text-sm font-medium dark:text-slate-300`
+  - Brightened `→` in jobs list panel to `dark:text-slate-400`
+  - Fixed `handleLoadJob` to restore source and target connections: matches saved `sourceMeta`/`targetMeta` (host/port/username/type) against loaded connections and calls `setSrcConnId`/`setTgtConnId` — which triggers `loadSrcDbs`/`loadTgtDbs` to populate DB dropdowns
+  - Added `pendingJobRestoreRef` + `pendingTgtDbRestoreRef` + `srcRestorePendingRef` refs to thread restore data through the async effect chain; `loadSrcDbs` picks up the ref and restores `tableMaps`, `srcDbsSelected`, `selectedMapId`, `srcSchema` without the effect clearing them
+  - Fixed pre-existing type errors: two `showWarning(string)` calls converted to `showWarning({ title, description })` to match updated `AlertDialogOptions` signature
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+- **revision** — Migration: saved job card cleanup
+  - Removed "Export CLI Script" (Terminal) button and `handleExportJobScript` handler — will be replaced by scheduled/cron job module
+  - Removed "Analyze in Schema Studio" (ExternalLink) button and `handleOpenInSchemaStudio` handler
+  - Moved Pencil (rename) and Trash (delete) buttons from bottom action row to the job name header row (beside the name, replacing version number display)
+  - Pencil/Trash only visible in normal state; during rename mode, replaced by ✓ and ✕ confirm/cancel buttons
+  - Removed unused `Terminal`, `ExternalLink` icon imports
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Migration: Set button — mark mapping as ready before run
+  - Added `isSet?: boolean` field to `TableMap` in `src/lib/migv2/types.ts`
+  - Set button added in column mapping header after Truncate checkbox; toggles `isSet` on the selected table map
+  - Unset state: neutral gray border; Set state: green fill with ✓ icon (`bg-emerald-50 border-emerald-300`)
+  - `set` badge (emerald, ✓ icon) shown in target table list rows for tables with `isSet: true`
+  - `startMigration` (Run All): warns and blocks if any included+column-configured table has `!isSet`, listing the table names
+  - `startTableMigration` (per-table run): same guard for individual table runs
+  - `isSet` is part of `TableMap` so it persists when job is saved
+  - Files: `src/lib/migv2/types.ts`, `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration: column mapping header cleanup
+  - Removed sourceDatabase badge (@assets blue pill) and targetAlias input from header
+  - Source→target path text (`schema.table → schema.table`) now centered via `flex-1 justify-center`
+  - Removed `⟳ Full` / `⟳ Incremental` sync mode toggle button from column mapping header (sync mode toggle remains in source table rows)
+  - Renamed `⟳Full` → `⟳Sync` in source table row button label
+  - Incremental watermark config (watermark col + strategy selects) remains in right side of header when incremental mode is active
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Migration: TGT COL combobox — replace datalist with custom portal dropdown
+  - `<datalist>` only shows options that match the current input value (browser filters) — caused only 1 option to show when input already had a value
+  - Replaced with a custom combobox: `<input>` + portal `<div>` dropdown, same pattern as FK picker
+  - On focus: opens dropdown showing ALL target columns (unfiltered), clears filter to show full list
+  - Typing: filters the list by substring match; if no match, shows ✎ new "…" option to create a new column
+  - Click option: sets `targetCol` + auto-sets `targetType` from actual target column rawType; closes picker
+  - States added: `openColPickerIdx`, `colPickerPos`, `colPickerFilter`
+  - Input border: violet (focus/matched), amber (custom new name), gray (empty)
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Migration: column mapping NEW col shows dropdown + inline text input
+  - Previously, unmatched source column names (isCustom=true) branched into an amber text input, hiding the target column dropdown entirely
+  - Now: always show the select dropdown when target columns are available; if value doesn't match any target col, select pins to `__custom__` and an inline amber text input appears alongside it
+  - User can now pick an existing target column from the dropdown to remap (clears custom mode) OR edit the custom column name in the text input
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **remove** — Migration: auto-restore last connections feature removed
+  - Removed auto-select of first two active connections on page load (was `active[0]` → srcConnId, `active[1]` → tgtConnId)
+  - Removed `pendingRestoreRef` + `pendingTgtRef` refs and all their usage in `loadSrcDbs`, src tables effect, `loadTgtDbs`, and tgt tables effect
+  - Simplified `handleLoadJob`: no longer matches job's host/port/username to find connections; just restores table maps directly (`setTableMaps`, `setSelectedMapId`, `setSrcSchema`)
+  - Users now manually select source and target connections; job load only restores the mapping config
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Migration: friendlier connection error messages for src & tgt
+  - Raw pg/mysql2 errors ("timeout expired", "ECONNREFUSED", "password authentication failed") are now mapped to readable messages in both `setSrcError` and `setTgtError` catch handlers in `migration.tsx`
+  - Timeout → "Connection timed out — check host, port & firewall"
+  - Auth errors → "Authentication failed — check credentials"
+  - ECONNREFUSED/refused → "Connection refused — server unreachable"
+  - Fallback: raw message if none match, else "Connection failed"
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+
+- **implement** — Migration: Scenario 4 — target schema drift detection on job load
+  - Selepas `handleLoadJob`, `pendingDriftScanRef.current = true` di-set
+  - `useEffect` mendengar `tgtConnected` — bila target connect dan flag aktif, `scanTargetDrift(tableMaps)` dipanggil
+  - `scanTargetDrift`: untuk setiap `TableMap` dengan `target.table` set, fetch actual target columns via `/api/migv2/columns`, bandingkan dengan saved job column mappings:
+    - `added`: column dalam target tapi tiada dalam job → user boleh include
+    - `removed`: column dalam job tapi tiada dalam target → akan gagal semasa run
+    - `typeChanged`: `targetType` dalam job berbeza dengan actual target type
+  - `TableDrift` + `ColDrift` interface ditambah dalam component
+  - Drift dialog: modal senarai semua drift per table — `−` removed (rose), `+` added (emerald), `~` type changed (amber); butang "Accept" per table atau "Accept all remaps"
+  - `acceptDrift`: remove stale columns, update type-changed columns, add new target-only columns dengan `conversion: 'keep'`; marks `dirty=true`
+  - `acceptAllDrift`: panggil `acceptDrift` untuk semua tables, tutup dialog
+  - "Keep as-is": tutup dialog tanpa ubah mappings
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Migration: Reset session button in Jobs panel header
+  - `RotateCcw` icon button ditambah dalam Jobs panel header (antara jobs count dan Save button), visible hanya bila panel terbuka
+  - Hover: rose tint untuk signal destructive action
+  - Click: `showConfirm` dialog sebelum reset — "This will clear the source and target connections, all table mappings, and the current run. Saved jobs are not affected."
+  - Reset clears: `srcConnId`, `tgtConnId`, `tgtDb`, `srcDbsSelected`, `srcSchema`, `tableMaps`, `selectedMapId`, `colsCache`, `activeJobId`, `dirty`, `currentRun`, `pausedTableIds`, `polling`, `stopRequestedRef`
+  - `showConfirm` ditambah ke `useAlert()` destructure
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+
+- **fix** — Column mapping: FK Reference picker, include column position, UUID default
+  - **FK Reference picker** dipindah ke portal (`createPortal` → `document.body`) menggunakan `position: fixed` — tidak lagi terlindung oleh `overflow-x-auto` pada container column mapping. `fkPickerPos` state menyimpan koordinat butang; picker muncul di atas semua elemen
+  - **Include checkbox** dipindah ke kolum pertama dalam column mapping table (sebelum Src Col)
+  - **UUID conversion tidak lagi default** — `conversion` kini selalu `'keep'` semasa column mapping dimuatkan; `keepLegacyAs` kosong secara default. User perlu pilih `→UUID` secara manual jika diperlukan
+  - Import `createPortal` dari `react-dom` ditambah
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+## 2026-06-12
+- **revision** — Migration: records panel collapsed by default + Eye icon on source tables
+  - Records panel kini tersembunyi secara default (`showRecords = false`); panel dan resize handle dibalut `{showRecords && ...}`
+  - Icon `Eye` ditambah pada setiap row sumber — muncul on hover (`opacity-0 group-hover:opacity-100`); klik membuka records panel dan memilih table tersebut
+  - Butang `✕` ditambah pada header Records untuk tutup panel
+  - Header "Column Mapping" dan "Records" digelapkan: `bg-gray-50 dark:bg-slate-900/60` → `bg-gray-100 dark:bg-slate-800/80`
+  - `Eye` ditambah ke lucide-react imports
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration: remove 2nd-row page header, move Guide to Navbar
+  - 2nd-row `<header>` dalam `migration.tsx` dibuang sepenuhnya (Migration title, dirty badge, table count, Emergency Stop)
+  - `MigrationGuidePopover` + `MIGRATION_GUIDE_SECTIONS` diekstrak ke `src/components/MigrationGuidePopover.tsx`
+  - `Navbar.tsx` kini render `<MigrationGuidePopover />` selepas breadcrumb "Migration" bila `router.pathname === '/migration'`
+  - `Network` icon dibuang dari import migration.tsx (tiada lagi dalam page)
+  - Files: `src/pages/migration.tsx`, `src/components/Navbar.tsx`, `src/components/MigrationGuidePopover.tsx` (new)
+  - Status: done
+
+- **revision** — Migration: run console + header cleanup
+  - `? Guide` popover dipindah ke dalam module title group (sebelah "Migration" heading) — tiada lagi di sebelah kanan header
+  - Run console header (StatusBadge, row count, run ID, Rollback button) dibuang sepenuhnya
+  - Per-table run list sidebar (w-56) dibuang — progress sudah ada dalam target tables panel
+  - Run console kini hanya log pane (200px) dengan butang X kecil di penjuru atas kanan
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+- **revision** — Migration: Saved Jobs panel UX overhaul
+  - **Save Job button pindah ke panel header**: butang "Save Job" dialih dari main page header ke dalam header panel Saved Jobs (icon + label "Save")
+  - **Animated red border**: Save button menunjukkan `animate-pulse border-rose-500` bila `dirty === true` untuk alert visual perubahan belum disimpan
+  - **Migrate button dibuang**: butang "Migrate" dikeluarkan dari header kerana Run All sudah ada di target tables panel; Emergency Stop kekal untuk dipaparkan semasa polling
+  - **Active badge dibuang dari job card**: card yang active sudah cukup dibezakan dengan highlight biru (`border-blue-300 bg-blue-50`) — badge "active" dikeluarkan
+  - **Save icon dalam active card**: bila `activeJobId === job.id && dirty`, icon Save berwarna amber muncul dalam card tersebut (dengan tooltip "Unsaved changes") sebagai indikator perubahan belum disimpan
+  - **Navigation guard**: `useUnsavedGuard` sudah mengendalikan browser refresh (beforeunload) dan in-app navigation (routeChangeStart/routeChangeError) — tiada tambahan diperlukan
+  - File: `src/pages/migration.tsx`
+  - Status: done
+
+
+- **revision** — Migration: target tables panel layout overhaul
+  - **DB + Schema side by side**: DB selector dan schema selector kini dalam satu flex row, menjimatkan ruang vertikal di header
+  - **Run All di row filter**: butang Run All / Stop All dipindah ke dalam row yang sama dengan input filter tables
+  - **Row 1 per table**: checkbox + icon + nama + `[mapped]` badge + `← source.schema.table` (rata kanan)
+  - **Row 2 per table** (mapped tables only): progress bar + % + Nw/Ne | ▶/⏸/■ | ↩ rollback | ⟳Inc/⟳Full toggle | ⚠ error icon + StatusBadge
+  - Sync mode toggle (incremental/full) kini accessible terus di setiap row tanpa perlu masuk column mapping panel
+  - Files: `src/pages/migration.tsx` (target panel section)
+  - Status: done
+
+- **fix** — Migration: Saved Jobs panel kini penuh tinggi — run console tidak lagi menolak panel ke atas
+  - Root cause: run console (`height: 260`) adalah sibling luar kepada body flex-row, menyebabkan body mengecil dan Jobs panel turut dipendekkan
+  - Fix: balut PanelGroup + run console dalam `<div className="flex flex-col flex-1 min-h-0 min-w-0">` yang berasingan; Jobs panel kekal sebagai sibling di luar wrapper ini pada aras flex-row yang sama
+  - Jobs panel kini tidak terjejas langsung apabila run console muncul
+  - File: `src/pages/migration.tsx` (layout restructure ~line 1588)
+  - Status: done
+
+- **implement** — Migration: target table panel UI overhaul
+  - Each mapped target table row now shows **two lines**: (1) name + controls, (2) `← source.schema.table` + live progress bar + `Nw Ne` stats
+  - **Mapped badge** shown on unmapped-run rows; **StatusBadge** replaces it during an active run
+  - **Error icon** (AlertTriangle, rose) per row with tooltip showing error count — sourced from `currentRun.tableStates` or accumulated states
+  - **Play ▶ per table**: starts a single-table run via new `startTableMigration(mapId)` — disabled while any run is polling
+  - **Pause ⏸ / Stop ■ per table**: appear while that table is `running`; pause skips the table in each advance tick via `pausedTableIds` ref; stop calls new `POST /api/migv2/run/stop-table`
+  - **Run All / Stop All** buttons added to target tables toolbar (replaces each other based on `polling` state)
+  - Added `'aborted'` to `TableRunStatus`; `Pause` + `Square` added to lucide imports
+  - New API: `src/pages/api/migv2/run/stop-table.ts`; `runner.ts` + `advance.ts` updated for `pausedTableIds` param
+  - Files: `src/pages/migration.tsx`, `src/lib/migv2/types.ts`, `src/lib/migv2/runner.ts`, `src/pages/api/migv2/run/advance.ts`, `src/pages/api/migv2/run/stop-table.ts`
+  - Status: done
+
+- **update** — Global: replace text-gray on icons with slate equivalents for better light/dark visibility
+  - All `text-gray-N` and `text-gray-N dark:text-slate-M` pairs on icon lines (lines with `size={N}`) replaced with proper slate pairs (darker in light, lighter in dark mode)
+  - Mapping: gray-200/300 → `slate-400 dark:slate-500`, gray-400/500 → `slate-500 dark:slate-400`, gray-600/700 → `slate-600 dark:slate-300`, gray-800/900 → `slate-700 dark:slate-200`
+  - `hover:text-gray-*` on icon buttons converted to `hover:text-slate-*`; existing wrong `dark:text-slate-700/600` (too dark on dark bg) corrected to lighter values
+  - Build clean; zero text-gray remaining on icon elements
+  - Status: done
+
+- **update** — Global: increase all icon sizes by 2
+  - Single-pass perl hash substitution across all `src/**/*.tsx|ts`
+  - Every `size={N}` value bumped +2 (e.g. 10→12, 12→14, 16→18, 36→38); `size={1}` (ReactFlow Background) intentionally skipped
+  - ~686 occurrences updated; build clean
+  - Status: done
+
+- **update** — Global: increase all font sizes by 2px
+  - Single-pass perl hash substitution applied across all `src/**/*.tsx|ts|css`
+  - Mapping: `[8px]→[10px]`, `[9px]→[11px]`, `[10px]→[12px]`, `[11px]→[13px]`, `[13px]→[15px]`, `xs→sm`, `sm→base`, `base→lg`, `lg→xl`, `xl→[22px]`, `4xl→[38px]`
+  - ~1,150 class occurrences updated; build clean
+  - Status: done
+
+
+- **implement** — Migration: animated warning triangle on →UUID keepLegacyAs field
+  - Replaced the earlier banner approach with an inline `AlertTriangle` icon (amber, `animate-pulse`) placed alongside the `old_id` (keepLegacyAs) input
+  - Icon is wrapped in a `Tooltip` that explains →UUID is optional and recommends using `keep` for plain int→int migrations
+  - Files: `src/pages/migration.tsx` (KEEP ORIG cell, ~line 2195)
+  - Status: done
+
+- **implement** — Migration: Emergency Stop button
+  - Added `stopRequestedRef` (useRef) to prevent further `advanceMigration` polling once stop is requested
+  - New API route `POST /api/migv2/run/stop` sets run status to `'aborted'` and records "Migration stopped by user." error
+  - `advance.ts` now returns early for `aborted` runs; client `advanceMigration` checks the ref before scheduling the next advance
+  - Migrate button replaced with animated rose "Emergency Stop" button while polling; reverts to Migrate when idle
+  - Added `aborted` to `RunStatus` union with orange badge + `X` icon in the status chip component
+  - Files: `src/pages/migration.tsx`, `src/pages/api/migv2/run/stop.ts`, `src/pages/api/migv2/run/advance.ts`, `src/lib/migv2/types.ts`
+  - Status: done
+
 ## 2026-06-09
 - **fix** — Data Maintenance Export: make Include option clickable in toolbar
   - Root cause: `incl:` display was a static label (cursor-default, non-interactive) — user had no obvious way to switch between Schema+Data / Schema / Data; only hinted via tooltip "right-click any table"

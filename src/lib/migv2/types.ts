@@ -51,11 +51,28 @@ export interface TableMap {
   columns: ColumnMap[];
   truncateBeforeMigrate: boolean;
   targetAlias?: string | null;               // overrides target.table as the physical table name in SQL
+  isSet?: boolean;             // user confirmed mapping is ready to run
   // Incremental sync
   syncMode?: 'full' | 'incremental';
   incrementalCol?: string | null;            // source column used as high-water mark
   incrementalStrategy?: 'id' | 'timestamp'; // id = append-only insert; timestamp = upsert
   lastSyncedValue?: string | null;          // high-water mark from last completed run
+}
+
+// ── Scheduler ────────────────────────────────────────────────────────────────
+
+export interface CronSchedule {
+  id: string;
+  jobId: string;
+  jobName: string;          // denormalised for display
+  cronExpr: string;         // standard 5-field: "0 2 * * *"
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+  lastRunStatus: 'completed' | 'failed' | 'running' | null;
+  lastRunId: string | null;
+  notifyEmail?: string | null;   // email to notify on completion/failure (optional)
 }
 
 // ── Job ───────────────────────────────────────────────────────────────────────
@@ -71,6 +88,10 @@ export interface MigJob {
   sourceMeta: Omit<MigConn, 'password'>;
   targetMeta: Omit<MigConn, 'password'>;
   tables: TableMap[];
+  // Global row-range filter applied to every table in this job
+  filterCol?: string | null;    // timestamp/date column name (must exist in all source tables)
+  filterFrom?: string | null;   // inclusive lower bound  e.g. "2024-01-01"
+  filterTo?: string | null;     // inclusive upper bound  e.g. "2024-03-31"
 }
 
 export interface MigJobTableSummary {
@@ -80,6 +101,9 @@ export interface MigJobTableSummary {
   sourceDatabase?: string;
   target: { schema: string; table: string };
   targetAlias?: string | null;
+  syncMode?: 'full' | 'incremental';
+  incrementalCol?: string | null;
+  lastSyncedValue?: string | null;
 }
 
 export interface MigJobSummary {
@@ -95,8 +119,8 @@ export interface MigJobSummary {
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
-export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back';
-export type TableRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back';
+export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
+export type TableRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
 
 export interface MigRunTableState {
   id: string;           // = tableMap.id
@@ -126,6 +150,12 @@ export interface MigRun {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  // Liveness: server-driven runs stamp this each advance loop. Used to detect
+  // orphaned runs (process restart mid-run) so they can be resumed.
+  heartbeatAt?: string | null;
+  // true when a 'running' run was reconciled as orphaned (stale heartbeat).
+  // Such runs are marked 'failed' but remain resumable from saved offsets.
+  interrupted?: boolean;
   // store source/target meta (no passwords) for display
   sourceMeta: Omit<MigConn, 'password'>;
   targetMeta: Omit<MigConn, 'password'>;
@@ -134,5 +164,9 @@ export interface MigRun {
   logs: string[];
   totalRows: number;
   migratedRows: number;
+  // Row-range filter snapshot (copied from job at run time)
+  filterCol?: string | null;
+  filterFrom?: string | null;
+  filterTo?: string | null;
   errors: string[];
 }

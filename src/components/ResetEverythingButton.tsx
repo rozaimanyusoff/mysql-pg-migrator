@@ -55,7 +55,7 @@ export default function ResetEverythingButton() {
       title="Reset everything"
       className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
     >
-      <Trash2 size={15} />
+      <Trash2 size={17} />
     </button>
   );
 }

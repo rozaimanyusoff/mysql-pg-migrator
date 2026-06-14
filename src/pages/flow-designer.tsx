@@ -52,7 +52,7 @@ interface RfNodeData { label: string; metadata: NodeMetadata; nodeType: NodeType
 
 function StartNode({ data }: { data: RfNodeData }) {
   return (
-    <div className="flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500 border-2 border-emerald-600 shadow-lg text-white font-bold text-sm select-none">
+    <div className="flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500 border-2 border-emerald-600 shadow-lg text-white font-bold text-base select-none">
       Start
       <Handle type="source" position={Position.Bottom} className="!bg-emerald-700 !w-3 !h-3" />
     </div>
@@ -61,7 +61,7 @@ function StartNode({ data }: { data: RfNodeData }) {
 
 function EndNode({ data }: { data: RfNodeData }) {
   return (
-    <div className="flex items-center justify-center w-20 h-20 rounded-full bg-rose-500 border-2 border-rose-600 shadow-lg text-white font-bold text-sm select-none">
+    <div className="flex items-center justify-center w-20 h-20 rounded-full bg-rose-500 border-2 border-rose-600 shadow-lg text-white font-bold text-base select-none">
       End
       <Handle type="target" position={Position.Top} className="!bg-rose-700 !w-3 !h-3" />
     </div>
@@ -73,10 +73,10 @@ function ProcessNode({ data, selected }: { data: RfNodeData; selected?: boolean 
     <div className={`min-w-[160px] max-w-[220px] rounded-lg border-2 shadow-md bg-blue-50 dark:bg-blue-950 select-none
         ${selected ? 'border-blue-500 ring-2 ring-blue-300 dark:ring-blue-600' : 'border-blue-300 dark:border-blue-700'}`}>
       <Handle type="target" position={Position.Top}    className="!bg-blue-500 !w-3 !h-3" />
-      <div className="px-3 py-2 bg-blue-500 text-white text-xs font-semibold rounded-t-md">Process</div>
-      <div className="px-3 py-2 text-xs font-medium text-blue-900 dark:text-blue-100 leading-tight">{data.label}</div>
+      <div className="px-3 py-2 bg-blue-500 text-white text-sm font-semibold rounded-t-md">Process</div>
+      <div className="px-3 py-2 text-sm font-medium text-blue-900 dark:text-blue-100 leading-tight">{data.label}</div>
       {data.metadata?.businessObject && (
-        <div className="px-3 pb-2 text-[10px] text-blue-600 dark:text-blue-400 italic">{data.metadata.businessObject}</div>
+        <div className="px-3 pb-2 text-[12px] text-blue-600 dark:text-blue-400 italic">{data.metadata.businessObject}</div>
       )}
       <Handle type="source" position={Position.Bottom} className="!bg-blue-500 !w-3 !h-3" />
     </div>
@@ -102,7 +102,7 @@ function DecisionNode({ data, selected }: { data: RfNodeData; selected?: boolean
       </svg>
       {/* Label centered over diamond */}
       <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
-        className="text-xs font-semibold text-amber-300 text-center leading-tight px-8">
+        className="text-sm font-semibold text-amber-300 text-center leading-tight px-8">
         {data.label}
       </div>
     </div>
@@ -114,10 +114,10 @@ function ApprovalNode({ data, selected }: { data: RfNodeData; selected?: boolean
     <div className={`min-w-[160px] max-w-[220px] rounded-xl border-2 shadow-md bg-purple-50 dark:bg-purple-950 select-none
         ${selected ? 'border-purple-500 ring-2 ring-purple-300 dark:ring-purple-600' : 'border-purple-300 dark:border-purple-700'}`}>
       <Handle type="target" position={Position.Top}    className="!bg-purple-500 !w-3 !h-3" />
-      <div className="px-3 py-2 bg-purple-500 text-white text-xs font-semibold rounded-t-xl">Approval</div>
-      <div className="px-3 py-2 text-xs font-medium text-purple-900 dark:text-purple-100 leading-tight">{data.label}</div>
+      <div className="px-3 py-2 bg-purple-500 text-white text-sm font-semibold rounded-t-xl">Approval</div>
+      <div className="px-3 py-2 text-sm font-medium text-purple-900 dark:text-purple-100 leading-tight">{data.label}</div>
       {data.metadata?.actor && (
-        <div className="px-3 pb-2 text-[10px] text-purple-600 dark:text-purple-400">by {data.metadata.actor}</div>
+        <div className="px-3 pb-2 text-[12px] text-purple-600 dark:text-purple-400">by {data.metadata.actor}</div>
       )}
       <Handle type="source" position={Position.Bottom} className="!bg-purple-500 !w-3 !h-3" />
     </div>
@@ -130,8 +130,8 @@ function DataObjectNode({ data, selected }: { data: RfNodeData; selected?: boole
         ${selected ? 'border-cyan-500 ring-2 ring-cyan-300' : 'border-cyan-300 dark:border-cyan-700'}`}
       style={{ borderRadius: '4px 4px 0 0' }}>
       <Handle type="target" position={Position.Top}    className="!bg-cyan-500 !w-3 !h-3" />
-      <div className="px-3 py-2 bg-cyan-500 text-white text-xs font-semibold">Data Object</div>
-      <div className="px-3 py-2 text-xs font-medium text-cyan-900 dark:text-cyan-100">{data.label}</div>
+      <div className="px-3 py-2 bg-cyan-500 text-white text-sm font-semibold">Data Object</div>
+      <div className="px-3 py-2 text-sm font-medium text-cyan-900 dark:text-cyan-100">{data.label}</div>
       <Handle type="source" position={Position.Bottom} className="!bg-cyan-500 !w-3 !h-3" />
     </div>
   );
@@ -148,11 +148,11 @@ function ErdTableNode({ data }: { data: { entity: FtdEntity } }) {
     junction: 'bg-violet-600', log: 'bg-orange-500', audit: 'bg-gray-500', config: 'bg-teal-600',
   };
   return (
-    <div className="min-w-[200px] max-w-[260px] rounded-lg border border-gray-300 dark:border-slate-600 shadow-lg bg-white dark:bg-slate-800 text-xs">
+    <div className="min-w-[200px] max-w-[260px] rounded-lg border border-gray-300 dark:border-slate-600 shadow-lg bg-white dark:bg-slate-800 text-sm">
       <Handle type="target" position={Position.Left}   className="!bg-slate-400 !w-2 !h-2" />
       <Handle type="source" position={Position.Right}  className="!bg-slate-400 !w-2 !h-2" />
       <div className={`px-3 py-1.5 ${catColor[e.category] ?? 'bg-slate-600'} text-white font-bold rounded-t-lg flex items-center gap-1`}>
-        <Table2 size={10} />
+        <Table2 size={12} />
         <span>{e.schemaName}.{e.tableName}</span>
       </div>
       <div className="divide-y divide-gray-100 dark:divide-slate-700">
@@ -162,8 +162,8 @@ function ErdTableNode({ data }: { data: { entity: FtdEntity } }) {
               {f.isPk ? 'PK' : f.isFk ? 'FK' : ''}
             </span>
             <span className={`flex-1 ${f.isPk ? 'font-semibold' : ''} text-gray-800 dark:text-slate-200`}>{f.name}</span>
-            <span className="text-gray-400 dark:text-slate-500 text-[10px]">{f.pgType}</span>
-            {!f.nullable && <span className="text-rose-400 text-[9px]">*</span>}
+            <span className="text-gray-400 dark:text-slate-500 text-[12px]">{f.pgType}</span>
+            {!f.nullable && <span className="text-rose-400 text-[11px]">*</span>}
           </div>
         ))}
       </div>
@@ -251,7 +251,7 @@ function FieldHint({ field }: { field: 'outputData' | 'inputData' }) {
         ref={btnRef}
         type="button"
         onClick={handleOpen}
-        className="ml-1 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-300 dark:bg-slate-600 text-gray-600 dark:text-slate-300 text-[9px] font-bold leading-none hover:bg-blue-400 hover:text-white dark:hover:bg-blue-500 transition-colors align-middle"
+        className="ml-1 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-300 dark:bg-slate-600 text-gray-600 dark:text-slate-300 text-[11px] font-bold leading-none hover:bg-blue-400 hover:text-white dark:hover:bg-blue-500 transition-colors align-middle"
         title="What is this?"
       >?</button>
       {open && (
@@ -263,17 +263,17 @@ function FieldHint({ field }: { field: 'outputData' | 'inputData' }) {
             style={{ top: pos.top, right: pos.right, width: 288, maxHeight: 'calc(100vh - 32px)' }}
             className="fixed z-[9999] rounded-xl border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-2xl p-3 flex flex-col gap-2 text-left overflow-y-auto"
             onClick={e => e.stopPropagation()}>
-            <span className="font-semibold text-xs text-gray-800 dark:text-slate-100">{hint.title}</span>
-            <span className="text-[11px] text-gray-600 dark:text-slate-300 leading-relaxed">{hint.body}</span>
+            <span className="font-semibold text-sm text-gray-800 dark:text-slate-100">{hint.title}</span>
+            <span className="text-[13px] text-gray-600 dark:text-slate-300 leading-relaxed">{hint.body}</span>
             <span className="border-t border-gray-100 dark:border-slate-700 pt-2">
-              <span className="block text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide mb-1.5">Examples</span>
+              <span className="block text-[12px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide mb-1.5">Examples</span>
               {hint.examples.map(ex => (
                 <span key={ex.domain} className="block mb-1.5">
-                  <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">{ex.domain}</span>
-                  <span className="text-[10px] text-gray-400 dark:text-slate-500"> — {ex.node}</span>
+                  <span className="text-[12px] font-semibold text-blue-600 dark:text-blue-400">{ex.domain}</span>
+                  <span className="text-[12px] text-gray-400 dark:text-slate-500"> — {ex.node}</span>
                   <span className="flex flex-wrap gap-1 mt-0.5">
                     {ex.values.map(v => (
-                      <code key={v} className="px-1 py-0.5 rounded bg-gray-100 dark:bg-slate-700 text-[10px] text-gray-700 dark:text-slate-300">{v}</code>
+                      <code key={v} className="px-1 py-0.5 rounded bg-gray-100 dark:bg-slate-700 text-[12px] text-gray-700 dark:text-slate-300">{v}</code>
                     ))}
                   </span>
                 </span>
@@ -296,7 +296,7 @@ function catBadge(cat: string) {
     audit: 'bg-gray-100 text-gray-700 dark:bg-gray-900/40 dark:text-gray-300',
     config: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
   };
-  return <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${cls[cat] ?? 'bg-gray-100 text-gray-600'}`}>{cat}</span>;
+  return <span className={`px-1.5 py-0.5 rounded text-[12px] font-semibold uppercase ${cls[cat] ?? 'bg-gray-100 text-gray-600'}`}>{cat}</span>;
 }
 
 // ─── Step indicator ───────────────────────────────────────────────────────────
@@ -400,7 +400,7 @@ function FlowGuidePopover() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(o => !o)}
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium border transition-colors
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[13px] font-medium border transition-colors
           ${open
             ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
             : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/60 dark:hover:bg-blue-950/20'}`}
@@ -412,22 +412,22 @@ function FlowGuidePopover() {
         <div className="absolute right-0 top-full mt-2 z-[9999] w-[440px] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
             <div className="flex items-center gap-2">
-              <Workflow size={13} className="text-blue-500" />
-              <p className="text-sm font-semibold text-gray-800 dark:text-slate-100">Flow-to-Database Designer — Guide</p>
+              <Workflow size={15} className="text-blue-500" />
+              <p className="text-base font-semibold text-gray-800 dark:text-slate-100">Flow-to-Database Designer — Guide</p>
             </div>
             <button onClick={() => setOpen(false)} className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-200">
-              <X size={13} />
+              <X size={15} />
             </button>
           </div>
           <div className="overflow-y-auto max-h-[70vh] divide-y divide-gray-100 dark:divide-slate-800">
             {FTD_GUIDE_SECTIONS.map(sec => (
               <div key={sec.title} className="px-4 py-3.5 space-y-2">
-                <p className={`text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${sec.color}`}>
+                <p className={`text-[13px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${sec.color}`}>
                   <span>{sec.icon}</span> {sec.title}
                 </p>
                 <ul className="space-y-1.5">
                   {sec.body.map((line, i) => (
-                    <li key={i} className="flex gap-2 text-xs text-gray-600 dark:text-slate-300 leading-relaxed">
+                    <li key={i} className="flex gap-2 text-sm text-gray-600 dark:text-slate-300 leading-relaxed">
                       <span className="text-gray-300 dark:text-slate-600 shrink-0 mt-0.5">–</span>
                       {line}
                     </li>
@@ -795,10 +795,10 @@ export default function FlowDesignerPage() {
           {/* Header — same pattern as other modules */}
           <header className="shrink-0 sticky top-12 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
             <div className="flex items-center gap-3 shrink-0">
-              <Workflow size={18} className="text-blue-600" />
+              <Workflow size={20} className="text-blue-600" />
               <div>
-                <h1 className="font-bold text-sm text-gray-900 dark:text-slate-100">Flow-to-Database Designer</h1>
-                <p className="text-xs text-gray-500 dark:text-slate-400">Design a business process → generate PostgreSQL schema &amp; Drizzle ORM</p>
+                <h1 className="font-bold text-base text-gray-900 dark:text-slate-100">Flow-to-Database Designer</h1>
+                <p className="text-sm text-gray-500 dark:text-slate-400">Design a business process → generate PostgreSQL schema &amp; Drizzle ORM</p>
               </div>
             </div>
             <div className="ml-auto flex items-center gap-3 shrink-0">
@@ -809,10 +809,10 @@ export default function FlowDesignerPage() {
           {/* Projects */}
           <div className="max-w-4xl mx-auto p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Projects</h2>
+              <h2 className="text-xl font-semibold">Projects</h2>
               <button onClick={() => setShowNewProj(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
-                <Plus size={14} /> New Project
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-base font-medium hover:bg-blue-700">
+                <Plus size={16} /> New Project
               </button>
             </div>
 
@@ -826,37 +826,37 @@ export default function FlowDesignerPage() {
                     { label: 'DB Schema Name', key: 'schemaName', placeholder: 'app' },
                   ].map(f => (
                     <div key={f.key}>
-                      <label className="block text-xs font-medium mb-1">{f.label}</label>
+                      <label className="block text-sm font-medium mb-1">{f.label}</label>
                       <input value={(newProjForm as Record<string,string>)[f.key]}
                         onChange={e => setNewProjForm(p => ({ ...p, [f.key]: e.target.value }))}
                         placeholder={f.placeholder}
-                        className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-base" />
                     </div>
                   ))}
                   <div className="col-span-2">
-                    <label className="block text-xs font-medium mb-1">Description</label>
+                    <label className="block text-sm font-medium mb-1">Description</label>
                     <textarea value={newProjForm.description}
                       onChange={e => setNewProjForm(p => ({ ...p, description: e.target.value }))}
                       rows={2} placeholder="Briefly describe the business domain…"
-                      className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-base" />
                   </div>
                 </div>
                 <div className="flex gap-3 mt-4">
                   <button onClick={createProject} disabled={projLoading}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
-                    {projLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Create
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-base font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
+                    {projLoading ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Create
                   </button>
                   <button onClick={() => setShowNewProj(false)}
-                    className="px-4 py-2 bg-gray-200 dark:bg-slate-700 rounded-lg text-sm">Cancel</button>
+                    className="px-4 py-2 bg-gray-200 dark:bg-slate-700 rounded-lg text-base">Cancel</button>
                 </div>
               </div>
             )}
 
             {projects.length === 0 && !showNewProj && (
               <div className="text-center py-20 text-gray-400 dark:text-slate-500">
-                <Workflow size={40} className="mx-auto mb-3 opacity-30" />
+                <Workflow size={42} className="mx-auto mb-3 opacity-30" />
                 <p className="font-medium">No projects yet</p>
-                <p className="text-sm mt-1">Create a project to start designing your database from a business process.</p>
+                <p className="text-base mt-1">Create a project to start designing your database from a business process.</p>
               </div>
             )}
 
@@ -875,29 +875,29 @@ export default function FlowDesignerPage() {
                               if (e.key === 'Enter') void renameProject(p.id, renameProjVal);
                               if (e.key === 'Escape') setRenamingProjId(null);
                             }}
-                            className="flex-1 text-sm font-semibold bg-white dark:bg-slate-700 border border-blue-400 rounded px-2 py-0.5 text-gray-900 dark:text-slate-100 outline-none min-w-0"
+                            className="flex-1 text-base font-semibold bg-white dark:bg-slate-700 border border-blue-400 rounded px-2 py-0.5 text-gray-900 dark:text-slate-100 outline-none min-w-0"
                           />
-                          <button onClick={() => void renameProject(p.id, renameProjVal)} className="p-0.5 text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded transition-colors"><Check size={13} /></button>
-                          <button onClick={() => setRenamingProjId(null)} className="p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"><X size={13} /></button>
+                          <button onClick={() => void renameProject(p.id, renameProjVal)} className="p-0.5 text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded transition-colors"><Check size={15} /></button>
+                          <button onClick={() => setRenamingProjId(null)} className="p-0.5 text-slate-500 dark:text-slate-400 hover:text-slate-600 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"><X size={15} /></button>
                         </div>
                       ) : (
-                        <h3 className="font-semibold text-base truncate">{p.name}</h3>
+                        <h3 className="font-semibold text-lg truncate">{p.name}</h3>
                       )}
-                      {p.domain && <p className="text-xs text-blue-500 mt-0.5">{p.domain}</p>}
+                      {p.domain && <p className="text-sm text-blue-500 mt-0.5">{p.domain}</p>}
                     </div>
                     <div className="flex items-center gap-0.5 shrink-0">
                       {renamingProjId !== p.id && (
-                        <button onClick={() => { setRenamingProjId(p.id); setRenameProjVal(p.name); }} className="p-1.5 text-gray-400 hover:text-blue-500 transition-colors"><Edit3 size={13} /></button>
+                        <button onClick={() => { setRenamingProjId(p.id); setRenameProjVal(p.name); }} className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors"><Edit3 size={15} /></button>
                       )}
-                      <button onClick={() => deleteProject(p.id)} className="p-1.5 text-gray-400 hover:text-rose-500 transition-colors"><Trash2 size={14} /></button>
+                      <button onClick={() => deleteProject(p.id)} className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button>
                     </div>
                   </div>
-                  {p.description && <p className="text-xs text-gray-500 dark:text-slate-400 mb-3 line-clamp-2">{p.description}</p>}
+                  {p.description && <p className="text-sm text-gray-500 dark:text-slate-400 mb-3 line-clamp-2">{p.description}</p>}
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-gray-400 dark:text-slate-500">Schema: <code>{p.schema_name ?? p.schemaName}</code></span>
+                    <span className="text-[13px] text-gray-400 dark:text-slate-500">Schema: <code>{p.schema_name ?? p.schemaName}</code></span>
                     <button onClick={() => openProject(p)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700">
-                      Open <ArrowRight size={12} />
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+                      Open <ArrowRight size={14} />
                     </button>
                   </div>
                 </div>
@@ -920,8 +920,8 @@ export default function FlowDesignerPage() {
       <Head><title>{activeProject.name} — Flow Designer</title></Head>
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-slate-800 text-white rounded-xl shadow-xl text-sm flex items-center gap-2">
-          <Info size={14} /> {toast}
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-slate-800 text-white rounded-xl shadow-xl text-base flex items-center gap-2">
+          <Info size={16} /> {toast}
         </div>
       )}
 
@@ -930,13 +930,13 @@ export default function FlowDesignerPage() {
         <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-4 py-3 flex items-center gap-3">
           <button onClick={() => setActive(null)}
             className="p-1.5 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
-            <ArrowLeft size={16} />
+            <ArrowLeft size={18} />
           </button>
           <div className="h-6 w-px bg-gray-200 dark:bg-slate-700 shrink-0" />
-          <Workflow size={16} className="text-blue-600 shrink-0" />
+          <Workflow size={18} className="text-blue-600 shrink-0" />
           <div className="shrink-0 min-w-0">
-            <h1 className="font-bold text-sm text-gray-900 dark:text-slate-100 truncate leading-tight">{activeProject.name}</h1>
-            <p className="text-[10px] text-gray-500 dark:text-slate-400 leading-tight">
+            <h1 className="font-bold text-base text-gray-900 dark:text-slate-100 truncate leading-tight">{activeProject.name}</h1>
+            <p className="text-[12px] text-gray-500 dark:text-slate-400 leading-tight">
               Schema: <code className="font-mono">{activeProject.schema_name ?? activeProject.schemaName}</code>
               {activeProject.domain && <> · {activeProject.domain}</>}
             </p>
@@ -946,11 +946,11 @@ export default function FlowDesignerPage() {
           <div className="flex items-center gap-0.5 overflow-x-auto">
             {STEPS.map(s => (
               <button key={s.n} onClick={() => setStep(s.n as Step)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors
                   ${step === s.n
                     ? 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
                     : 'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-800 dark:hover:text-slate-200'}`}>
-                <s.icon size={12} />
+                <s.icon size={14} />
                 <span className="hidden sm:inline">{s.label}</span>
                 <span className="inline sm:hidden">{s.n}</span>
               </button>
@@ -969,7 +969,7 @@ export default function FlowDesignerPage() {
             <div className="flex h-full">
               {/* Node palette */}
               <div className="w-44 flex-shrink-0 border-r border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 flex flex-col gap-2 overflow-y-auto">
-                <p className="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-1">Add Node</p>
+                <p className="text-[12px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-1">Add Node</p>
                 {([
                   { type: 'start',       label: 'Start',        cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
                   { type: 'process',     label: 'Process',      cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
@@ -979,21 +979,21 @@ export default function FlowDesignerPage() {
                   { type: 'end',         label: 'End',          cls: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' },
                 ] as { type: NodeType; label: string; cls: string }[]).map(nt => (
                   <button key={nt.type} onClick={() => addNode(nt.type)}
-                    className={`w-full px-3 py-2 rounded-lg text-xs font-medium text-left ${nt.cls} hover:opacity-80 transition-opacity`}>
+                    className={`w-full px-3 py-2 rounded-lg text-sm font-medium text-left ${nt.cls} hover:opacity-80 transition-opacity`}>
                     + {nt.label}
                   </button>
                 ))}
                 <div className="border-t border-gray-200 dark:border-slate-600 my-2" />
                 <button onClick={saveCanvas} disabled={canvasSaving}
-                  className="flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-lg text-xs font-medium hover:bg-gray-200 dark:hover:bg-slate-600 disabled:opacity-50">
-                  {canvasSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save
+                  className="flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-slate-600 disabled:opacity-50">
+                  {canvasSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
                 </button>
                 <button onClick={analyzeFlow} disabled={analyzing}
-                  className="flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:opacity-50">
-                  {analyzing ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Analyze Flow
+                  className="flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+                  {analyzing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Analyze Flow
                 </button>
                 <div className="border-t border-gray-200 dark:border-slate-600 my-2" />
-                <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-tight">
+                <p className="text-[12px] text-gray-400 dark:text-slate-500 leading-tight">
                   Click a node to edit its metadata. Connect nodes by dragging from the handles.
                 </p>
               </div>
@@ -1019,17 +1019,17 @@ export default function FlowDesignerPage() {
                 <div className="w-72 flex-shrink-0 border-l border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 overflow-y-auto flex flex-col gap-3"
                   onKeyDown={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-sm">Node Metadata</h3>
+                    <h3 className="font-semibold text-base">Node Metadata</h3>
                     <div className="flex gap-1">
-                      <button onClick={deleteSelectedNode} className="p-1 text-rose-400 hover:text-rose-600"><Trash2 size={14} /></button>
-                      <button onClick={() => setSelectedNode(null)} className="p-1 text-gray-400 hover:text-gray-600"><X size={14} /></button>
+                      <button onClick={deleteSelectedNode} className="p-1 text-rose-400 hover:text-rose-600"><Trash2 size={16} /></button>
+                      <button onClick={() => setSelectedNode(null)} className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-600"><X size={16} /></button>
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-medium text-gray-500 dark:text-slate-400 mb-1">Label</label>
+                    <label className="block text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1">Label</label>
                     <input value={labelEdit} onChange={e => setLabelEdit(e.target.value)}
-                      className="w-full px-2 py-1.5 text-xs rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900" />
+                      className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900" />
                   </div>
 
                   {[
@@ -1040,19 +1040,19 @@ export default function FlowDesignerPage() {
                     { key: 'remarks',        label: 'Remarks',          placeholder: 'Additional notes…' },
                   ].map(f => (
                     <div key={f.key}>
-                      <label className="block text-[10px] font-medium text-gray-500 dark:text-slate-400 mb-1">{f.label}</label>
+                      <label className="block text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1">{f.label}</label>
                       <input value={(metaForm as Record<string,string>)[f.key] ?? ''}
                         onChange={e => setMetaForm(m => ({ ...m, [f.key]: e.target.value }))}
                         placeholder={f.placeholder}
-                        className="w-full px-2 py-1.5 text-xs rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900" />
+                        className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900" />
                     </div>
                   ))}
 
                   <div>
-                    <label className="block text-[10px] font-medium text-gray-500 dark:text-slate-400 mb-1">Operation Type</label>
+                    <label className="block text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1">Operation Type</label>
                     <select value={metaForm.operationType ?? ''}
                       onChange={e => setMetaForm(m => ({ ...m, operationType: e.target.value as NodeMetadata['operationType'] || undefined }))}
-                      className="w-full px-2 py-1.5 text-xs rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900">
+                      className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900">
                       <option value="">— auto-detect —</option>
                       {OPERATION_TYPES.map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
@@ -1064,17 +1064,17 @@ export default function FlowDesignerPage() {
                     { key: 'decisionCondition', label: 'Decision Condition', placeholder: 'e.g. Amount > RM 5000' },
                   ].map(f => (
                     <div key={f.key}>
-                      <label className="block text-[10px] font-medium text-gray-500 dark:text-slate-400 mb-1">{f.label}</label>
+                      <label className="block text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1">{f.label}</label>
                       <input value={(metaForm as Record<string,string>)[f.key] ?? ''}
                         onChange={e => setMetaForm(m => ({ ...m, [f.key]: e.target.value }))}
                         placeholder={f.placeholder}
-                        className="w-full px-2 py-1.5 text-xs rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900" />
+                        className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900" />
                     </div>
                   ))}
 
                   {/* Output Data */}
                   <div>
-                    <label className="block text-[10px] font-medium text-gray-500 dark:text-slate-400 mb-1">
+                    <label className="block text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1">
                       Output / Produced Data <FieldHint field="outputData" /> <span className="text-gray-400">(one per line)</span>
                     </label>
                     <textarea
@@ -1083,12 +1083,12 @@ export default function FlowDesignerPage() {
                       onBlur={e => setMetaForm(m => ({ ...m, outputData: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) }))}
                       onKeyDown={e => e.stopPropagation()}
                       rows={4} placeholder={'request_ref_no\nrequested_by\nstatus'}
-                      className="w-full px-2 py-1.5 text-xs rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 font-mono" />
+                      className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 font-mono" />
                   </div>
 
                   {/* Input Data */}
                   <div>
-                    <label className="block text-[10px] font-medium text-gray-500 dark:text-slate-400 mb-1">
+                    <label className="block text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1">
                       Input / Referenced Data <FieldHint field="inputData" /> <span className="text-gray-400">(one per line)</span>
                     </label>
                     <textarea
@@ -1097,11 +1097,11 @@ export default function FlowDesignerPage() {
                       onBlur={e => setMetaForm(m => ({ ...m, inputData: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) }))}
                       onKeyDown={e => e.stopPropagation()}
                       rows={3} placeholder={'purchase_id\nitem_id'}
-                      className="w-full px-2 py-1.5 text-xs rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 font-mono" />
+                      className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 font-mono" />
                   </div>
 
                   <button onClick={applyMeta}
-                    className="w-full py-2 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700">
+                    className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">
                     Apply Changes
                   </button>
                 </div>
@@ -1115,23 +1115,23 @@ export default function FlowDesignerPage() {
               <div className="max-w-5xl mx-auto">
                 <div className="flex items-center justify-between mb-5">
                   <div>
-                    <h2 className="text-lg font-bold">Generated Data Flow</h2>
-                    <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">Review how each process step interacts with data. Go back to add metadata if steps look incomplete.</p>
+                    <h2 className="text-xl font-bold">Generated Data Flow</h2>
+                    <p className="text-base text-gray-500 dark:text-slate-400 mt-0.5">Review how each process step interacts with data. Go back to add metadata if steps look incomplete.</p>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => setStep(1)} className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-700">
-                      <ChevronLeft size={14} /> Canvas
+                    <button onClick={() => setStep(1)} className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-base hover:bg-gray-50 dark:hover:bg-slate-700">
+                      <ChevronLeft size={16} /> Canvas
                     </button>
                     <button onClick={() => setStep(3)} disabled={!entities.length}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">
-                      Review Entities <ChevronRight size={14} />
+                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-base font-medium hover:bg-blue-700 disabled:opacity-40">
+                      Review Entities <ChevronRight size={16} />
                     </button>
                   </div>
                 </div>
 
                 {dataFlows.length === 0 ? (
                   <div className="text-center py-20 text-gray-400">
-                    <GitBranch size={36} className="mx-auto mb-3 opacity-30" />
+                    <GitBranch size={38} className="mx-auto mb-3 opacity-30" />
                     <p>No data flow generated yet. Go back to Canvas and click <strong>Analyze Flow</strong>.</p>
                   </div>
                 ) : (
@@ -1139,19 +1139,19 @@ export default function FlowDesignerPage() {
                     {dataFlows.map((df, i) => (
                       <div key={df.node_id ?? i} className="p-4 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                         <div className="flex items-center gap-3 mb-3">
-                          <span className="w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-bold flex-shrink-0">
+                          <span className="w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm font-bold flex-shrink-0">
                             {i + 1}
                           </span>
-                          <h3 className="font-semibold text-sm">{df.node_label}</h3>
-                          <span className="px-2 py-0.5 bg-gray-100 dark:bg-slate-700 rounded text-xs font-mono font-bold text-gray-600 dark:text-slate-300">
+                          <h3 className="font-semibold text-base">{df.node_label}</h3>
+                          <span className="px-2 py-0.5 bg-gray-100 dark:bg-slate-700 rounded text-sm font-mono font-bold text-gray-600 dark:text-slate-300">
                             {df.operation}
                           </span>
                           {df.business_object && (
-                            <span className="px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 rounded text-xs font-mono">{df.business_object}</span>
+                            <span className="px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 rounded text-sm font-mono">{df.business_object}</span>
                           )}
-                          {df.actor && <span className="text-xs text-gray-500 dark:text-slate-400 ml-auto">by {df.actor}</span>}
+                          {df.actor && <span className="text-sm text-gray-500 dark:text-slate-400 ml-auto">by {df.actor}</span>}
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           {[
                             { label: 'Data Created',    fields: df.data_created,    color: 'text-emerald-600 dark:text-emerald-400' },
                             { label: 'Data Updated',    fields: df.data_updated,    color: 'text-blue-600 dark:text-blue-400' },
@@ -1161,14 +1161,14 @@ export default function FlowDesignerPage() {
                             <div key={col.label}>
                               <p className={`font-semibold mb-1 ${col.color}`}>{col.label}</p>
                               {(col.fields ?? []).length > 0
-                                ? (col.fields ?? []).map((f: string) => <div key={f} className="font-mono text-[11px] text-gray-700 dark:text-slate-300">{f}</div>)
+                                ? (col.fields ?? []).map((f: string) => <div key={f} className="font-mono text-[13px] text-gray-700 dark:text-slate-300">{f}</div>)
                                 : <span className="text-gray-300 dark:text-slate-600 italic">none</span>
                               }
                             </div>
                           ))}
                         </div>
                         {(df.status_before || df.status_after) && (
-                          <div className="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400">
+                          <div className="mt-2 flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400">
                             Status: <code>{df.status_before ?? '?'}</code> → <code>{df.status_after ?? '?'}</code>
                           </div>
                         )}
@@ -1186,14 +1186,14 @@ export default function FlowDesignerPage() {
               {/* Entity list */}
               <div className="w-72 flex-shrink-0 border-r border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-y-auto">
                 <div className="p-3 border-b border-gray-200 dark:border-slate-700 flex items-center gap-2">
-                  <h3 className="font-semibold text-sm flex-1">Entities ({entities.length})</h3>
+                  <h3 className="font-semibold text-base flex-1">Entities ({entities.length})</h3>
                   <button onClick={confirmAll} title="Confirm all"
-                    className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg"><CheckCircle2 size={14} /></button>
+                    className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg"><CheckCircle2 size={16} /></button>
                 </div>
                 <div className="p-2 space-y-1">
                   {entities.map(e => (
                     <button key={e.id} onClick={() => setSelEntity(e)}
-                      className={`w-full text-left px-3 py-2.5 rounded-lg text-xs transition-colors
+                      className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors
                         ${selectedEntity?.id === e.id ? 'bg-blue-50 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700' : 'hover:bg-gray-50 dark:hover:bg-slate-700'}
                         ${e.rejected ? 'opacity-40 line-through' : ''}
                         ${e.confirmed && !e.rejected ? 'border-l-2 border-emerald-500' : ''}`}>
@@ -1211,7 +1211,7 @@ export default function FlowDesignerPage() {
               <div className="flex-1 overflow-y-auto p-5">
                 {!selectedEntity ? (
                   <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-slate-500">
-                    <Table2 size={36} className="opacity-30 mb-3" />
+                    <Table2 size={38} className="opacity-30 mb-3" />
                     <p>Select an entity from the list to review and confirm its fields.</p>
                   </div>
                 ) : (
@@ -1222,43 +1222,43 @@ export default function FlowDesignerPage() {
                         <div className="flex items-center gap-3 mb-1">
                           <input value={selectedEntity.displayName}
                             onChange={e => setSelEntity(s => s ? { ...s, displayName: e.target.value } : null)}
-                            className="text-xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 outline-none dark:text-white" />
+                            className="text-[22px] font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 outline-none dark:text-white" />
                           {catBadge(selectedEntity.category)}
                         </div>
-                        <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-slate-400">
+                        <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400">
                           <code>{selectedEntity.schemaName}.{selectedEntity.tableName}</code>
                           <select value={selectedEntity.category}
                             onChange={e => setSelEntity(s => s ? { ...s, category: e.target.value as FtdEntity['category'] } : null)}
-                            className="px-2 py-1 rounded border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs">
+                            className="px-2 py-1 rounded border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
                             {ENTITY_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </div>
                         <textarea value={selectedEntity.description}
                           onChange={e => setSelEntity(s => s ? { ...s, description: e.target.value } : null)}
                           rows={2} placeholder="Describe this entity…"
-                          className="w-full mt-2 px-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-900" />
+                          className="w-full mt-2 px-2 py-1.5 text-sm rounded-md border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-900" />
                       </div>
                       <div className="flex flex-col gap-2">
                         <button onClick={() => updateEntity({ ...selectedEntity!, confirmed: true, rejected: false })}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700">
-                          <CheckCircle2 size={12} /> Confirm
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">
+                          <CheckCircle2 size={14} /> Confirm
                         </button>
                         <button onClick={() => updateEntity({ ...selectedEntity!, rejected: true, confirmed: false })}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300 rounded-lg text-xs font-medium hover:bg-rose-200 dark:hover:bg-rose-900/50">
-                          <XCircle size={12} /> Reject
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300 rounded-lg text-sm font-medium hover:bg-rose-200 dark:hover:bg-rose-900/50">
+                          <XCircle size={14} /> Reject
                         </button>
                         <button onClick={() => updateEntity(selectedEntity!)} disabled={entitySaving}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-lg text-xs font-medium hover:bg-gray-200 dark:hover:bg-slate-600 disabled:opacity-50">
-                          {entitySaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-slate-600 disabled:opacity-50">
+                          {entitySaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
                         </button>
                       </div>
                     </div>
 
                     {/* Fields table */}
                     <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
-                      <table className="w-full text-xs">
+                      <table className="w-full text-sm">
                         <thead>
-                          <tr className="bg-gray-50 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 text-[11px] uppercase tracking-wide">
+                          <tr className="bg-gray-50 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 text-[13px] uppercase tracking-wide">
                             <th className="px-3 py-2 text-left w-8">#</th>
                             <th className="px-3 py-2 text-left">Column</th>
                             <th className="px-3 py-2 text-left">Type</th>
@@ -1285,7 +1285,7 @@ export default function FlowDesignerPage() {
                                   onChange={e => setSelEntity(s => s ? {
                                     ...s, fields: s.fields.map((fld, i) => i === fi ? { ...fld, pgType: e.target.value } : fld)
                                   } : null)}
-                                  className="bg-transparent text-gray-600 dark:text-slate-400 text-[11px] border-none outline-none cursor-pointer">
+                                  className="bg-transparent text-gray-600 dark:text-slate-400 text-[13px] border-none outline-none cursor-pointer">
                                   {PG_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                                   {!PG_TYPES.includes(f.pgType) && <option value={f.pgType}>{f.pgType}</option>}
                                 </select>
@@ -1309,7 +1309,7 @@ export default function FlowDesignerPage() {
                                   onChange={e => setSelEntity(s => s ? {
                                     ...s, fields: s.fields.map((fld, i) => i === fi ? { ...fld, defaultValue: e.target.value || undefined } : fld)
                                   } : null)}
-                                  className="w-full bg-transparent font-mono text-gray-500 dark:text-slate-500 text-[11px] border-b border-transparent hover:border-gray-300 focus:border-blue-500 outline-none" />
+                                  className="w-full bg-transparent font-mono text-gray-500 dark:text-slate-500 text-[13px] border-b border-transparent hover:border-gray-300 focus:border-blue-500 outline-none" />
                               </td>
                             </tr>
                           ))}
@@ -1320,8 +1320,8 @@ export default function FlowDesignerPage() {
                         <button onClick={() => setSelEntity(s => s ? {
                           ...s, fields: [...s.fields, { id: uid(), name: 'new_column', pgType: 'VARCHAR(255)', nullable: true, isPk: false, isFk: false, isUnique: false }]
                         } : null)}
-                          className="text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1">
-                          <Plus size={12} /> Add Column
+                          className="text-sm text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1">
+                          <Plus size={14} /> Add Column
                         </button>
                       </div>
                     </div>
@@ -1337,58 +1337,58 @@ export default function FlowDesignerPage() {
               <div className="max-w-4xl mx-auto">
                 <div className="flex items-center justify-between mb-5">
                   <div>
-                    <h2 className="text-lg font-bold">Suggested Relationships</h2>
-                    <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">Confirm, reject, or add custom relationships between entities.</p>
+                    <h2 className="text-xl font-bold">Suggested Relationships</h2>
+                    <p className="text-base text-gray-500 dark:text-slate-400 mt-0.5">Confirm, reject, or add custom relationships between entities.</p>
                   </div>
                   <div className="flex gap-2">
                     <button onClick={() => setShowAddRel(true)}
-                      className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-700">
-                      <Plus size={14} /> Add
+                      className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-base hover:bg-gray-50 dark:hover:bg-slate-700">
+                      <Plus size={16} /> Add
                     </button>
                     <button onClick={buildErd} disabled={confirmedRels.length === 0 && confirmedEntities.length === 0}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">
-                      Generate ERD <ChevronRight size={14} />
+                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-base font-medium hover:bg-blue-700 disabled:opacity-40">
+                      Generate ERD <ChevronRight size={16} />
                     </button>
                   </div>
                 </div>
 
                 {showAddRel && (
                   <div className="mb-5 p-4 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40">
-                    <h3 className="font-semibold text-sm mb-3">Add Relationship</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <h3 className="font-semibold text-base mb-3">Add Relationship</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-base">
                       {[
                         { label: 'Source Entity', key: 'sourceEntity' },
                         { label: 'Target Entity', key: 'targetEntity' },
                         { label: 'FK Column', key: 'foreignKeyColumn' },
                       ].map(f => (
                         <div key={f.key}>
-                          <label className="block text-xs font-medium mb-1">{f.label}</label>
+                          <label className="block text-sm font-medium mb-1">{f.label}</label>
                           <input value={(newRelForm as Record<string,string|undefined>)[f.key] ?? ''}
                             onChange={e => setNewRelForm(r => ({ ...r, [f.key]: e.target.value }))}
                             list={f.key === 'sourceEntity' || f.key === 'targetEntity' ? 'entity-list' : undefined}
-                            className="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs" />
+                            className="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
                         </div>
                       ))}
                       <div>
-                        <label className="block text-xs font-medium mb-1">Type</label>
+                        <label className="block text-sm font-medium mb-1">Type</label>
                         <select value={newRelForm.relationshipType ?? 'one_to_many'}
                           onChange={e => setNewRelForm(r => ({ ...r, relationshipType: e.target.value as FtdRelationship['relationshipType'] }))}
-                          className="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs">
+                          className="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
                           {['one_to_one','one_to_many','many_to_many'].map(t => <option key={t} value={t}>{t.replace(/_/g,' ')}</option>)}
                         </select>
                       </div>
                     </div>
                     <datalist id="entity-list">{entities.map(e => <option key={e.tableName} value={e.tableName} />)}</datalist>
                     <div className="flex gap-2 mt-3">
-                      <button onClick={addRelationship} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700"><Plus size={12} className="inline mr-1" />Add</button>
-                      <button onClick={() => setShowAddRel(false)} className="px-3 py-1.5 bg-gray-200 dark:bg-slate-700 rounded-lg text-xs">Cancel</button>
+                      <button onClick={addRelationship} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Plus size={14} className="inline mr-1" />Add</button>
+                      <button onClick={() => setShowAddRel(false)} className="px-3 py-1.5 bg-gray-200 dark:bg-slate-700 rounded-lg text-sm">Cancel</button>
                     </div>
                   </div>
                 )}
 
                 {relationships.length === 0 ? (
                   <div className="text-center py-20 text-gray-400 dark:text-slate-500">
-                    <Network size={36} className="mx-auto mb-3 opacity-30" />
+                    <Network size={38} className="mx-auto mb-3 opacity-30" />
                     <p>No relationships suggested. Run "Analyze Flow" first, or add relationships manually.</p>
                   </div>
                 ) : (
@@ -1399,22 +1399,22 @@ export default function FlowDesignerPage() {
                           : r.rejected ? 'border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/20 opacity-50'
                           : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800'}`}>
                         <div className="flex items-center gap-3 flex-wrap">
-                          <code className="text-sm font-bold text-blue-600 dark:text-blue-400">{r.sourceEntity}</code>
-                          <ArrowRight size={14} className="text-gray-400" />
-                          <code className="text-sm font-bold text-blue-600 dark:text-blue-400">{r.targetEntity}</code>
-                          <span className="px-2 py-0.5 bg-gray-100 dark:bg-slate-700 rounded text-xs font-mono">{r.relationshipType?.replace(/_/g,' ')}</span>
-                          <span className={`px-2 py-0.5 rounded text-xs ${r.cardinality === 'mandatory' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' : 'bg-gray-100 text-gray-600 dark:bg-slate-700 dark:text-slate-400'}`}>{r.cardinality}</span>
-                          {r.foreignKeyColumn && <code className="text-xs text-gray-500 dark:text-slate-400">via {r.foreignKeyColumn}</code>}
+                          <code className="text-base font-bold text-blue-600 dark:text-blue-400">{r.sourceEntity}</code>
+                          <ArrowRight size={16} className="text-slate-500 dark:text-slate-400" />
+                          <code className="text-base font-bold text-blue-600 dark:text-blue-400">{r.targetEntity}</code>
+                          <span className="px-2 py-0.5 bg-gray-100 dark:bg-slate-700 rounded text-sm font-mono">{r.relationshipType?.replace(/_/g,' ')}</span>
+                          <span className={`px-2 py-0.5 rounded text-sm ${r.cardinality === 'mandatory' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' : 'bg-gray-100 text-gray-600 dark:bg-slate-700 dark:text-slate-400'}`}>{r.cardinality}</span>
+                          {r.foreignKeyColumn && <code className="text-sm text-gray-500 dark:text-slate-400">via {r.foreignKeyColumn}</code>}
                           <div className="ml-auto flex gap-1.5">
                             <button onClick={() => updateRel({ ...r, confirmed: true, rejected: false })}
-                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg" title="Confirm"><CheckCircle2 size={14} /></button>
+                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg" title="Confirm"><CheckCircle2 size={16} /></button>
                             <button onClick={() => updateRel({ ...r, rejected: true, confirmed: false })}
-                              className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg" title="Reject"><XCircle size={14} /></button>
+                              className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg" title="Reject"><XCircle size={16} /></button>
                             <button onClick={() => deleteRel(r.id!)}
-                              className="p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Delete"><Trash2 size={14} /></button>
+                              className="p-1.5 text-slate-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Delete"><Trash2 size={16} /></button>
                           </div>
                         </div>
-                        {r.label && <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 ml-1">{r.label}</p>}
+                        {r.label && <p className="text-sm text-gray-500 dark:text-slate-400 mt-1 ml-1">{r.label}</p>}
                       </div>
                     ))}
                   </div>
@@ -1428,15 +1428,15 @@ export default function FlowDesignerPage() {
             <div className="flex flex-col h-full">
               <div className="flex items-center gap-3 p-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex-shrink-0">
                 <div className="flex-1">
-                  <h2 className="font-semibold text-sm">Entity Relationship Diagram</h2>
-                  <p className="text-[11px] text-gray-500 dark:text-slate-400">{confirmedEntities.length} tables · {confirmedRels.length} relationships</p>
+                  <h2 className="font-semibold text-base">Entity Relationship Diagram</h2>
+                  <p className="text-[13px] text-gray-500 dark:text-slate-400">{confirmedEntities.length} tables · {confirmedRels.length} relationships</p>
                 </div>
-                <button onClick={buildErd} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-slate-600 rounded-lg text-xs hover:bg-gray-50 dark:hover:bg-slate-700">
-                  <RefreshCw size={12} /> Refresh ERD
+                <button onClick={buildErd} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-slate-600 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-700">
+                  <RefreshCw size={14} /> Refresh ERD
                 </button>
                 <button onClick={generate} disabled={generating || confirmedEntities.length === 0}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">
-                  {generating ? <Loader2 size={14} className="animate-spin" /> : <FileCode2 size={14} />}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-base font-medium hover:bg-blue-700 disabled:opacity-40">
+                  {generating ? <Loader2 size={16} className="animate-spin" /> : <FileCode2 size={16} />}
                   Generate Outputs
                 </button>
               </div>
@@ -1469,29 +1469,29 @@ export default function FlowDesignerPage() {
                   { key: 'validation', label: `Validation ${errCount > 0 ? `(${errCount} errors)` : warnCount > 0 ? `(${warnCount} warnings)` : ''}`, icon: AlertTriangle },
                 ] as { key: typeof outputTab; label: string; icon: React.ElementType }[]).map(t => (
                   <button key={t.key} onClick={() => setOutputTab(t.key)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors
                       ${outputTab === t.key ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700'}
                       ${t.key === 'validation' && errCount > 0 ? 'text-rose-600' : ''}`}>
-                    <t.icon size={12} /> {t.label}
+                    <t.icon size={14} /> {t.label}
                   </button>
                 ))}
                 <div className="ml-auto flex gap-2">
                   {(outputTab === 'ddl' || outputTab === 'drizzle') && (
                     <>
                       <button onClick={() => copyToClipboard(outputTab === 'ddl' ? ddl : drizzle, setCopied)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-slate-600 rounded-lg text-xs hover:bg-gray-50 dark:hover:bg-slate-700">
-                        {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />} {copied ? 'Copied!' : 'Copy'}
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-slate-600 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-700">
+                        {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />} {copied ? 'Copied!' : 'Copy'}
                       </button>
                       <button onClick={() => downloadText(outputTab === 'ddl' ? ddl : drizzle, outputTab === 'ddl' ? 'schema.sql' : 'schema.ts')}
-                        className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-slate-600 rounded-lg text-xs hover:bg-gray-50 dark:hover:bg-slate-700">
-                        <Download size={12} /> Download
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-slate-600 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-700">
+                        <Download size={14} /> Download
                       </button>
                     </>
                   )}
                   {!ddl && (
                     <button onClick={generate} disabled={generating || confirmedEntities.length === 0}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-40">
-                      {generating ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Generate
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">
+                      {generating ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Generate
                     </button>
                   )}
                 </div>
@@ -1501,9 +1501,9 @@ export default function FlowDesignerPage() {
                 {/* DDL */}
                 {outputTab === 'ddl' && (
                   ddl
-                    ? <pre className="p-4 text-xs font-mono text-gray-800 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">{ddl}</pre>
+                    ? <pre className="p-4 text-sm font-mono text-gray-800 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">{ddl}</pre>
                     : <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-slate-500">
-                        <Database size={36} className="opacity-30 mb-3" />
+                        <Database size={38} className="opacity-30 mb-3" />
                         <p>Confirm entities and relationships, then click <strong>Generate Outputs</strong> from the ERD step.</p>
                       </div>
                 )}
@@ -1511,9 +1511,9 @@ export default function FlowDesignerPage() {
                 {/* Drizzle */}
                 {outputTab === 'drizzle' && (
                   drizzle
-                    ? <pre className="p-4 text-xs font-mono text-gray-800 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">{drizzle}</pre>
+                    ? <pre className="p-4 text-sm font-mono text-gray-800 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">{drizzle}</pre>
                     : <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-slate-500">
-                        <FileCode2 size={36} className="opacity-30 mb-3" />
+                        <FileCode2 size={38} className="opacity-30 mb-3" />
                         <p>Generate outputs first.</p>
                       </div>
                 )}
@@ -1523,7 +1523,7 @@ export default function FlowDesignerPage() {
                   dictionary.length > 0
                     ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-xs border-collapse">
+                        <table className="w-full text-sm border-collapse">
                           <thead className="sticky top-0 bg-gray-50 dark:bg-slate-700">
                             <tr>
                               {['Table','Category','Column','Type','Null','Default','PK','FK','UQ','Description'].map(h => (
@@ -1551,7 +1551,7 @@ export default function FlowDesignerPage() {
                       </div>
                     )
                     : <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-slate-500">
-                        <BookOpen size={36} className="opacity-30 mb-3" />
+                        <BookOpen size={38} className="opacity-30 mb-3" />
                         <p>Generate outputs first.</p>
                       </div>
                 )}
@@ -1561,7 +1561,7 @@ export default function FlowDesignerPage() {
                   <div className="p-5 max-w-3xl mx-auto">
                     {validations.length === 0
                       ? <div className="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-slate-500">
-                          <CheckCircle2 size={36} className="opacity-30 mb-3 text-emerald-500" />
+                          <CheckCircle2 size={38} className="opacity-30 mb-3 text-emerald-500" />
                           <p>No validation issues found. Your design looks good!</p>
                         </div>
                       : (
@@ -1569,16 +1569,16 @@ export default function FlowDesignerPage() {
                           {(['error','warning','info'] as ValidationIssue['severity'][]).map(sev => {
                             const items = validations.filter(v => v.severity === sev);
                             if (!items.length) return null;
-                            const icons = { error: <XCircle size={14} className="text-rose-500" />, warning: <AlertTriangle size={14} className="text-amber-500" />, info: <Info size={14} className="text-blue-500" /> };
+                            const icons = { error: <XCircle size={16} className="text-rose-500" />, warning: <AlertTriangle size={16} className="text-amber-500" />, info: <Info size={16} className="text-blue-500" /> };
                             const cls = { error: 'border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/20', warning: 'border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/20', info: 'border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/20' };
                             return items.map((v, i) => (
-                              <div key={`${sev}_${i}`} className={`flex items-start gap-3 p-3 rounded-xl border ${cls[sev]} text-sm`}>
+                              <div key={`${sev}_${i}`} className={`flex items-start gap-3 p-3 rounded-xl border ${cls[sev]} text-base`}>
                                 {icons[sev]}
                                 <div className="flex-1">
                                   <p className="text-gray-800 dark:text-slate-200">{v.message}</p>
-                                  {v.entityName && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">Entity: <code>{v.entityName}</code>{v.fieldName ? ` · Field: ${v.fieldName}` : ''}</p>}
+                                  {v.entityName && <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">Entity: <code>{v.entityName}</code>{v.fieldName ? ` · Field: ${v.fieldName}` : ''}</p>}
                                 </div>
-                                <span className="text-[10px] uppercase font-semibold text-gray-400 dark:text-slate-500">{sev}</span>
+                                <span className="text-[12px] uppercase font-semibold text-gray-400 dark:text-slate-500">{sev}</span>
                               </div>
                             ));
                           })}

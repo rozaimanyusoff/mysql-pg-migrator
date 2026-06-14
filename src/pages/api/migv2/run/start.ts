@@ -7,12 +7,15 @@ import { randomUUID } from 'crypto';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const { source, target, tables, jobId, jobName } = req.body as {
+  const { source, target, tables, jobId, jobName, filterCol, filterFrom, filterTo } = req.body as {
     source: MigConn;
     target: MigConn;
     tables: TableMap[];
     jobId?: string;
     jobName: string;
+    filterCol?: string | null;
+    filterFrom?: string | null;
+    filterTo?: string | null;
   };
 
   if (!source || !target || !tables?.length) {
@@ -50,6 +53,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     totalRows: 0,
     migratedRows: 0,
     errors: [],
+    filterCol: filterCol ?? null,
+    filterFrom: filterFrom ?? null,
+    filterTo: filterTo ?? null,
   };
 
   try {

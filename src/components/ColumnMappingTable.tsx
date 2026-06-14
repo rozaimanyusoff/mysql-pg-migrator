@@ -145,22 +145,22 @@ export default function ColumnMappingTable({ table, database }: Props) {
       <div className="space-y-3">
          {/* Summary bar */}
          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-xs text-gray-400 dark:text-slate-500 font-mono">
+            <span className="text-sm text-gray-400 dark:text-slate-500 font-mono">
                <span className="text-gray-500 dark:text-slate-300 font-medium">{table.name}</span>
             </span>
             <button
                type="button"
                onClick={addTargetColumn}
-               className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/40"
+               className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded-md border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/40"
             >
-               <PlusCircle size={12} /> Add PG Column
+               <PlusCircle size={14} /> Add PG Column
             </button>
-            <div className="flex gap-3 text-xs text-gray-500 dark:text-slate-400 ml-auto flex-shrink-0">
+            <div className="flex gap-3 text-sm text-gray-500 dark:text-slate-400 ml-auto flex-shrink-0">
                <span><strong className="text-gray-700 dark:text-slate-200">{includedCount}</strong> included</span>
                {excludedCount > 0 && <span><strong className="text-red-500 dark:text-rose-400">{excludedCount}</strong> excluded</span>}
                {saved && (
                   <span className="flex items-center gap-1 text-green-600 dark:text-emerald-400">
-                     <CheckCircle size={12} /> Saved
+                     <CheckCircle size={14} /> Saved
                   </span>
                )}
             </div>
@@ -168,7 +168,7 @@ export default function ColumnMappingTable({ table, database }: Props) {
          {/* Table description */}
          <textarea
             rows={2}
-            className="w-full text-xs border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 resize-none text-gray-700 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-500 bg-white dark:bg-slate-800"
+            className="w-full text-sm border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 resize-none text-gray-700 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-500 bg-white dark:bg-slate-800"
             value={tableDescription}
             onChange={(e) => { setTableDescription(e.target.value); triggerSaved(); }}
             placeholder="Table description (required) — e.g. what this table stores, relationships, business context…"
@@ -177,7 +177,7 @@ export default function ColumnMappingTable({ table, database }: Props) {
          {/* Mapping table */}
          <div className="border border-gray-200 dark:border-slate-700 rounded-xl overflow-hidden">
             {/* Column headers */}
-            <div className="grid grid-cols-2 text-xs font-semibold text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-slate-700">
+            <div className="grid grid-cols-2 text-sm font-semibold text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-slate-700">
                <div className="px-4 py-2.5 bg-gray-100 dark:bg-slate-800">MySQL (Source)</div>
                <div className="px-4 py-2.5 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700">PostgreSQL (Target)</div>
             </div>
@@ -193,39 +193,39 @@ export default function ColumnMappingTable({ table, database }: Props) {
                      return (
                         <div key={m.mysqlName} className="grid grid-cols-2">
                            {/* LEFT: MySQL PK */}
-                           <div className="px-4 py-3 bg-gray-50 dark:bg-slate-800 text-sm">
+                           <div className="px-4 py-3 bg-gray-50 dark:bg-slate-800 text-base">
                               <div className="flex items-center gap-1.5 font-mono font-medium text-gray-800 dark:text-slate-100">
-                                 <Key size={11} className="text-yellow-500 dark:text-amber-400 flex-shrink-0" />
+                                 <Key size={13} className="text-yellow-500 dark:text-amber-400 flex-shrink-0" />
                                  <span>{m.mysqlName}</span>
                               </div>
-                              <div className="mt-0.5 text-xs text-blue-600 dark:text-blue-300 font-mono">{m.mysqlType}</div>
+                              <div className="mt-0.5 text-sm text-blue-600 dark:text-blue-300 font-mono">{m.mysqlType}</div>
                               <div className="mt-1 flex gap-1 flex-wrap">
-                                 <span className="bg-yellow-100 dark:bg-amber-900/40 text-yellow-700 dark:text-amber-300 text-xs px-1 rounded">PK</span>
+                                 <span className="bg-yellow-100 dark:bg-amber-900/40 text-yellow-700 dark:text-amber-300 text-sm px-1 rounded">PK</span>
                                  {srcCol?.autoIncrement && (
-                                    <span className="bg-purple-100 dark:bg-violet-900/40 text-purple-700 dark:text-violet-300 text-xs px-1 rounded">AUTO_INCREMENT</span>
+                                    <span className="bg-purple-100 dark:bg-violet-900/40 text-purple-700 dark:text-violet-300 text-sm px-1 rounded">AUTO_INCREMENT</span>
                                  )}
                               </div>
                               {srcCol?.comment && (
-                                 <p className="mt-1 text-xs text-amber-600 dark:text-amber-300 italic leading-snug">{srcCol.comment}</p>
+                                 <p className="mt-1 text-sm text-amber-600 dark:text-amber-300 italic leading-snug">{srcCol.comment}</p>
                               )}
                            </div>
 
                            {/* RIGHT: PK handling options */}
                            <div className="px-4 py-3 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 space-y-2.5">
-                              <p className="text-xs font-semibold text-gray-600 dark:text-slate-300">Primary key mapping:</p>
-                              <p className="text-xs text-gray-400 dark:text-slate-500">
+                              <p className="text-sm font-semibold text-gray-600 dark:text-slate-300">Primary key mapping:</p>
+                              <p className="text-sm text-gray-400 dark:text-slate-500">
                                  Original identifier is preserved as the primary key.
                               </p>
                               <div className="pt-1 space-y-1.5 border-t border-gray-100 dark:border-slate-700">
                                  <input
                                     type="text"
-                                    className="w-full text-sm font-mono border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100"
+                                    className="w-full text-base font-mono border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100"
                                     value={m.pgName}
                                     onChange={(e) => updateMapping(idx, { pgName: e.target.value, pkHandling: 'keep', include: true })}
                                     placeholder="Column name"
                                  />
                                  <select
-                                    className="w-full text-xs border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500"
+                                    className="w-full text-sm border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500"
                                     value={m.pgType}
                                     onChange={(e) => updateMapping(idx, { pgType: e.target.value, pkHandling: 'keep', include: true })}
                                  >
@@ -249,33 +249,33 @@ export default function ColumnMappingTable({ table, database }: Props) {
                         className={`grid grid-cols-2 transition-opacity ${!m.include ? 'opacity-40' : ''}`}
                      >
                         {/* LEFT: MySQL source (read-only) */}
-                        <div className="px-4 py-3 bg-gray-50 dark:bg-slate-800 text-sm">
+                        <div className="px-4 py-3 bg-gray-50 dark:bg-slate-800 text-base">
                            {m.isTargetOnly ? (
                               <>
                                  <div className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-300 italic">
-                                    <Plus size={12} />
+                                    <Plus size={14} />
                                     <span>New column - no MySQL equivalent</span>
                                  </div>
-                                 <div className="mt-0.5 text-xs text-gray-400 dark:text-slate-500 font-mono">(target-only)</div>
+                                 <div className="mt-0.5 text-sm text-gray-400 dark:text-slate-500 font-mono">(target-only)</div>
                               </>
                            ) : (
                               <>
                                  <div className="flex items-center gap-1.5 font-mono font-medium text-gray-800 dark:text-slate-100 truncate">
                                     <span className="truncate">{m.mysqlName}</span>
                                  </div>
-                                 <div className="mt-0.5 text-xs text-blue-600 dark:text-blue-300 font-mono truncate">{m.mysqlType}</div>
+                                 <div className="mt-0.5 text-sm text-blue-600 dark:text-blue-300 font-mono truncate">{m.mysqlType}</div>
                                  {srcCol && (
                                     <div className="mt-1 flex gap-1 flex-wrap">
-                                       <span className="text-xs text-gray-400 dark:text-slate-500">
+                                       <span className="text-sm text-gray-400 dark:text-slate-500">
                                           {srcCol.nullable ? 'nullable' : 'not null'}
                                        </span>
                                        {srcCol.isUnique && (
-                                          <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs px-1 rounded">UNIQUE</span>
+                                          <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm px-1 rounded">UNIQUE</span>
                                        )}
                                     </div>
                                  )}
                                  {srcCol?.comment && (
-                                    <p className="mt-1 text-xs text-amber-600 dark:text-amber-300 italic leading-snug">{srcCol.comment}</p>
+                                    <p className="mt-1 text-sm text-amber-600 dark:text-amber-300 italic leading-snug">{srcCol.comment}</p>
                                  )}
                               </>
                            )}
@@ -285,14 +285,14 @@ export default function ColumnMappingTable({ table, database }: Props) {
                         <div className="px-4 py-3 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 space-y-2">
                            <input
                               type="text"
-                              className="w-full text-sm font-mono border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 disabled:bg-gray-50 dark:disabled:bg-slate-800/60 disabled:text-gray-400 dark:disabled:text-slate-500"
+                              className="w-full text-base font-mono border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 disabled:bg-gray-50 dark:disabled:bg-slate-800/60 disabled:text-gray-400 dark:disabled:text-slate-500"
                               value={m.pgName}
                               onChange={(e) => updateMapping(idx, { pgName: e.target.value })}
                               disabled={!m.include}
                               placeholder="Column name"
                            />
                            <select
-                              className="w-full text-xs border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 disabled:bg-gray-50 dark:disabled:bg-slate-800/60 disabled:text-gray-400 dark:disabled:text-slate-500 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100"
+                              className="w-full text-sm border border-gray-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 disabled:bg-gray-50 dark:disabled:bg-slate-800/60 disabled:text-gray-400 dark:disabled:text-slate-500 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100"
                               value={m.pgType}
                               onChange={(e) => updateMapping(idx, { pgType: e.target.value })}
                               disabled={!m.include}
@@ -305,7 +305,7 @@ export default function ColumnMappingTable({ table, database }: Props) {
                               )}
                            </select>
                            <div className="flex items-center gap-4 flex-wrap">
-                              <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-slate-400 cursor-pointer select-none">
+                              <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-slate-400 cursor-pointer select-none">
                                  <input
                                     type="checkbox"
                                     checked={m.nullable}
@@ -315,7 +315,7 @@ export default function ColumnMappingTable({ table, database }: Props) {
                                  />
                                  Nullable
                               </label>
-                              <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                              <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
                                  <input
                                     type="checkbox"
                                     checked={!m.include}
@@ -330,15 +330,15 @@ export default function ColumnMappingTable({ table, database }: Props) {
                                  <button
                                     type="button"
                                     onClick={() => removeTargetColumn(idx)}
-                                    className="inline-flex items-center gap-1 text-xs text-red-500 dark:text-rose-400 hover:text-red-600 dark:hover:text-rose-300"
+                                    className="inline-flex items-center gap-1 text-sm text-red-500 dark:text-rose-400 hover:text-red-600 dark:hover:text-rose-300"
                                  >
-                                    <Trash2 size={12} /> Remove
+                                    <Trash2 size={14} /> Remove
                                  </button>
                               )}
                            </div>
                            <input
                               type="text"
-                              className="w-full text-xs border border-gray-100 dark:border-slate-700 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-500 text-gray-600 dark:text-slate-300 placeholder-gray-300 dark:placeholder-slate-500 bg-gray-50 dark:bg-slate-800"
+                              className="w-full text-sm border border-gray-100 dark:border-slate-700 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-500 text-gray-600 dark:text-slate-300 placeholder-gray-300 dark:placeholder-slate-500 bg-gray-50 dark:bg-slate-800"
                               value={m.description}
                               onChange={(e) => updateMapping(idx, { description: e.target.value })}
                               disabled={!m.include}

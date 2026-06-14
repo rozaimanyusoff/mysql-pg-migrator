@@ -49,15 +49,52 @@ async function withMysql<T>(conn: MigConn, fn: (c: mysql.Connection) => Promise<
 // ── Row reading ───────────────────────────────────────────────────────────────
 
 interface IncrementalFilter { col: string; gt: string; }
+interface RangeFilter { col: string; from: string | null; to: string | null; }
+
+// Build a parameterised WHERE clause supporting incremental (gt) + date-range (from/to).
+// PostgreSQL uses $N positional params; MySQL uses ? placeholders.
+function buildWhere(
+  dbType: 'postgresql' | 'mysql',
+  inc?: IncrementalFilter,
+  range?: RangeFilter,
+): { where: string; params: unknown[]; orderCol: string | null } {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  let orderCol: string | null = null;
+
+  const q = (col: string) => dbType === 'postgresql' ? `"${col}"` : `\`${col}\``;
+  const p = () => dbType === 'postgresql' ? `$${params.length}` : '?';
+
+  if (inc) {
+    params.push(inc.gt);
+    conds.push(`${q(inc.col)} > ${p()}`);
+    orderCol = inc.col;
+  }
+  if (range?.from) {
+    params.push(range.from);
+    conds.push(`${q(range.col)} >= ${p()}`);
+    if (!orderCol) orderCol = range.col;
+  }
+  if (range?.to) {
+    params.push(range.to);
+    conds.push(`${q(range.col)} <= ${p()}`);
+    if (!orderCol) orderCol = range.col;
+  }
+
+  return {
+    where: conds.length ? `WHERE ${conds.join(' AND ')}` : '',
+    params,
+    orderCol,
+  };
+}
 
 async function countRows(
   conn: MigConn, schema: string, table: string,
-  filter?: IncrementalFilter
+  inc?: IncrementalFilter, range?: RangeFilter
 ): Promise<number> {
+  const { where, params } = buildWhere(conn.type, inc, range);
   if (conn.type === 'postgresql') {
     return withPg(conn, async c => {
-      const where = filter ? `WHERE "${filter.col}" > $1` : '';
-      const params = filter ? [filter.gt] : [];
       const { rows } = await c.query<{ n: string }>(
         `SELECT COUNT(*) AS n FROM "${schema}"."${table}" ${where}`, params
       );
@@ -65,8 +102,6 @@ async function countRows(
     });
   }
   return withMysql(conn, async c => {
-    const where = filter ? `WHERE \`${filter.col}\` > ?` : '';
-    const params = filter ? [filter.gt] : [];
     const [rows] = await c.query<any[]>(
       `SELECT COUNT(*) AS n FROM \`${schema}\`.\`${table}\` ${where}`, params
     );
@@ -77,37 +112,28 @@ async function countRows(
 async function readChunk(
   conn: MigConn, schema: string, table: string,
   cols: string[], offset: number, limit: number,
-  filter?: IncrementalFilter
+  inc?: IncrementalFilter, range?: RangeFilter
 ): Promise<Record<string, unknown>[]> {
   const colList = cols.map(c => conn.type === 'postgresql' ? `"${c}"` : `\`${c}\``).join(', ');
+  const { where, params, orderCol } = buildWhere(conn.type, inc, range);
+  const orderBy = orderCol
+    ? `ORDER BY ${conn.type === 'postgresql' ? `"${orderCol}"` : `\`${orderCol}\``} ASC`
+    : '';
 
   if (conn.type === 'postgresql') {
     return withPg(conn, async c => {
-      if (filter) {
-        const { rows } = await c.query(
-          `SELECT ${colList} FROM "${schema}"."${table}" WHERE "${filter.col}" > $1 ORDER BY "${filter.col}" ASC LIMIT $2 OFFSET $3`,
-          [filter.gt, limit, offset]
-        );
-        return rows;
-      }
+      const nextIdx = params.length + 1;
       const { rows } = await c.query(
-        `SELECT ${colList} FROM "${schema}"."${table}" LIMIT $1 OFFSET $2`,
-        [limit, offset]
+        `SELECT ${colList} FROM "${schema}"."${table}" ${where} ${orderBy} LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`,
+        [...params, limit, offset]
       );
       return rows;
     });
   }
   return withMysql(conn, async c => {
-    if (filter) {
-      const [rows] = await c.query(
-        `SELECT ${colList} FROM \`${schema}\`.\`${table}\` WHERE \`${filter.col}\` > ? ORDER BY \`${filter.col}\` ASC LIMIT ? OFFSET ?`,
-        [filter.gt, limit, offset]
-      );
-      return rows as Record<string, unknown>[];
-    }
     const [rows] = await c.query(
-      `SELECT ${colList} FROM \`${schema}\`.\`${table}\` LIMIT ? OFFSET ?`,
-      [limit, offset]
+      `SELECT ${colList} FROM \`${schema}\`.\`${table}\` ${where} ${orderBy} LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
     return rows as Record<string, unknown>[];
   });
@@ -416,7 +442,8 @@ async function ensureTargetTable(conn: MigConn, tableMap: TableMap): Promise<voi
 export async function advanceRun(
   run: MigRun,
   source: MigConn,
-  target: MigConn
+  target: MigConn,
+  pausedTableIds: string[] = []
 ): Promise<MigRun> {
   const deadline = Date.now() + MAX_ADVANCE_MS;
   run.startedAt ??= new Date().toISOString();
@@ -429,6 +456,7 @@ export async function advanceRun(
 
   for (const ts of run.tableStates) {
     if (ts.status !== 'pending' && ts.status !== 'running') continue;
+    if (pausedTableIds.includes(ts.id)) continue;
     if (Date.now() > deadline) break;
 
     const tableMap = run.tables.find(t => t.id === ts.id);
@@ -439,11 +467,17 @@ export async function advanceRun(
 
       // Build incremental filter (only when syncMode=incremental and a prior watermark exists)
       const isIncremental = tableMap.syncMode === 'incremental' && !!tableMap.incrementalCol;
-      const filter: IncrementalFilter | undefined =
+      const incFilter: IncrementalFilter | undefined =
         isIncremental && tableMap.lastSyncedValue
           ? { col: tableMap.incrementalCol!, gt: tableMap.lastSyncedValue }
           : undefined;
       const useUpsert = isIncremental && tableMap.incrementalStrategy === 'timestamp';
+
+      // Build job-level date-range filter (applies to every table in the run)
+      const rangeFilter: RangeFilter | undefined =
+        run.filterCol
+          ? { col: run.filterCol, from: run.filterFrom ?? null, to: run.filterTo ?? null }
+          : undefined;
 
       // Per-table source conn: override database from tableMap.sourceDatabase if set
       const tableSource: MigConn = tableMap.sourceDatabase && tableMap.sourceDatabase !== source.database
@@ -452,9 +486,13 @@ export async function advanceRun(
 
       // Count source rows (once)
       if (ts.rowsSource === 0 && ts.offset === 0) {
-        ts.rowsSource = await countRows(tableSource, tableMap.source.schema, tableMap.source.table, filter);
+        ts.rowsSource = await countRows(tableSource, tableMap.source.schema, tableMap.source.table, incFilter, rangeFilter);
         run.totalRows = run.tableStates.reduce((s, t) => s + t.rowsSource, 0);
-        log(`[${ts.sourceKey}] source rows: ${ts.rowsSource}${isIncremental ? ` (incremental, since ${tableMap.lastSyncedValue ?? 'beginning'})` : ''}`);
+        const filterDesc = [
+          isIncremental ? `incremental since ${tableMap.lastSyncedValue ?? 'beginning'}` : '',
+          rangeFilter ? `range ${rangeFilter.from ?? '*'} → ${rangeFilter.to ?? '*'}` : '',
+        ].filter(Boolean).join(', ');
+        log(`[${ts.sourceKey}] source rows: ${ts.rowsSource}${filterDesc ? ` (${filterDesc})` : ''}`);
       }
 
       // Truncate target if requested (first chunk only)
@@ -495,7 +533,7 @@ export async function advanceRun(
       // Read chunk
       const chunk = await readChunk(
         tableSource, tableMap.source.schema, tableMap.source.table,
-        srcCols, ts.offset, CHUNK_SIZE, filter
+        srcCols, ts.offset, CHUNK_SIZE, incFilter, rangeFilter
       );
 
       if (!chunk.length) {

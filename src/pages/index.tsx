@@ -4,17 +4,19 @@ import { useEffect, useState } from 'react';
 import axios from 'axios';
 import {
   Database, ArrowRight, UploadCloud, Wand2, Network,
-  Columns, Workflow, Brain,
+  Columns, Workflow, Brain, Calendar,
 } from 'lucide-react';
 
 const modules = [
   { key: 'migration',    title: 'Migration',           desc: 'Map and migrate data across any two databases (MySQL ↔ PostgreSQL), with serial→UUID conversion, rollback, and job management.', href: '/migration', available: true, Icon: Database },
   { key: 'schema-studio', title: 'Schema Studio',   desc: 'Inspect, design and refactor PostgreSQL schemas visually. Scan live DB, get PK/FK/constraint suggestions, interactive ERD with drag-to-create FK.', href: '/schema-studio', available: true, Icon: Columns },
   { key: 'export-import',title: 'Data Maintenance',    desc: 'Backup, export, import, sync and copy database tables across environments.',    href: '/export-import',available: true,  Icon: UploadCloud },
-  { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '/normalizer',   available: true,  Icon: Wand2 },
   { key: 'schema-explorer', title: 'Schema Explorer', desc: 'Browse any database, inspect columns, visualise ERD, and export migration SQL or XLSX.', href: '/schema-explorer', available: true, Icon: Network },
-  { key: 'flow-designer', title: 'Flow-to-Database Designer', desc: 'Design your database starting from a business process flow. Get entities, relationships, ERD, PostgreSQL DDL, and Drizzle ORM schema.', href: '/flow-designer', available: true, Icon: Workflow },
+  // hidden: normalization & flow-designer deprioritised while cron job module is built
+  // { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '/normalizer',   available: true,  Icon: Wand2 },
+  // { key: 'flow-designer', title: 'Flow-to-Database Designer', desc: 'Design your database starting from a business process flow. Get entities, relationships, ERD, PostgreSQL DDL, and Drizzle ORM schema.', href: '/flow-designer', available: true, Icon: Workflow },
   { key: 'ai-migration', title: 'AI Migration Assistant', desc: 'AI-powered pre-flight schema analysis, smart column type suggestions, and plain-language error explanations for MySQL→PostgreSQL migrations.', href: '/ai-migration', available: true, Icon: Brain },
+  { key: 'scheduler', title: 'Scheduler', desc: 'Schedule migration jobs to run automatically via cron. Trigger runs from CLI or manually from the UI, and track live run status.', href: '/scheduler', available: true, Icon: Calendar },
 ];
 
 export default function ModuleMenu() {
@@ -38,7 +40,7 @@ export default function ModuleMenu() {
 
         <main className="max-w-5xl mx-auto px-6 py-14">
           <div className="mb-10">
-            <p className="text-sm text-gray-500 dark:text-slate-400">Choose a module to get started.</p>
+            <p className="text-base text-gray-500 dark:text-slate-400">Choose a module to get started.</p>
           </div>
 
           {/* Module grid */}
@@ -51,18 +53,18 @@ export default function ModuleMenu() {
                     : 'bg-gray-100 dark:bg-slate-800/30 border-gray-200 dark:border-slate-700 opacity-70'
                 }`}>
                   <div className="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4">
-                    <Icon size={20} />
+                    <Icon size={22} />
                   </div>
                   <h2 className="font-semibold text-gray-900 dark:text-slate-100">{title}</h2>
-                  <p className="text-sm text-gray-500 dark:text-slate-400 mt-1 flex-1">{desc}</p>
+                  <p className="text-base text-gray-500 dark:text-slate-400 mt-1 flex-1">{desc}</p>
                   {configuredModules.has(key) && (
-                    <span className="mt-2 inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400 w-fit">
+                    <span className="mt-2 inline-flex items-center text-[13px] font-medium px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400 w-fit">
                       Config Found
                     </span>
                   )}
                   {available
-                    ? <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 dark:text-blue-400">Open Module <ArrowRight size={14} /></span>
-                    : <span className="mt-4 inline-flex items-center text-xs font-medium px-2.5 py-1 rounded-full bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-400 w-fit">Coming Soon</span>
+                    ? <span className="mt-4 inline-flex items-center gap-1.5 text-base font-medium text-blue-700 dark:text-blue-400">Open Module <ArrowRight size={16} /></span>
+                    : <span className="mt-4 inline-flex items-center text-sm font-medium px-2.5 py-1 rounded-full bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-400 w-fit">Coming Soon</span>
                   }
                 </div>
               );

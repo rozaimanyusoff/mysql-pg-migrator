@@ -23,7 +23,7 @@ export function listJobs(): MigJobSummary[] {
           id: j.id, name: j.name, description: j.description,
           version: j.version, createdAt: j.createdAt, updatedAt: j.updatedAt,
           tableCount: j.tables.length,
-          tables: j.tables.map(t => ({ id: t.id, include: t.include, source: t.source, sourceDatabase: t.sourceDatabase, target: t.target, targetAlias: t.targetAlias })),
+          tables: j.tables.map(t => ({ id: t.id, include: t.include, source: t.source, sourceDatabase: t.sourceDatabase, target: t.target, targetAlias: t.targetAlias, syncMode: t.syncMode, incrementalCol: t.incrementalCol, lastSyncedValue: t.lastSyncedValue })),
         };
       } catch { return null; }
     })

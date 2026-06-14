@@ -7,17 +7,17 @@ import type { MigConn } from '../../../../lib/migv2/types';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const { runId, source, target } = req.body as { runId: string; source: MigConn; target: MigConn };
+  const { runId, source, target, pausedTableIds = [] } = req.body as { runId: string; source: MigConn; target: MigConn; pausedTableIds?: string[] };
   if (!runId || !source || !target) return res.status(400).json({ error: 'runId, source, target required' });
 
   const run = loadRun(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (run.status === 'completed' || run.status === 'rolled_back') {
+  if (run.status === 'completed' || run.status === 'rolled_back' || run.status === 'aborted') {
     return res.status(200).json({ run });
   }
 
   try {
-    const advanced = await advanceRun(run, source, target);
+    const advanced = await advanceRun(run, source, target, pausedTableIds);
     saveRun(advanced);
 
     // Persist incremental watermarks back to the saved job so next run picks them up

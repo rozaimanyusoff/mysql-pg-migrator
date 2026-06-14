@@ -82,9 +82,9 @@ function defaultColsForDupe(sheet: SheetResult): Set<number> {
 
 function fileIcon(name: string) {
   const ext = name.split('.').pop()?.toLowerCase();
-  if (ext === 'xlsx' || ext === 'xls') return <FileSpreadsheet size={16} className="text-green-600" />;
-  if (ext === 'csv') return <FileText size={16} className="text-blue-600" />;
-  return <FileJson size={16} className="text-amber-600" />;
+  if (ext === 'xlsx' || ext === 'xls') return <FileSpreadsheet size={18} className="text-green-600" />;
+  if (ext === 'csv') return <FileText size={18} className="text-blue-600" />;
+  return <FileJson size={18} className="text-amber-600" />;
 }
 
 function typeBadge(type: string) {
@@ -99,7 +99,7 @@ function typeBadge(type: string) {
     UUID: 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300',
   };
   return (
-    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold ${map[type] ?? map.TEXT}`}>
+    <span className={`px-1.5 py-0.5 rounded text-[12px] font-mono font-semibold ${map[type] ?? map.TEXT}`}>
       {type}
     </span>
   );
@@ -161,34 +161,34 @@ function UploadStep({ onParsed }: { onParsed: (sheets: SheetResult[]) => void })
             onChange={e => { const f = e.target.files?.[0]; if (f) accept(f); }} />
           {file ? (
             <>
-              <div className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-slate-200">
+              <div className="flex items-center gap-2 text-base font-medium text-gray-700 dark:text-slate-200">
                 {fileIcon(file.name)} {file.name}
-                <span className="text-xs text-gray-400">({(file.size / 1024).toFixed(1)} KB)</span>
+                <span className="text-sm text-gray-400">({(file.size / 1024).toFixed(1)} KB)</span>
               </div>
-              <p className="text-xs text-gray-400">Click or drag to replace</p>
+              <p className="text-sm text-gray-400">Click or drag to replace</p>
             </>
           ) : (
             <>
-              <Upload size={36} className="text-gray-300 dark:text-slate-600" />
+              <Upload size={38} className="text-slate-400 dark:text-slate-500" />
               <div className="text-center">
-                <p className="text-sm font-medium text-gray-600 dark:text-slate-300">Drop a file here or click to browse</p>
-                <p className="text-xs text-gray-400 mt-1">Supports XLSX, CSV, JSON</p>
+                <p className="text-base font-medium text-gray-600 dark:text-slate-300">Drop a file here or click to browse</p>
+                <p className="text-sm text-gray-400 mt-1">Supports XLSX, CSV, JSON</p>
               </div>
             </>
           )}
         </div>
 
         {error && (
-          <div className="flex items-start gap-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-xs text-red-700 dark:text-red-300">
-            <AlertTriangle size={13} className="mt-0.5 shrink-0" /> {error}
+          <div className="flex items-start gap-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" /> {error}
           </div>
         )}
 
         <div className="space-y-1.5">
-          <p className="text-xs font-semibold text-gray-600 dark:text-slate-300 flex items-center gap-1.5">
-            <Info size={12} className="text-blue-500" /> What this module does
+          <p className="text-sm font-semibold text-gray-600 dark:text-slate-300 flex items-center gap-1.5">
+            <Info size={14} className="text-blue-500" /> What this module does
           </p>
-          <ul className="text-xs text-gray-500 dark:text-slate-400 space-y-1 pl-4 list-disc">
+          <ul className="text-sm text-gray-500 dark:text-slate-400 space-y-1 pl-4 list-disc">
             <li>Parses your file and profiles each column (types, null count, distinct values)</li>
             <li>Detects repetitive string columns — candidates for lookup / FK tables</li>
             <li>Lets you confirm which columns to extract into separate lookup tables</li>
@@ -199,8 +199,8 @@ function UploadStep({ onParsed }: { onParsed: (sheets: SheetResult[]) => void })
 
         <div className="flex justify-end">
           <button onClick={onParse} disabled={!file || loading}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-base font-medium transition-colors">
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
             {loading ? 'Parsing…' : 'Parse & Profile'}
           </button>
         </div>
@@ -244,12 +244,12 @@ function ProfileLeftPanel({
       {sheets.length > 1 && (
         <>
           <div className="shrink-0 px-4 py-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/40">
-            <p className="text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Sheet</p>
+            <p className="text-[13px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Sheet</p>
           </div>
           <div className="shrink-0 p-2.5 flex flex-col gap-1 border-b border-gray-100 dark:border-slate-800">
             {sheets.map(s => (
               <button key={s.sheetName} onClick={() => onSheetChange(s.sheetName)}
-                className={`px-2.5 py-1.5 rounded text-xs font-medium text-left transition-colors
+                className={`px-2.5 py-1.5 rounded text-sm font-medium text-left transition-colors
                   ${s.sheetName === activeSheet ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'}`}>
                 {s.sheetName}
               </button>
@@ -260,35 +260,35 @@ function ProfileLeftPanel({
 
       {/* Analysis Summary */}
       <div className="shrink-0 px-4 py-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/40">
-        <p className="text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Analysis Summary</p>
+        <p className="text-[13px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Analysis Summary</p>
       </div>
       <div className="shrink-0 divide-y divide-gray-100 dark:divide-slate-800">
         {[
-          { icon: <Table2 size={13} className="text-blue-500" />, label: 'Rows', value: <span>{sheet.rowCount.toLocaleString()}</span>, sub: null },
-          { icon: <Hash size={13} className="text-purple-500" />, label: 'Columns', value: <span>{sheet.columns.length}</span>, sub: null },
-          { icon: <Layers size={13} className="text-amber-500" />, label: 'FK Candidates', value: <span>{sheet.fkSuggestions.length}</span>, sub: null },
+          { icon: <Table2 size={15} className="text-blue-500" />, label: 'Rows', value: <span>{sheet.rowCount.toLocaleString()}</span>, sub: null },
+          { icon: <Hash size={15} className="text-purple-500" />, label: 'Columns', value: <span>{sheet.columns.length}</span>, sub: null },
+          { icon: <Layers size={15} className="text-amber-500" />, label: 'FK Candidates', value: <span>{sheet.fkSuggestions.length}</span>, sub: null },
           {
-            icon: <AlertTriangle size={13} className={duplicateCount > 0 ? 'text-rose-500' : 'text-green-500'} />,
+            icon: <AlertTriangle size={15} className={duplicateCount > 0 ? 'text-rose-500' : 'text-green-500'} />,
             label: 'Duplicate Rows',
             value: duplicateCount > 0
               ? <div className="flex items-center gap-1.5">
                   <span className="text-rose-600 dark:text-rose-400 font-bold">{duplicateCount}</span>
                   <button onClick={onShowDupes}
-                    className="text-[10px] text-blue-500 hover:text-blue-700 dark:hover:text-blue-300 hover:underline font-medium transition-colors">
+                    className="text-[12px] text-blue-500 hover:text-blue-700 dark:hover:text-blue-300 hover:underline font-medium transition-colors">
                     Preview
                   </button>
                 </div>
               : <span className="text-green-600 dark:text-green-400">0</span>,
             sub: excludedCount > 0
-              ? <span className="text-[10px] text-gray-400 dark:text-slate-500">excl. {excludedCount} col{excludedCount > 1 ? 's' : ''}</span>
+              ? <span className="text-[12px] text-gray-400 dark:text-slate-500">excl. {excludedCount} col{excludedCount > 1 ? 's' : ''}</span>
               : null,
           },
         ].map(({ icon, label, value, sub }) => (
           <div key={label} className="flex items-center gap-2.5 px-4 py-2.5">
             {icon}
-            <span className="text-xs text-gray-500 dark:text-slate-400 flex-1">{label}</span>
+            <span className="text-sm text-gray-500 dark:text-slate-400 flex-1">{label}</span>
             <div className="flex flex-col items-end gap-0.5">
-              <span className="text-sm font-bold text-gray-800 dark:text-slate-100">{value}</span>
+              <span className="text-base font-bold text-gray-800 dark:text-slate-100">{value}</span>
               {sub}
             </div>
           </div>
@@ -299,18 +299,18 @@ function ProfileLeftPanel({
       {sheet.fkSuggestions.length > 0 && (
         <>
           <div className="shrink-0 px-4 py-2 border-b border-t border-amber-100 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 flex items-center gap-1.5">
-            <Wand2 size={11} className="text-amber-600 dark:text-amber-400" />
-            <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wider">FK / Lookup</p>
-            <span className="ml-auto text-[10px] text-amber-600 dark:text-amber-400">{activeSuggestions.length}/{sheet.fkSuggestions.length}</span>
+            <Wand2 size={13} className="text-amber-600 dark:text-amber-400" />
+            <p className="text-[13px] font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wider">FK / Lookup</p>
+            <span className="ml-auto text-[12px] text-amber-600 dark:text-amber-400">{activeSuggestions.length}/{sheet.fkSuggestions.length}</span>
           </div>
           <div className="flex-1 overflow-y-auto panel-scroll p-2.5 flex flex-col gap-1.5">
             {sheet.fkSuggestions.map(s => {
               const active = !dismissedSuggestions.has(s.colIndex);
               return (
                 <button key={s.colIndex} onClick={() => onToggleSuggestion(s.colIndex)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-medium transition-colors text-left
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[13px] font-medium transition-colors text-left
                     ${active ? 'bg-amber-500 text-white' : 'text-gray-400 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-800 line-through opacity-60'}`}>
-                  {active ? <Check size={10} /> : <X size={10} />}
+                  {active ? <Check size={12} /> : <X size={12} />}
                   <span className="font-mono truncate flex-1">{s.colName}</span>
                   <span className="opacity-70 shrink-0">({s.distinctValues.length})</span>
                 </button>
@@ -368,28 +368,28 @@ function ProfileRightPanel({
       {/* Tab header */}
       <div className="shrink-0 flex items-stretch border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/40">
         <button onClick={() => onSetShowDupes(false)}
-          className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${!showDupes ? 'border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'}`}>
-          <BarChart2 size={12} /> Column Profile
+          className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${!showDupes ? 'border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'}`}>
+          <BarChart2 size={14} /> Column Profile
         </button>
         <button onClick={() => onSetShowDupes(true)}
-          className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${showDupes ? 'border-rose-500 text-rose-600 dark:text-rose-400' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'}`}>
-          <AlertTriangle size={12} /> Duplicate Rows
+          className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${showDupes ? 'border-rose-500 text-rose-600 dark:text-rose-400' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'}`}>
+          <AlertTriangle size={14} /> Duplicate Rows
         </button>
-        <span className="ml-auto flex items-center px-4 text-[11px] text-gray-400 dark:text-slate-500">
+        <span className="ml-auto flex items-center px-4 text-[13px] text-gray-400 dark:text-slate-500">
           {showDupes ? `${dupeRowCount} rows in ${dupeGroups.length} groups` : `${sheet.columns.length} columns`}
         </span>
       </div>
       {/* ── Column Profile view ── */}
       {!showDupes && (
         <div className="flex-1 min-h-0 overflow-auto panel-scroll">
-          <table className="w-full text-xs">
+          <table className="w-full text-sm">
             <thead className="sticky top-0 z-10">
               <tr className="border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/30">
                 <th className="px-3 py-2 w-10">
                   <div className="flex flex-col items-center gap-0.5">
                     <input type="checkbox" checked={allChecked} onChange={toggleAll}
                       className="w-3.5 h-3.5 rounded cursor-pointer accent-blue-600" />
-                    <span className="text-[9px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Dup</span>
+                    <span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Dup</span>
                   </div>
                 </th>
                 {['Column', 'Type', 'Nulls', 'Distinct', 'Top Values', 'FK?'].map(h => (
@@ -409,7 +409,7 @@ function ProfileRightPanel({
                         className="w-3.5 h-3.5 rounded cursor-pointer accent-blue-600" />
                     </td>
                     <td className={`px-3 py-2 font-medium max-w-[180px] truncate ${inDup ? 'text-gray-800 dark:text-slate-100' : 'text-gray-400 dark:text-slate-500'}`}>
-                      {col.name}{isActive && <span className="ml-1 text-amber-500 text-[10px]">→FK</span>}
+                      {col.name}{isActive && <span className="ml-1 text-amber-500 text-[12px]">→FK</span>}
                     </td>
                     <td className="px-3 py-2">{typeBadge(col.inferredType)}</td>
                     <td className="px-3 py-2 text-gray-500 dark:text-slate-400">
@@ -422,7 +422,7 @@ function ProfileRightPanel({
                     <td className="px-3 py-2 max-w-[260px]">
                       <div className="flex flex-wrap gap-1">
                         {col.topValues.slice(0, 4).map(tv => (
-                          <span key={tv.value} className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300 text-[10px] truncate max-w-[80px]" title={tv.value}>
+                          <span key={tv.value} className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300 text-[12px] truncate max-w-[80px]" title={tv.value}>
                             {tv.value || <span className="italic text-gray-400">empty</span>}
                             <span className="text-gray-400 ml-0.5">×{tv.count}</span>
                           </span>
@@ -432,7 +432,7 @@ function ProfileRightPanel({
                     <td className="px-3 py-2">
                       {isSuggested && (
                         <button onClick={() => onToggleSuggestion(col.index)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${isActive ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200' : 'bg-gray-100 dark:bg-slate-800 text-gray-400 line-through hover:bg-gray-200'}`}>
+                          className={`px-1.5 py-0.5 rounded text-[12px] font-semibold transition-colors ${isActive ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200' : 'bg-gray-100 dark:bg-slate-800 text-gray-400 line-through hover:bg-gray-200'}`}>
                           {isActive ? 'yes' : 'off'}
                         </button>
                       )}
@@ -449,17 +449,17 @@ function ProfileRightPanel({
       {showDupes && (
         <div className="flex-1 min-h-0 overflow-auto panel-scroll">
           {dupeGroups.length === 0 ? (
-            <div className="flex items-center justify-center h-32 text-[11px] text-gray-400 dark:text-slate-500">
+            <div className="flex items-center justify-center h-32 text-[13px] text-gray-400 dark:text-slate-500">
               No duplicate rows found with current column selection.
             </div>
           ) : (
-            <table className="w-full text-xs">
+            <table className="w-full text-sm">
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/30">
                   <th className="px-3 py-2 w-8 text-center font-semibold text-gray-400 dark:text-slate-500">#</th>
                   {sheet.headers.map((h, i) => (
                     <th key={i} className={`text-left px-3 py-2 font-semibold whitespace-nowrap ${colsForDupe.has(i) ? 'text-gray-600 dark:text-slate-300' : 'text-gray-300 dark:text-slate-600'}`}>
-                      {h}{!colsForDupe.has(i) && <span className="ml-1 text-[9px] italic">excl</span>}
+                      {h}{!colsForDupe.has(i) && <span className="ml-1 text-[11px] italic">excl</span>}
                     </th>
                   ))}
                 </tr>
@@ -469,7 +469,7 @@ function ProfileRightPanel({
                   <>
                     <tr key={`g${gi}`} className="bg-rose-50 dark:bg-rose-950/20 border-t border-rose-200 dark:border-rose-800">
                       <td colSpan={sheet.headers.length + 1} className="px-3 py-1">
-                        <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+                        <span className="text-[12px] font-semibold text-rose-600 dark:text-rose-400">
                           × {group.length} copies
                         </span>
                       </td>
@@ -501,16 +501,16 @@ function SchemaLeftPanel({ confirmedLookups }: { confirmedLookups: ConfirmedLook
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/40">
-        <Database size={13} className="text-amber-500" />
-        <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Lookup Tables</p>
+        <Database size={15} className="text-amber-500" />
+        <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Lookup Tables</p>
         {confirmedLookups.length > 0 && (
-          <span className="ml-auto text-[11px] text-gray-400 dark:text-slate-500">{confirmedLookups.length}</span>
+          <span className="ml-auto text-[13px] text-gray-400 dark:text-slate-500">{confirmedLookups.length}</span>
         )}
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto panel-scroll">
         {confirmedLookups.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-2 text-[11px] text-gray-400 dark:text-slate-500 px-4 text-center">
-            <Layers size={20} className="text-gray-200 dark:text-slate-700" />
+          <div className="flex flex-col items-center justify-center h-full gap-2 text-[13px] text-gray-400 dark:text-slate-500 px-4 text-center">
+            <Layers size={22} className="text-slate-400 dark:text-slate-500" />
             No lookup tables configured
           </div>
         ) : (
@@ -518,11 +518,11 @@ function SchemaLeftPanel({ confirmedLookups }: { confirmedLookups: ConfirmedLook
             {confirmedLookups.map(lk => (
               <div key={lk.colIndex} className="border border-amber-200 dark:border-amber-800 overflow-hidden">
                 <div className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-100 dark:border-amber-900">
-                  <Table2 size={11} className="text-amber-600 shrink-0" />
-                  <span className="text-[11px] font-semibold font-mono text-amber-800 dark:text-amber-300 truncate flex-1">{lk.lookupTable}</span>
-                  <span className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">{lk.distinctValues.length}r</span>
+                  <Table2 size={13} className="text-amber-600 shrink-0" />
+                  <span className="text-[13px] font-semibold font-mono text-amber-800 dark:text-amber-300 truncate flex-1">{lk.lookupTable}</span>
+                  <span className="text-[12px] text-amber-600 dark:text-amber-400 shrink-0">{lk.distinctValues.length}r</span>
                 </div>
-                <div className="px-3 py-2 bg-white dark:bg-slate-900 text-[10px] space-y-0.5">
+                <div className="px-3 py-2 bg-white dark:bg-slate-900 text-[12px] space-y-0.5">
                   <div className="flex gap-2 text-gray-400 dark:text-slate-500 font-mono pb-1 border-b border-gray-100 dark:border-slate-800">
                     <span className="w-5">id</span><span>SERIAL PK</span>
                   </div>
@@ -531,10 +531,10 @@ function SchemaLeftPanel({ confirmedLookups }: { confirmedLookups: ConfirmedLook
                   </div>
                   <div className="pt-1 flex flex-wrap gap-1">
                     {lk.distinctValues.slice(0, 5).map(v => (
-                      <span key={v} className="px-1 py-0.5 bg-gray-100 dark:bg-slate-800 text-[10px] text-gray-500 dark:text-slate-400 truncate max-w-[80px]" title={v}>{v}</span>
+                      <span key={v} className="px-1 py-0.5 bg-gray-100 dark:bg-slate-800 text-[12px] text-gray-500 dark:text-slate-400 truncate max-w-[80px]" title={v}>{v}</span>
                     ))}
                     {lk.distinctValues.length > 5 && (
-                      <span className="text-[10px] text-gray-400">+{lk.distinctValues.length - 5}</span>
+                      <span className="text-[12px] text-gray-400">+{lk.distinctValues.length - 5}</span>
                     )}
                   </div>
                 </div>
@@ -553,12 +553,12 @@ function SchemaMainPanel({ sheet, confirmedLookups }: { sheet: SheetResult; conf
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/40">
-        <Table2 size={13} className="text-blue-500" />
-        <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Main Table —</p>
-        <span className="text-xs font-mono text-blue-600 dark:text-blue-400">{sheet.tableName}</span>
+        <Table2 size={15} className="text-blue-500" />
+        <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Main Table —</p>
+        <span className="text-sm font-mono text-blue-600 dark:text-blue-400">{sheet.tableName}</span>
       </div>
       <div className="flex-1 min-h-0 overflow-auto panel-scroll">
-        <table className="w-full text-xs">
+        <table className="w-full text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
               {['Column', 'Type', 'Notes'].map(h => (
@@ -580,7 +580,7 @@ function SchemaMainPanel({ sheet, confirmedLookups }: { sheet: SheetResult; conf
                     {lk ? `${col.name.toLowerCase().replace(/\s+/g, '_')}_id` : col.name.toLowerCase().replace(/\s+/g, '_')}
                   </td>
                   <td className="px-4 py-2">{typeBadge(lk ? 'INTEGER' : col.inferredType)}</td>
-                  <td className="px-4 py-2 text-gray-400 dark:text-slate-500 text-[10px]">
+                  <td className="px-4 py-2 text-gray-400 dark:text-slate-500 text-[12px]">
                     {lk ? `FK → ${lk.lookupTable}(id)` : col.nullCount > 0 ? 'nullable' : 'not null'}
                   </td>
                 </tr>
@@ -600,12 +600,12 @@ function SchemaPreview({ sheet, confirmedLookups }: { sheet: SheetResult; confir
   return (
     <div className="flex flex-col overflow-hidden border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900">
       <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-slate-800/40 border-b border-gray-200 dark:border-slate-700">
-        <Table2 size={12} className="text-gray-400" />
-        <p className="text-xs font-semibold text-gray-600 dark:text-slate-300">Data Preview</p>
-        <span className="text-[11px] text-gray-400 dark:text-slate-500 ml-1">(first 10 rows)</span>
+        <Table2 size={14} className="text-slate-500 dark:text-slate-400" />
+        <p className="text-sm font-semibold text-gray-600 dark:text-slate-300">Data Preview</p>
+        <span className="text-[13px] text-gray-400 dark:text-slate-500 ml-1">(first 10 rows)</span>
       </div>
       <div className="overflow-auto panel-scroll max-h-52">
-        <table className="text-xs">
+        <table className="text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/30">
               {sheet.headers.map((h, i) => (
@@ -707,62 +707,62 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
     <div className="h-full overflow-auto panel-scroll flex items-start justify-center py-10 px-6">
       <div className="w-full max-w-xl space-y-5">
         <div className="space-y-1.5">
-          <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 flex items-center gap-1.5">
-            <Check size={12} className="text-green-500" /> Schema Summary
+          <p className="text-sm font-semibold text-gray-700 dark:text-slate-200 flex items-center gap-1.5">
+            <Check size={14} className="text-green-500" /> Schema Summary
           </p>
           {[
             `Main table: ${sheet.tableName} (${sheet.rowCount.toLocaleString()} rows, ${sheet.columns.length} columns)`,
             ...(confirmedLookups.length ? [`Lookup tables: ${confirmedLookups.map(l => l.lookupTable).join(', ')}`] : []),
           ].map(s => (
-            <p key={s} className="text-xs text-gray-500 dark:text-slate-400 pl-4">• {s}</p>
+            <p key={s} className="text-sm text-gray-500 dark:text-slate-400 pl-4">• {s}</p>
           ))}
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Export Format</p>
+          <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Export Format</p>
           <div className="grid grid-cols-2 gap-2">
             {modeOptions.map(opt => (
               <button key={opt.key} onClick={() => setMode(opt.key)}
                 className={`p-3 rounded-xl border text-left transition-colors space-y-1
                   ${mode === opt.key ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30' : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-blue-300'}`}>
-                <p className={`text-sm font-bold ${mode === opt.key ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-slate-200'}`}>{opt.label}</p>
-                <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-relaxed">{opt.desc}</p>
+                <p className={`text-base font-bold ${mode === opt.key ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-slate-200'}`}>{opt.label}</p>
+                <p className="text-[12px] text-gray-400 dark:text-slate-500 leading-relaxed">{opt.desc}</p>
               </button>
             ))}
           </div>
         </div>
 
         {error && (
-          <div className="flex items-start gap-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-xs text-red-700 dark:text-red-300">
-            <AlertTriangle size={13} className="mt-0.5 shrink-0" /> {error}
+          <div className="flex items-start gap-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" /> {error}
           </div>
         )}
 
         <div className="flex justify-end">
           <button onClick={download} disabled={loading}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-base font-medium transition-colors">
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
             {loading ? 'Generating…' : mode === 'drizzle' ? 'Download .TS' : `Download .${mode.toUpperCase()}`}
           </button>
         </div>
 
         {/* Build in PostgreSQL */}
         <div className="border-t border-gray-200 dark:border-slate-700 pt-5 space-y-3">
-          <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 flex items-center gap-1.5">
-            <Database size={12} className="text-blue-500" /> Build Schema in PostgreSQL
+          <p className="text-sm font-semibold text-gray-700 dark:text-slate-200 flex items-center gap-1.5">
+            <Database size={14} className="text-blue-500" /> Build Schema in PostgreSQL
           </p>
-          <p className="text-[11px] text-gray-400 dark:text-slate-500">
+          <p className="text-[13px] text-gray-400 dark:text-slate-500">
             Execute CREATE TABLE statements directly against a saved PostgreSQL connection. No data is inserted — only the table structure is created.
           </p>
 
           {pgConns.length === 0 ? (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400">No PostgreSQL connections saved. Add one in Settings.</p>
+            <p className="text-[13px] text-amber-600 dark:text-amber-400">No PostgreSQL connections saved. Add one in Settings.</p>
           ) : (
             <div className="flex items-center gap-2">
               <select
                 value={selectedPgConn ?? ''}
                 onChange={e => setSelectedPgConn(Number(e.target.value) || null)}
-                className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="flex-1 text-sm px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
                 <option value="">— select connection —</option>
                 {pgConns.map(c => (
@@ -772,32 +772,32 @@ function ExportStep({ sheet, confirmedLookups }: { sheet: SheetResult; confirmed
               <button
                 onClick={() => void executeSchema()}
                 disabled={!selectedPgConn || execLoading}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition-colors shrink-0"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors shrink-0"
               >
-                {execLoading ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                {execLoading ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
                 {execLoading ? 'Running…' : 'Execute'}
               </button>
             </div>
           )}
 
           {execError && (
-            <div className="flex items-start gap-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-3 py-2.5 text-xs text-red-700 dark:text-red-300">
-              <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {execError}
+            <div className="flex items-start gap-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-3 py-2.5 text-sm text-red-700 dark:text-red-300">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" /> {execError}
             </div>
           )}
 
           {execLog && (
             <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
               <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
-                <Terminal size={11} className="text-gray-400 dark:text-slate-500" />
-                <span className="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Execution Log</span>
-                <span className={`ml-auto text-[10px] font-medium ${execLog.every(l => l.ok) ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                <Terminal size={13} className="text-slate-500 dark:text-slate-400" />
+                <span className="text-[12px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Execution Log</span>
+                <span className={`ml-auto text-[12px] font-medium ${execLog.every(l => l.ok) ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                   {execLog.every(l => l.ok) ? `All ${execLog.length} statement(s) succeeded` : `${execLog.filter(l => !l.ok).length} error(s)`}
                 </span>
               </div>
               <div className="divide-y divide-gray-100 dark:divide-slate-800">
                 {execLog.map((line, i) => (
-                  <div key={i} className={`flex items-start gap-2 px-3 py-2 text-[11px] font-mono ${line.ok ? 'text-gray-700 dark:text-slate-300' : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20'}`}>
+                  <div key={i} className={`flex items-start gap-2 px-3 py-2 text-[13px] font-mono ${line.ok ? 'text-gray-700 dark:text-slate-300' : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20'}`}>
                     <span className={`shrink-0 font-bold ${line.ok ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{line.ok ? '✓' : '✗'}</span>
                     <span className="break-all">{line.text}</span>
                   </div>
@@ -888,7 +888,7 @@ function GuidePopover() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(o => !o)}
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium border transition-colors
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[13px] font-medium border transition-colors
           ${open
             ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
             : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/60 dark:hover:bg-blue-950/20'}`}
@@ -901,11 +901,11 @@ function GuidePopover() {
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
             <div className="flex items-center gap-2">
-              <Wand2 size={13} className="text-blue-500" />
-              <p className="text-sm font-semibold text-gray-800 dark:text-slate-100">Data Normalizer — Guide</p>
+              <Wand2 size={15} className="text-blue-500" />
+              <p className="text-base font-semibold text-gray-800 dark:text-slate-100">Data Normalizer — Guide</p>
             </div>
             <button onClick={() => setOpen(false)} className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-200">
-              <X size={13} />
+              <X size={15} />
             </button>
           </div>
 
@@ -913,12 +913,12 @@ function GuidePopover() {
           <div className="overflow-y-auto max-h-[70vh] panel-scroll divide-y divide-gray-100 dark:divide-slate-800">
             {GUIDE_SECTIONS.map(sec => (
               <div key={sec.title} className="px-4 py-3.5 space-y-2">
-                <p className={`text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${sec.color}`}>
+                <p className={`text-[13px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${sec.color}`}>
                   <span>{sec.icon}</span> {sec.title}
                 </p>
                 <ul className="space-y-1.5">
                   {sec.body.map((line, i) => (
-                    <li key={i} className="flex gap-2 text-xs text-gray-600 dark:text-slate-300 leading-relaxed">
+                    <li key={i} className="flex gap-2 text-sm text-gray-600 dark:text-slate-300 leading-relaxed">
                       <span className="text-gray-300 dark:text-slate-600 shrink-0 mt-0.5">–</span>
                       {line}
                     </li>
@@ -962,15 +962,15 @@ function SavedJobsPanel({
       <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/40 min-h-[41px]">
         {open ? (
           <>
-            <span className="flex-1 px-3 text-[11px] font-semibold text-gray-600 dark:text-slate-300 uppercase tracking-wider">Saved Jobs</span>
+            <span className="flex-1 px-3 text-[13px] font-semibold text-gray-600 dark:text-slate-300 uppercase tracking-wider">Saved Jobs</span>
             <button onClick={onToggle}
               className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
-              <ChevronRight size={13} />
+              <ChevronRight size={15} />
             </button>
           </>
         ) : (
           <button onClick={onToggle} className="w-full h-full flex items-center justify-center py-3">
-            <ChevronLeft size={13} className="text-gray-400" />
+            <ChevronLeft size={15} className="text-slate-500 dark:text-slate-400" />
           </button>
         )}
       </div>
@@ -981,36 +981,36 @@ function SavedJobsPanel({
           {hasData && (
             <div className="shrink-0 px-2.5 py-2.5 border-b border-gray-100 dark:border-slate-800">
               <button onClick={onSave}
-                className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] font-medium border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded transition-colors">
-                <Save size={10} /> Save current session
+                className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[13px] font-medium border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded transition-colors">
+                <Save size={12} /> Save current session
               </button>
-              {saveError && <p className="text-[10px] text-rose-500 mt-1 text-center">{saveError}</p>}
+              {saveError && <p className="text-[12px] text-rose-500 mt-1 text-center">{saveError}</p>}
             </div>
           )}
 
           {/* Jobs list */}
           <div className="flex-1 min-h-0 overflow-y-auto panel-scroll">
             {jobs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-24 gap-1.5 text-[11px] text-gray-400 dark:text-slate-500">
-                <Clock size={16} className="text-gray-200 dark:text-slate-700" />
+              <div className="flex flex-col items-center justify-center h-24 gap-1.5 text-[13px] text-gray-400 dark:text-slate-500">
+                <Clock size={18} className="text-slate-400 dark:text-slate-500" />
                 No saved jobs
               </div>
             ) : (
               <div className="p-2 space-y-1.5">
                 {jobs.map(job => (
                   <div key={job.id} className="border border-gray-100 dark:border-slate-800 rounded p-2 hover:border-gray-200 dark:hover:border-slate-700 transition-colors">
-                    <p className="text-[11px] font-medium text-gray-700 dark:text-slate-200 truncate" title={job.name}>{job.name}</p>
-                    <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">
+                    <p className="text-[13px] font-medium text-gray-700 dark:text-slate-200 truncate" title={job.name}>{job.name}</p>
+                    <p className="text-[12px] text-gray-400 dark:text-slate-500 mt-0.5">
                       {new Date(job.savedAt).toLocaleDateString()} · Step {job.step}
                     </p>
                     <div className="flex items-center gap-1 mt-1.5">
                       <button onClick={() => onLoad(job)}
-                        className="flex-1 px-2 py-1 text-[10px] font-medium bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors">
+                        className="flex-1 px-2 py-1 text-[12px] font-medium bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors">
                         Load
                       </button>
                       <button onClick={() => onDelete(job.id)}
                         className="p-1 rounded text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-colors">
-                        <Trash2 size={10} />
+                        <Trash2 size={12} />
                       </button>
                     </div>
                   </div>
@@ -1024,7 +1024,7 @@ function SavedJobsPanel({
       {/* Collapsed: vertical label */}
       {!open && (
         <div className="flex-1 flex items-center justify-center overflow-hidden">
-          <span className="text-[9px] font-bold text-gray-300 dark:text-slate-700 uppercase tracking-widest whitespace-nowrap"
+          <span className="text-[11px] font-bold text-gray-300 dark:text-slate-700 uppercase tracking-widest whitespace-nowrap"
             style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>
             Saved Jobs
           </span>
@@ -1240,10 +1240,10 @@ export default function NormalizerPage() {
         {/* ── Navbar ───────────────────────────────────────────────────────── */}
         <header className="shrink-0 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-gray-200 dark:border-slate-700 px-6 py-3 flex items-center gap-4">
           <div className="flex items-center gap-2.5 shrink-0">
-            <Wand2 size={16} className="text-blue-600 shrink-0" />
+            <Wand2 size={18} className="text-blue-600 shrink-0" />
             <div>
-              <h1 className="font-bold text-sm text-gray-900 dark:text-slate-100 leading-tight">Data Normalizer</h1>
-              <p className="text-[11px] text-gray-500 dark:text-slate-400 leading-tight">Profile, normalise and export</p>
+              <h1 className="font-bold text-base text-gray-900 dark:text-slate-100 leading-tight">Data Normalizer</h1>
+              <p className="text-[13px] text-gray-500 dark:text-slate-400 leading-tight">Profile, normalise and export</p>
             </div>
           </div>
           <div className="flex-1" />
@@ -1255,9 +1255,9 @@ export default function NormalizerPage() {
 
           {/* DB picker */}
           <div className="flex items-center gap-1.5 py-2 pr-4 border-r border-gray-200 dark:border-slate-700">
-            <Database size={11} className="text-gray-400 shrink-0" />
+            <Database size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />
             <select value={selectedConnId ?? ''} onChange={e => handleConnChange(e.target.value ? Number(e.target.value) : null)}
-              className="px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 min-w-[140px]">
+              className="px-2 py-1 text-[13px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 min-w-[140px]">
               <option value="">— connection —</option>
               {(['postgres', 'mysql'] as const).map(type => {
                 const group = connections.filter(c => c.db_type === type);
@@ -1271,29 +1271,29 @@ export default function NormalizerPage() {
             </select>
             {dbSchemas.length > 0 && (
               <select value={dbSchema} onChange={e => handleSchemaChange(e.target.value)}
-                className="px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 min-w-[90px]">
+                className="px-2 py-1 text-[13px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 min-w-[90px]">
                 <option value="">— schema —</option>
                 {dbSchemas.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             )}
             {dbTables.length > 0 && (
               <select value={dbTable} onChange={e => setDbTable(e.target.value)}
-                className="px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 min-w-[120px]">
+                className="px-2 py-1 text-[13px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:border-blue-400 min-w-[120px]">
                 <option value="">— table —</option>
                 {dbTables.map(t => <option key={t.name} value={t.name}>{t.name} ({t.rowCount.toLocaleString()})</option>)}
               </select>
             )}
             {dbTable && (
               <button onClick={handleLoadTable} disabled={dbLoading}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition-colors">
-                {dbLoading ? <Loader2 size={10} className="animate-spin" /> : <Database size={10} />}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[13px] font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition-colors">
+                {dbLoading ? <Loader2 size={12} className="animate-spin" /> : <Database size={12} />}
                 {dbLoading ? 'Loading…' : 'Load'}
               </button>
             )}
             {step > 1 && (
               <button onClick={reset}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-200 transition-colors">
-                <RefreshCw size={10} /> Reset
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[13px] font-medium border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-200 transition-colors">
+                <RefreshCw size={12} /> Reset
               </button>
             )}
           </div>
@@ -1301,20 +1301,20 @@ export default function NormalizerPage() {
           {/* Step tabs */}
           <div className="flex items-stretch ml-2">
             {([
-              { n: 1 as Step, label: 'Upload',  icon: <Upload size={12} /> },
-              { n: 2 as Step, label: 'Profile',  icon: <BarChart2 size={12} /> },
-              { n: 3 as Step, label: 'Schema',   icon: <Layers size={12} /> },
-              { n: 4 as Step, label: 'Export',   icon: <Download size={12} /> },
+              { n: 1 as Step, label: 'Upload',  icon: <Upload size={14} /> },
+              { n: 2 as Step, label: 'Profile',  icon: <BarChart2 size={14} /> },
+              { n: 3 as Step, label: 'Schema',   icon: <Layers size={14} /> },
+              { n: 4 as Step, label: 'Export',   icon: <Download size={14} /> },
             ]).map(({ n, label, icon }) => {
               const accessible = n === 1 || (n === 2 && sheets.length > 0) || (n === 3 && sheets.length > 0 && step >= 3) || (n === 4 && step >= 4);
               const active = step === n; const done = step > n;
               return (
                 <button key={n} onClick={() => accessible ? setStep(n) : undefined} disabled={!accessible}
-                  className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                     active ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                     : done ? 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300'
                     : 'border-transparent text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-400'}`}>
-                  {done ? <Check size={12} className="text-blue-500" /> : icon}
+                  {done ? <Check size={14} className="text-blue-500" /> : icon}
                   {label}
                 </button>
               );
@@ -1325,21 +1325,21 @@ export default function NormalizerPage() {
           <div className="flex items-center gap-2 ml-3">
             {step === 2 && sheets.length > 0 && (
               <button onClick={handleConfirmSchema}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
-                Build Schema <ChevronRight size={11} />
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
+                Build Schema <ChevronRight size={13} />
               </button>
             )}
             {step === 3 && currentSheet && (
               <button onClick={handleSaveAndExport}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border border-green-400 dark:border-green-600 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950/30 transition-colors">
-                <Download size={11} /> Save & Export
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium border border-green-400 dark:border-green-600 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950/30 transition-colors">
+                <Download size={13} /> Save & Export
               </button>
             )}
           </div>
 
           {/* Active source info — right side */}
           {step > 1 && currentSheet && (
-            <div className="ml-auto flex items-center gap-1.5 py-2 px-4 border-l border-gray-200 dark:border-slate-700 text-[11px] text-gray-400 dark:text-slate-500">
+            <div className="ml-auto flex items-center gap-1.5 py-2 px-4 border-l border-gray-200 dark:border-slate-700 text-[13px] text-gray-400 dark:text-slate-500">
               {fileIcon(currentSheet.sheetName + '.xlsx')}
               <span className="font-medium text-gray-600 dark:text-slate-300">{currentSheet.sheetName}</span>
               <span>·</span>

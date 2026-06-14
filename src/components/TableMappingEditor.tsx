@@ -16,7 +16,7 @@ export default function TableMappingEditor({ table, onChange }: Props) {
       {/* Include toggle */}
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-gray-800">{table.mysqlName}</h3>
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <label className="flex items-center gap-2 text-base cursor-pointer">
           <input
             type="checkbox"
             checked={table.include}
@@ -32,21 +32,21 @@ export default function TableMappingEditor({ table, onChange }: Props) {
           <div className="grid grid-cols-2 gap-4">
             {/* PG Table Name */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">PostgreSQL Table Name</label>
+              <label className="block text-sm font-medium text-gray-600 mb-1">PostgreSQL Table Name</label>
               <input
                 type="text"
                 value={table.pgName}
                 onChange={(e) => update({ pgName: e.target.value })}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
             </div>
             {/* PG Schema */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">PostgreSQL Schema</label>
+              <label className="block text-sm font-medium text-gray-600 mb-1">PostgreSQL Schema</label>
               <select
                 value={table.pgSchema}
                 onChange={(e) => update({ pgSchema: e.target.value })}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
               >
                 {PG_SCHEMAS.map((s) => (
                   <option key={s} value={s}>{s}</option>
@@ -57,13 +57,13 @@ export default function TableMappingEditor({ table, onChange }: Props) {
 
           {/* Description */}
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+            <label className="block text-sm font-medium text-gray-600 mb-1">Description</label>
             <input
               type="text"
               value={table.description}
               onChange={(e) => update({ description: e.target.value })}
               placeholder="Optional table description"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
           </div>
         </>
