@@ -2076,6 +2076,107 @@ export default function Migration() {
                           </div>
                         );
                       })}
+
+                      {/* ── Ghost rows: mapped tables whose target table doesn't exist yet ── */}
+                      {tgtConnected && tableMaps
+                        .filter(m => {
+                          if (!m.include || !m.target.table) return false;
+                          const resolvedName = m.targetAlias?.trim() || m.target.table;
+                          return !tgtTables.some(t => t.schema === m.target.schema && t.name === resolvedName);
+                        })
+                        .map(m => {
+                          const targetTable = m.targetAlias?.trim() || m.target.table;
+                          const isSelected = m.id === selectedMapId;
+                          const runState = currentRun?.tableStates.find(ts => ts.id === m.id);
+                          const accumState = accumulatedTableStates.find(ts => ts.sourceKey === `${m.source.schema}.${m.source.table}`);
+                          const totalProcessed = (runState?.rowsMigrated ?? 0) + (runState?.rowsSkipped ?? 0);
+                          const pct = runState && runState.rowsSource > 0
+                            ? Math.min(100, Math.round(totalProcessed / runState.rowsSource * 100))
+                            : runState ? 0 : null;
+                          const isRunning = runState?.status === 'running';
+                          const isPaused = pausedTableIds.has(m.id);
+                          const hasErrors = (runState?.rowsErrored ?? accumState?.rowsErrored ?? 0) > 0;
+                          return (
+                            <div key={`new:${m.id}`}
+                              onClick={() => setSelectedMapId(m.id)}
+                              className={`border-b border-blue-100 dark:border-blue-900/30 cursor-pointer transition-colors ${isSelected ? 'bg-blue-100 dark:bg-blue-950/30' : 'bg-blue-50/40 dark:bg-blue-950/10 hover:bg-blue-50 dark:hover:bg-blue-950/20'}`}>
+
+                              {/* Row 1: checkbox + icon + name + new badge + source ref */}
+                              <div className="flex items-center gap-1.5 px-3 pt-1.5 pb-0.5">
+                                <input type="checkbox" checked={m.include}
+                                  onChange={e => { e.stopPropagation(); updateTableMap(m.id, { include: e.target.checked }); }}
+                                  onClick={e => e.stopPropagation()}
+                                  className="shrink-0 accent-violet-500" />
+                                <Table2 size={12} className="shrink-0 text-blue-400" />
+                                <span className="text-[13px] font-mono truncate text-blue-700 dark:text-blue-400">
+                                  {targetTable}
+                                </span>
+                                <span className="text-[11px] px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-semibold shrink-0">new</span>
+                                {m.isSet && (
+                                  <span className="inline-flex items-center gap-0.5 text-[11px] px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">
+                                    <Check size={9} />set
+                                  </span>
+                                )}
+                                <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate ml-auto shrink-0">
+                                  ← {m.source.schema}.{m.source.table}
+                                </span>
+                              </div>
+
+                              {/* Row 2: progress / "auto-create" hint + run controls */}
+                              <div className="flex items-center gap-1.5 pl-9 pr-3 pb-1.5" onClick={e => e.stopPropagation()}>
+                                {pct !== null ? (
+                                  <>
+                                    <div className="flex-1 max-w-80 h-1.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden min-w-0">
+                                      <div className={`h-full rounded-full transition-all duration-500 ${
+                                        runState?.status === 'completed' ? 'bg-emerald-500'
+                                        : runState?.status === 'failed' ? 'bg-rose-500'
+                                        : isPaused ? 'bg-amber-400' : 'bg-violet-500'
+                                      }`} style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 shrink-0">{pct}%</span>
+                                    {(runState!.rowsMigrated > 0 || runState!.rowsErrored > 0) && (
+                                      <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0">
+                                        {runState!.rowsMigrated.toLocaleString()}w
+                                        {runState!.rowsErrored > 0 && <span className="text-rose-500 ml-0.5">{runState!.rowsErrored.toLocaleString()}e</span>}
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="flex-1 text-[11px] text-blue-400 dark:text-blue-600 italic">
+                                    table will be auto-created on first run
+                                  </span>
+                                )}
+                                {runState && <StatusBadge status={runState.status} />}
+                                {hasErrors && <AlertTriangle size={12} className="text-rose-500 shrink-0" />}
+                                <div className="flex items-center gap-0.5 shrink-0">
+                                  {isRunning && !isPaused ? (
+                                    <>
+                                      <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.add(m.id); return n; })}
+                                        title="Pause" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-amber-500 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
+                                        <Pause size={12} />
+                                      </button>
+                                      <button onClick={() => void stopTableInRun(m.id)}
+                                        title="Stop" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-rose-500 hover:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
+                                        <Square size={12} />
+                                      </button>
+                                    </>
+                                  ) : isPaused ? (
+                                    <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.delete(m.id); return n; })}
+                                      title="Resume" className="p-0.5 rounded border border-amber-400 dark:border-amber-500 text-amber-500 hover:text-violet-600 hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
+                                      <Play size={12} />
+                                    </button>
+                                  ) : (
+                                    <button onClick={() => void startTableMigration(m.id)}
+                                      disabled={polling} title="Run this table"
+                                      className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-violet-600 hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors">
+                                      <Play size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                     </div>
                   </div>
                 </Panel>

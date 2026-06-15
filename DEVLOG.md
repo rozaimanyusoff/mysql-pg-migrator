@@ -3,6 +3,30 @@
 ---
 
 ## 2026-06-15
+- **fix** — Migration: show and run source tables whose target table doesn't exist yet
+  - `src/pages/migration.tsx`: Added "ghost rows" at the bottom of the target TABLES panel for any tableMap that is included, has a target table name set, but that table doesn't exist in `tgtTables`. Each ghost row shows the target table name with a blue `new` badge, a `← source.table` reference, and the text "table will be auto-created on first run". Includes full run controls (play/pause/stop), progress bar, and status badge — same as existing target rows. The runner's `ensureTargetTable` already handled auto-creation; this change makes the pending migration visible so users know the mapping is active and can trigger it individually without "Run All".
+  - Root cause: target TABLES panel only iterated `filteredTgtTables` (existing DB tables), so unmatched source-table mappings were invisible.
+  - Status: done
+
+
+- **revision** — Remove Replace tab from header; optional Save Job after success
+  - `src/pages/export-import.tsx`: Removed "Replace" tab from the toolbar tab buttons (`Tab` type narrowed to `'export' | 'import' | 'sync'`). Replace functionality is still accessible via right-click context menu on the Sync tab. Cleaned up all `tab === 'replace'` references from canRun, handleRun, run button styles/labels, typeMismatchRef effect, Panel 1/2/3 tgt props, and log panel focusRange condition. Also removed dead per-table replace button from the table list.
+  - Replaced automatic `saveHistory()` calls in handleExport / doImport / handleSync with optional "Save Job" button: on success, stores `pendingJobEntry` and shows a green "Save Job" button in the toolbar. Clicking saves to history and switches to a "Saved" confirmation chip. If the user ignores it, the job is not saved. State resets on tab change or new run.
+  - Status: done
+
+
+- **fix** — pg_dump import compatibility: COPY blocks, psql meta-commands, duplicate key on Replace Schema
+  - `src/pages/api/export-import/import.ts`: Added `preprocessSql()` that strips psql backslash meta-commands (`\restrict`, `\unrestrict`, `\connect`, `\set`, etc.) and converts `COPY table (cols) FROM stdin … \.` blocks into batched `INSERT INTO` statements (500 rows per statement). Preprocessor also returns `copyTables: string[]` — the list of tables from COPY blocks. Added `parseCopyRow()` for PostgreSQL COPY text format (tab-separated, `\N`=NULL, backslash escapes). Applied preprocessing transparently in both `pgImport` and `mysqlImport`. Also added `statement_timeout: 0` to PG pool config for large imports.
+  - Fixed `replace_schema` for data-only dumps: if COPY blocks are present (dump is data-only), now runs `TRUNCATE TABLE … RESTART IDENTITY CASCADE` on the exact tables in the dump rather than dropping `public` schema. This prevents `duplicate key` errors when re-importing to an existing schema like `stock`. Falls back to DROP/recreate `public` schema only when no COPY tables are detected (full SQL dump with CREATE TABLE).
+  - Root cause: `pg` Node.js driver's `client.query()` cannot handle psql meta-commands or COPY FROM stdin (psql client features). "Replace Schema" was clearing `public` but data was in `stock`, leaving existing rows in place.
+  - Status: done
+
+- **revision** — Import tab UX: contextual 2-action selector, compact drop zone, schema-aware flow
+  - `src/pages/export-import.tsx`: Removed `SqlImportField` textarea and `ExcelImportModal`; replaced with `SqlFileDropZone` (compact `h-28`, drag/drop or browse `.sql`/`.dump`). Action selector is now contextual — 2 buttons only: always "Import Rows" + "Replace Schema" when schema is selected, or "Replace DB" when only DB is selected. Schema panel enabled for import tab so users can select a schema before importing. `useEffect` auto-switches strategy when schema selection changes (e.g. deselecting schema resets `replace_schema` → `replace_db`). Panel 4 header shows "Import" instead of "SQL Input". Updated `doImport` to pass `strategy` to API.
+  - `src/pages/api/export-import/import.ts`: Rewrote to accept `strategy` param. `import_rows` = existing behaviour. `replace_schema` (PG) = `DROP/CREATE SCHEMA public` before running SQL; (MySQL) = drop all tables with `FOREIGN_KEY_CHECKS=0` first. `replace_db` (PG) = admin Client connects to `postgres` db, terminates connections, `DROP/CREATE DATABASE`, then run SQL; (MySQL) = admin connection drops and recreates the database with `utf8mb4` charset. Both DB replacement paths prepend an `[INFO]` log line.
+  - Status: done
+
+
 - **fix** — Fresh migration: runner auto-discovers columns when no mapping configured
   - `src/lib/migv2/runner.ts`: Added `fetchSourceColumns(conn, schema, table, targetType)` — queries `information_schema.COLUMNS` for both PG and MySQL, maps types via `suggestTargetType()`. In `advanceRun()`, when `tableMap.columns.length === 0`, auto-discovers columns before the row-count + DDL steps; logs discovery count; marks table failed on error (with message in run logs).
   - `src/pages/migration.tsx` `doSaveJob()`: Added early guard — shows error if source or target connection not set, preventing jobs with empty `sourceMeta`/`targetMeta` from being saved.

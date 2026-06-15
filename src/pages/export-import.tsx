@@ -8,7 +8,7 @@ import {
   ChevronRight, UploadCloud, Download, RefreshCw, Play, CheckCircle2,
   XCircle, Loader2, Database, Server, FileCode2, ArrowRightLeft,
   AlertCircle, Table2, Copy, Check, ChevronLeft, ChevronUp, ChevronDown,
-  Info, FileSpreadsheet, Filter, Clock, Trash2, Save,
+  Info, Filter, Clock, Trash2, Save,
   Eye, ShieldAlert, Plus, HelpCircle, BookOpen, X, Replace,
 } from 'lucide-react';
 import { useAlert } from '../lib/alert-context';
@@ -18,15 +18,12 @@ import type { HistoryEntry } from './api/export-import/history';
 import type { AnalyseResult } from './api/export-import/analyse';
 import type { ExplorerConn } from '../lib/explorer-db';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import {
-  PG_TYPES, type PgColumnType, type ParsedColumn, type ParsedTable,
-  parseExcelFile, generateSeedSqlFromTables,
-} from '../lib/excel-parser';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Tab = 'export' | 'import' | 'sync' | 'replace';
+type Tab = 'export' | 'import' | 'sync';
 type ExportFormat = 'sql' | 'csv';
+type ImportStrategy = 'import_rows' | 'replace_schema' | 'replace_db';
 interface LogLine { step: string; ok: boolean; text: string; ts?: string }
 interface DryRunSummary {
   total: number; creates: number; inserts: number;
@@ -146,134 +143,56 @@ function DryRunModal({ sql, onConfirm, onCancel }: {
   );
 }
 
-// ── Excel preview modal ────────────────────────────────────────────────────────
+// ── SQL / dump file drop zone ──────────────────────────────────────────────────
 
-function ExcelImportModal({ tables: initial, onApply, onClose }: {
-  tables: ParsedTable[]; onApply: (sql: string) => void; onClose: () => void;
+function SqlFileDropZone({ file, onFile, onClear }: {
+  file: File | null;
+  onFile: (file: File, content: string) => void;
+  onClear: () => void;
 }) {
-  const [tables, setTables] = useState(initial);
-  const [activeSheet, setActive] = useState(initial[0]?.sheetName ?? '');
-  const active = tables.find((t) => t.sheetName === activeSheet);
-
-  const updateCol = (sheetName: string, idx: number, patch: Partial<ParsedColumn>) =>
-    setTables((prev) => prev.map((t) =>
-      t.sheetName === sheetName ? { ...t, columns: t.columns.map((c, i) => i === idx ? { ...c, ...patch } : c) } : t
-    ));
-
-  return (
-    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl max-h-[88vh] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl flex flex-col">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-slate-800 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <FileSpreadsheet size={17} className="text-emerald-500" />
-            <p className="font-semibold text-base text-gray-900 dark:text-slate-100">Excel → INSERT Preview</p>
-            <span className="text-sm text-gray-400 dark:text-slate-500">{tables.length} sheets</span>
-          </div>
-          <button onClick={onClose} className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><XCircle size={18} /></button>
-        </div>
-        <div className="flex flex-1 min-h-0">
-          <nav className="w-40 shrink-0 border-r border-gray-100 dark:border-slate-800 p-2 space-y-1 overflow-y-auto">
-            {tables.map((t) => (
-              <button key={t.sheetName} type="button" onClick={() => setActive(t.sheetName)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                  activeSheet === t.sheetName
-                    ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
-                    : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
-                }`}>
-                <p className="truncate font-medium">{t.sheetName}</p>
-                <p className="opacity-60 mt-0.5">{t.rowCount} rows</p>
-              </button>
-            ))}
-          </nav>
-          {active && (
-            <div className="flex-1 p-4 overflow-y-auto min-w-0 space-y-3">
-              <p className="text-sm text-gray-500 dark:text-slate-400">
-                Table: <code className="font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400">{active.name}</code>
-              </p>
-              <div className="rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-slate-700">
-                      <th className="text-left px-3 py-2 font-medium text-gray-500 dark:text-slate-400">Column</th>
-                      <th className="text-left px-3 py-2 font-medium text-gray-500 dark:text-slate-400">Type</th>
-                      <th className="text-center px-3 py-2 font-medium text-gray-500 dark:text-slate-400">Nullable</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                    {active.columns.map((col, i) => (
-                      <tr key={i}>
-                        <td className="px-3 py-2 font-mono text-gray-700 dark:text-slate-300">{col.originalName}</td>
-                        <td className="px-3 py-2">
-                          <select value={col.type}
-                            onChange={(e) => updateCol(active.sheetName, i, { type: e.target.value as PgColumnType })}
-                            className="px-2 py-1 rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                            {PG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          <input type="checkbox" checked={col.nullable}
-                            onChange={(e) => updateCol(active.sheetName, i, { nullable: e.target.checked })}
-                            className="accent-blue-600" />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100 dark:border-slate-800 shrink-0">
-          <p className="text-sm text-gray-400 dark:text-slate-500">
-            Generates INSERT statements for {tables.reduce((s, t) => s + t.rowCount, 0)} rows
-          </p>
-          <div className="flex items-center gap-3">
-            <button type="button" onClick={onClose}
-              className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
-            <button type="button" onClick={() => onApply(generateSeedSqlFromTables(tables))}
-              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-base font-medium hover:bg-emerald-700">
-              <CheckCircle2 size={15} /> Apply as SQL
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── SQL drag-drop import field ─────────────────────────────────────────────────
-
-function SqlImportField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const readFile = (file: File) => {
+  const readFile = (f: File) => {
     const reader = new FileReader();
-    reader.onload = (e) => onChange(e.target?.result as string ?? '');
-    reader.readAsText(file);
+    reader.onload = (e) => onFile(f, e.target?.result as string ?? '');
+    reader.readAsText(f);
   };
+  if (file) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-2.5 rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20">
+        <FileCode2 size={22} className="text-emerald-500" />
+        <div className="text-center">
+          <p className="text-[13px] font-semibold text-gray-800 dark:text-slate-200">{file.name}</p>
+          <p className="text-[12px] text-gray-400 dark:text-slate-500 mt-0.5">
+            {file.size >= 1024 * 1024
+              ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
+              : `${(file.size / 1024).toFixed(1)} KB`}
+          </p>
+        </div>
+        <button type="button" onClick={onClear}
+          className="flex items-center gap-1.5 px-3 py-1 text-[12px] rounded-lg border border-rose-200 dark:border-rose-800 text-rose-500 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
+          <X size={11} /> Remove
+        </button>
+      </div>
+    );
+  }
   return (
     <div
-      className={`relative flex flex-col flex-1 rounded-xl border-2 border-dashed transition-colors ${dragging ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-700'}`}
+      className={`h-full flex flex-col items-center justify-center gap-2.5 rounded-xl border-2 border-dashed cursor-pointer transition-colors ${
+        dragging ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-950/20' : 'border-gray-200 dark:border-slate-700 hover:border-emerald-400 dark:hover:border-emerald-700'
+      }`}
+      onClick={() => fileRef.current?.click()}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) readFile(f); }}
     >
-      <textarea value={value} onChange={(e) => onChange(e.target.value)}
-        placeholder="Paste SQL here or drag & drop a .sql file…"
-        className="flex-1 px-4 py-3 text-sm font-mono bg-transparent text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none resize-none"
-      />
-      <div className="shrink-0 px-4 pb-3 flex items-center gap-2 border-t border-gray-100 dark:border-slate-800">
-        <button type="button" onClick={() => fileRef.current?.click()}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">
-          <UploadCloud size={14} /> Browse .sql
-        </button>
-        {value && <button type="button" onClick={() => onChange('')} className="text-[12px] text-gray-400 hover:text-rose-500">Clear</button>}
-        {value.trim() && (
-          <span className="ml-auto text-[12px] text-gray-400 dark:text-slate-500 font-mono">~{parseDryRun(value).total} statements</span>
-        )}
-        <input ref={fileRef} type="file" accept=".sql,.txt" className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); }} />
+      <UploadCloud size={22} className={dragging ? 'text-emerald-500' : 'text-slate-400 dark:text-slate-500'} />
+      <div className="text-center">
+        <p className="text-[13px] font-medium text-gray-600 dark:text-slate-300">Drop .sql or .dump file here</p>
+        <p className="text-[12px] text-gray-400 dark:text-slate-500 mt-0.5">or click to browse</p>
       </div>
+      <input ref={fileRef} type="file" accept=".sql,.dump,.txt" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); e.target.value = ''; }} />
     </div>
   );
 }
@@ -487,14 +406,15 @@ function GuidePopover() {
             <div>
               <p className={h3}><UploadCloud size={14} className="text-emerald-500" /> Import</p>
               <div className={sec}>
-                <p>Select <strong>target</strong> connection → database, then paste or upload SQL. Click {pill('Import')} (or {pill('Preview')} first).</p>
+                <p>Select <strong>target</strong> connection → database, then drop or browse a file. Click {pill('Import')} (or {pill('Preview')} first).</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
-                  <li>{pill('SQL')} — paste SQL directly or drag a .sql file into the text area.</li>
-                  <li>{pill('Excel')} — upload .xlsx/.xls; each sheet becomes INSERT statements.</li>
+                  <li>Accepts <strong>.sql</strong> and <strong>.dump</strong> files — drag & drop or click to browse.</li>
+                  <li>{pill('Import Rows')} — execute SQL as-is (default, safest).</li>
+                  <li>{pill('Replace Schema')} — wipe the schema first (PG: DROP/CREATE public, MySQL: drop all tables), then import.</li>
+                  <li>{pill('Replace DB')} — drop and recreate the entire database, then import.</li>
                   <li>{pill('Preview')} — shows a dry-run breakdown (CREATE/INSERT/DROP counts) before executing.</li>
-                  <li>Import runs with per-statement rollback — a failed statement rolls back only that statement.</li>
                 </ul>
-                <p className="text-[12px] text-gray-400 dark:text-slate-500">Panels 3 (Schema) and 4 (Tables) are not applicable for Import — table selection comes from the SQL input itself.</p>
+                <p className="text-[12px] text-gray-400 dark:text-slate-500">Panels 3 (Schema) and 4 (Tables) are not applicable for Import — table selection comes from the SQL file itself.</p>
               </div>
             </div>
 
@@ -1047,7 +967,7 @@ function SavedJobsPanel({ collapsed, onToggle, refreshKey }: {
   const visible = filter === 'all' ? history : history.filter(h => h.operation === filter);
 
   return (
-    <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${collapsed ? 'w-9' : 'w-64'}`}>
+    <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${collapsed ? 'w-9' : 'w-80'}`}>
       {/* Header — always visible */}
       <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
         {!collapsed && <Save size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />}
@@ -1126,12 +1046,10 @@ export default function ExportImportPage() {
   const [showFilter, setShowFilter] = useState(false);
 
   // Import
-  const [importSql, setImportSql]       = useState('');
-  const [importMode, setImportMode]     = useState<'sql' | 'excel'>('sql');
-  const [excelTables, setExcelTables]   = useState<ParsedTable[] | null>(null);
-  const [parsingExcel, setParsingExcel] = useState(false);
-  const [showDryRun, setShowDryRun]     = useState(false);
-  const excelFileRef = useRef<HTMLInputElement>(null);
+  const [importSql, setImportSql]           = useState('');
+  const [importFile, setImportFile]         = useState<File | null>(null);
+  const [importStrategy, setImportStrategy] = useState<ImportStrategy>('import_rows');
+  const [showDryRun, setShowDryRun]         = useState(false);
 
   // Sync
   const [conflict, setConflict] = useState<ConflictStrategy>('insert_only');
@@ -1151,6 +1069,8 @@ export default function ExportImportPage() {
   // Saved Jobs panel
   const [jobsCollapsed, setJobsCollapsed] = useState(false);
   const [jobsRefreshKey, setJobsRefreshKey] = useState(0);
+  const [pendingJobEntry, setPendingJobEntry] = useState<Partial<HistoryEntry> | null>(null);
+  const [jobSaved, setJobSaved] = useState(false);
 
   // Context menu (right-click on table rows)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; scope: 'table' | 'schema' | 'db' | null; name: string | null } | null>(null);
@@ -1176,7 +1096,7 @@ export default function ExportImportPage() {
   // Show alert when sync source/target DB types differ
   const typeMismatchRef = useRef(false);
   useEffect(() => {
-    const mismatch = !!((tab === 'sync' || tab === 'replace') && conn && tgtConn && conn.db_type !== tgtConn.db_type);
+    const mismatch = !!(tab === 'sync' && conn && tgtConn && conn.db_type !== tgtConn.db_type);
     if (mismatch && !typeMismatchRef.current) setShowCrossDbAlert(true);
     typeMismatchRef.current = mismatch;
   }, [tab, conn?.db_type, tgtConn?.db_type]);
@@ -1210,16 +1130,33 @@ export default function ExportImportPage() {
     })();
   }, [conn?.id, database, schema]);
 
+  // Auto-switch import strategy when schema selection changes
+  useEffect(() => {
+    if (tab !== 'import') return;
+    if (importStrategy === 'replace_db' && schema) setImportStrategy('replace_schema');
+    else if (importStrategy === 'replace_schema' && !schema) setImportStrategy('replace_db');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, schema]);
+
   // Reset results when switching tabs
   const handleTabChange = (t: Tab) => {
     setTab(t); setLog([]); setRunStatus(null); setExportResult(null); setError(null);
     setTableSyncStatus({}); setTableLogRanges({}); setFocusRange(null);
+    setPendingJobEntry(null); setJobSaved(false);
+  };
+
+  const handleSaveJob = async () => {
+    if (!pendingJobEntry) return;
+    await saveHistory(pendingJobEntry);
+    setJobSaved(true);
+    setJobsRefreshKey(k => k + 1);
   };
 
   // Export
   const handleExport = async () => {
     if (!conn || !database) return;
     setRunning(true); setExportResult(null); setError(null); setLog([]);
+    setPendingJobEntry(null); setJobSaved(false);
     const tablesToExport = selectedTables === 'all' ? 'all' : selectedTables.map(t => t.split('.').pop() ?? t);
     try {
       const { data } = await axios.post('/api/export-import/export',
@@ -1235,42 +1172,40 @@ export default function ExportImportPage() {
         a.href = url; a.download = `${database}_${new Date().toISOString().slice(0, 10)}.zip`; a.click();
         URL.revokeObjectURL(url);
         setRunStatus('success');
-        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: csvData.tables.length, include: exportInclude, format: 'csv', where_clause: whereClause.trim() || undefined, status: 'success' });
+        setPendingJobEntry({ operation: 'export', source_label: conn.label, source_db: database, tables_count: csvData.tables.length, include: exportInclude, format: 'csv', where_clause: whereClause.trim() || undefined, status: 'success' });
       } else {
         const sqlData = data as { sql: string; tables: string[] };
         setExportResult(sqlData); setRunStatus('success');
-        // Auto-download immediately
         const blob = new Blob([sqlData.sql], { type: 'text/sql' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = `${database}_${schema || 'public'}_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.sql`; a.click();
         URL.revokeObjectURL(url);
-        await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: sqlData.tables.length, include: exportInclude, format: 'sql', where_clause: whereClause.trim() || undefined, status: 'success' });
+        setPendingJobEntry({ operation: 'export', source_label: conn.label, source_db: database, tables_count: sqlData.tables.length, include: exportInclude, format: 'sql', where_clause: whereClause.trim() || undefined, status: 'success' });
       }
     } catch (err: unknown) {
       const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err);
       setError(msg); setRunStatus('failed');
-      await saveHistory({ operation: 'export', source_label: conn.label, source_db: database, tables_count: 0, include: exportInclude, format, status: 'failed' });
-    } finally { setRunning(false); setJobsRefreshKey(k => k + 1); }
+    } finally { setRunning(false); }
   };
 
   // Import
   const doImport = async () => {
     if (!conn || !database || !importSql.trim()) return;
     setRunning(true); setLog([]); setRunStatus(null); setError(null);
+    setPendingJobEntry(null); setJobSaved(false);
     try {
       const { data } = await axios.post('/api/export-import/import',
-        { cfg: connToCfg(conn, database), sql: importSql });
+        { cfg: connToCfg(conn, database), sql: importSql, strategy: importStrategy });
       const d = data as { success: boolean; log?: string[] };
       setLog((d.log ?? []).map(t => ({ step: 'import', ok: d.success, text: t })));
       setRunStatus(d.success ? 'success' : 'failed');
-      await saveHistory({ operation: 'import', target_label: conn.label, target_db: database, status: d.success ? 'success' : 'failed' });
+      if (d.success) setPendingJobEntry({ operation: 'import', target_label: conn.label, target_db: database, status: 'success' });
     } catch (err: unknown) {
       const d = axios.isAxiosError(err) ? err.response?.data as { log?: string[]; error?: string } | undefined : undefined;
       setLog((d?.log ?? [`[ERROR] ${d?.error ?? String(err)}`]).map(t => ({ step: 'import', ok: false, text: t })));
       setRunStatus('failed');
-      await saveHistory({ operation: 'import', target_label: conn.label, target_db: database, status: 'failed' });
-    } finally { setRunning(false); setJobsRefreshKey(k => k + 1); }
+    } finally { setRunning(false); }
   };
 
   // Core per-table sync call — pure, no state side effects
@@ -1296,6 +1231,7 @@ export default function ExportImportPage() {
     if (!conn || !database || !tgtConn) return;
     setRunning(true); setLog([]); setRunStatus(null); setError(null); setSyncProgress(null);
     setTableSyncStatus({}); setTableLogRanges({}); setFocusRange(null);
+    setPendingJobEntry(null); setJobSaved(false);
     const tables = overrideTables ?? (selectedTables === 'all'
       ? tableList.map(t => t.name)
       : selectedTables.map(t => t.split('.').pop() ?? t));
@@ -1329,8 +1265,7 @@ export default function ExportImportPage() {
     setRunStatus(allOk ? 'success' : 'failed');
     setSyncProgress(null);
     if (allOk) {
-      await saveHistory({ operation: 'sync', source_label: conn.label, source_db: database, target_label: tgtConn.label, target_db: tgtDatabase || database, tables_count: tables.length, include: syncInclude, conflict, status: 'success' });
-      setJobsRefreshKey(k => k + 1);
+      setPendingJobEntry({ operation: 'sync', source_label: conn.label, source_db: database, target_label: tgtConn.label, target_db: tgtDatabase || database, tables_count: tables.length, include: syncInclude, conflict, status: 'success' });
     }
     setRunning(false);
     // Refresh analyse diff panel after batch sync so row counts reflect reality
@@ -1428,16 +1363,6 @@ export default function ExportImportPage() {
     });
   };
 
-  const handleExcelFile = async (file: File) => {
-    if (!/\.xlsx?$/i.test(file.name)) return;
-    setParsingExcel(true);
-    try {
-      const tables = await parseExcelFile(file);
-      if (tables.length > 0) setExcelTables(tables);
-    } catch { /* ignore */ }
-    finally { setParsingExcel(false); }
-  };
-
   // Analyse — compare source vs target schema before sync
   const handleAnalyse = async () => {
     if (!conn || !database || !tgtConn || !(tgtDatabase || database)) return;
@@ -1473,13 +1398,11 @@ export default function ExportImportPage() {
     if (tab === 'export') void handleExport();
     else if (tab === 'import') { if (importSql.trim()) setShowDryRun(true); }
     else if (tab === 'sync') void handleSync();
-    else void handleReplace();
   };
 
   const canRun = !running && conn && database && (
-    tab === 'import'  ? importSql.trim() :
-    tab === 'sync'    ? tgtConn && conn.db_type === tgtConn.db_type :
-    tab === 'replace' ? tgtConn && conn.db_type === tgtConn.db_type :
+    tab === 'import' ? importSql.trim() :
+    tab === 'sync'   ? tgtConn && conn.db_type === tgtConn.db_type :
     true
   );
 
@@ -1533,10 +1456,9 @@ export default function ExportImportPage() {
 
           {/* Tab buttons */}
           {([
-            { key: 'export'  as Tab, label: 'Export',  Icon: Download },
-            { key: 'import'  as Tab, label: 'Import',  Icon: UploadCloud },
-            { key: 'sync'    as Tab, label: 'Sync',    Icon: ArrowRightLeft },
-            { key: 'replace' as Tab, label: 'Replace', Icon: Replace },
+            { key: 'export' as Tab, label: 'Export', Icon: Download },
+            { key: 'import' as Tab, label: 'Import', Icon: UploadCloud },
+            { key: 'sync'   as Tab, label: 'Sync',   Icon: ArrowRightLeft },
           ]).map(({ key, label, Icon }) => (
             <button key={key} type="button" onClick={() => handleTabChange(key)}
               className={`self-stretch inline-flex items-center gap-1.5 px-3 text-[13px] font-medium border-b-2 transition-colors ${
@@ -1579,18 +1501,9 @@ export default function ExportImportPage() {
             </>
           )}
 
-          {/* Import options */}
+          {/* Import options — file accepted shown as static hint */}
           {tab === 'import' && (
-            <div className="flex items-center gap-1">
-              <span className="text-[12px] text-gray-400 dark:text-slate-500 mr-0.5">Input</span>
-              {(['sql', 'excel'] as const).map(m => (
-                <button key={m} onClick={() => setImportMode(m)}
-                  className={`${seg(importMode === m)} inline-flex items-center gap-1`}>
-                  {m === 'excel' ? <FileSpreadsheet size={11} /> : <FileCode2 size={11} />}
-                  {m === 'sql' ? 'SQL' : 'Excel'}
-                </button>
-              ))}
-            </div>
+            <span className="text-[12px] text-gray-400 dark:text-slate-500 italic select-none">.sql · .dump</span>
           )}
 
           {/* Sync options — removed from toolbar; use right-click context menu on tables instead */}
@@ -1598,22 +1511,6 @@ export default function ExportImportPage() {
             <BtnTip tip="Right-click any table to set conflict strategy and copy/replace options">
               <span className="text-[12px] text-gray-400 dark:text-slate-500 cursor-default select-none italic">right-click table for options</span>
             </BtnTip>
-          )}
-
-          {/* Replace options */}
-          {tab === 'replace' && (
-            <>
-              <div className="flex items-center gap-1">
-                <span className="text-[12px] text-gray-400 dark:text-slate-500 mr-0.5">incl</span>
-                {([
-                  { v: 'both'   as ExportInclude, label: 'Schema+Data' },
-                  { v: 'schema' as ExportInclude, label: 'Schema'      },
-                  { v: 'data'   as ExportInclude, label: 'Data'        },
-                ]).map(({ v, label }) => (
-                  <button key={v} onClick={() => setReplaceInclude(v)} className={seg(replaceInclude === v)}>{label}</button>
-                ))}
-              </div>
-            </>
           )}
 
           {/* Run button */}
@@ -1635,23 +1532,34 @@ export default function ExportImportPage() {
               <span className={`inline-flex items-center gap-1 text-[13px] font-medium ${runStatus === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                 {runStatus === 'success' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                 {runStatus === 'success'
-                  ? (tab === 'export' ? 'Exported' : tab === 'import' ? 'Imported' : tab === 'replace' ? 'Replaced' : 'Synced')
+                  ? (tab === 'export' ? 'Exported' : tab === 'import' ? 'Imported' : 'Synced')
                   : 'Failed'}
+              </span>
+            )}
+            {/* Optional save — only offered after success */}
+            {runStatus === 'success' && pendingJobEntry && !jobSaved && (
+              <button type="button" onClick={() => void handleSaveJob()}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13px] rounded-lg border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
+                <Save size={13} /> Save Job
+              </button>
+            )}
+            {runStatus === 'success' && jobSaved && (
+              <span className="inline-flex items-center gap-1 text-[13px] text-gray-400 dark:text-slate-500">
+                <CheckCircle2 size={13} /> Saved
               </span>
             )}
             <button type="button" onClick={handleRun} disabled={!canRun}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors disabled:opacity-40 ${
-                tab === 'export'  ? 'border border-blue-500 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-50 dark:hover:bg-blue-900/20' :
-                tab === 'import'  ? 'bg-emerald-600 hover:bg-emerald-700 text-white' :
-                tab === 'replace' ? 'bg-rose-600 hover:bg-rose-700 text-white' :
+                tab === 'export' ? 'border border-blue-500 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-50 dark:hover:bg-blue-900/20' :
+                tab === 'import' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' :
                 'border border-violet-500 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20'
               }`}>
               {running
                 ? <Loader2 size={13} className="animate-spin" />
-                : tab === 'export' ? <Download size={13} /> : tab === 'import' ? <UploadCloud size={13} /> : tab === 'replace' ? <Replace size={13} /> : <ArrowRightLeft size={13} />}
+                : tab === 'export' ? <Download size={13} /> : tab === 'import' ? <UploadCloud size={13} /> : <ArrowRightLeft size={13} />}
               {running
-                ? (tab === 'export' ? 'Exporting…' : tab === 'import' ? 'Importing…' : tab === 'replace' ? 'Replacing…' : 'Syncing…')
-                : (tab === 'export' ? `Export${format === 'csv' ? ' CSV' : ''}` : tab === 'import' ? 'Import' : tab === 'replace' ? 'Replace' : 'Sync')}
+                ? (tab === 'export' ? 'Exporting…' : tab === 'import' ? 'Importing…' : 'Syncing…')
+                : (tab === 'export' ? `Export${format === 'csv' ? ' CSV' : ''}` : tab === 'import' ? 'Import' : 'Sync')}
             </button>
             <GuidePopover />
           </div>
@@ -1683,8 +1591,8 @@ export default function ExportImportPage() {
               value={connId}
               onChange={id => { setConnId(id); setDatabase(''); setSchema(''); setSelectedTables('all'); }}
               label={tab === 'import' ? 'Target Conn' : 'Connection'}
-              tgtValue={(tab === 'sync' || tab === 'replace') ? tgtConnId : undefined}
-              onTgtChange={(tab === 'sync' || tab === 'replace') ? (id) => { setTgtConnId(id); setTgtDatabase(''); setTgtSchema(''); setAnalyseResult(null); } : undefined}
+              tgtValue={tab === 'sync' ? tgtConnId : undefined}
+              onTgtChange={tab === 'sync' ? (id) => { setTgtConnId(id); setTgtDatabase(''); setTgtSchema(''); setAnalyseResult(null); } : undefined}
             />
 
             {/* Panels 2, 3, 4: Resizable group */}
@@ -1698,9 +1606,9 @@ export default function ExportImportPage() {
                       onChange={db => { setDatabase(db); setSchema(''); setSelectedTables('all'); }}
                       allowCreate={tab === 'import'}
                       syncProgress={syncProgress}
-                      tgtConn={(tab === 'sync' || tab === 'replace') ? tgtConn : undefined}
-                      tgtValue={(tab === 'sync' || tab === 'replace') ? tgtDatabase : undefined}
-                      onTgtChange={(tab === 'sync' || tab === 'replace') ? setTgtDatabase : undefined}
+                      tgtConn={tab === 'sync' ? tgtConn : undefined}
+                      tgtValue={tab === 'sync' ? tgtDatabase : undefined}
+                      onTgtChange={tab === 'sync' ? setTgtDatabase : undefined}
                       onItemContextMenu={tab === 'sync' ? (e, dbName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'db', name: dbName }) : undefined}
                     />
                   </div>
@@ -1709,14 +1617,14 @@ export default function ExportImportPage() {
                 <Panel defaultSize={18} minSize={8}>
                   <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: null, name: null }); } }}>
                     <SchemaPanel
-                      conn={tab === 'import' ? null : conn}
+                      conn={conn}
                       database={database}
                       value={schema}
                       onChange={s => { setSchema(s); setSelectedTables('all'); setAnalyseResult(null); }}
-                      tgtConn={(tab === 'sync' || tab === 'replace') ? tgtConn : undefined}
-                      tgtDatabase={(tab === 'sync' || tab === 'replace') ? tgtDatabase : undefined}
-                      tgtValue={(tab === 'sync' || tab === 'replace') ? tgtSchema : undefined}
-                      onTgtChange={(tab === 'sync' || tab === 'replace') ? (s) => { setTgtSchema(s); setAnalyseResult(null); } : undefined}
+                      tgtConn={tab === 'sync' ? tgtConn : undefined}
+                      tgtDatabase={tab === 'sync' ? tgtDatabase : undefined}
+                      tgtValue={tab === 'sync' ? tgtSchema : undefined}
+                      onTgtChange={tab === 'sync' ? (s) => { setTgtSchema(s); setAnalyseResult(null); } : undefined}
                       onItemContextMenu={tab === 'sync' ? (e, schemaName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'schema', name: schemaName }) : undefined}
                     />
                   </div>
@@ -1731,7 +1639,7 @@ export default function ExportImportPage() {
               <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
                 <Table2 size={14} className="text-blue-500 shrink-0" />
                 <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">
-                  {tab === 'import' ? 'SQL Input' : 'Tables'}
+                  {tab === 'import' ? 'Import' : 'Tables'}
                 </span>
                 {tab !== 'import' && tableList.length > 0 && (
                   <span className="text-[12px] text-gray-400 dark:text-slate-500">{tableList.length} tables</span>
@@ -1859,37 +1767,6 @@ export default function ExportImportPage() {
                                   <ArrowRightLeft size={11} />
                                 </button>
                               )}
-                              {/* Per-table replace button (replace tab, hover, not while running) */}
-                              {tab === 'replace' && !running && (
-                                <button type="button"
-                                  title="Replace this table"
-                                  onClick={e => {
-                                    e.preventDefault();
-                                    showConfirm({
-                                      title: `Replace "${t.name}"?`,
-                                      description: `This will DROP and recreate "${t.name}" in target "${tgtDatabase || database}" from source. All existing target data in this table will be lost.`,
-                                      confirmLabel: 'Replace',
-                                                                      onConfirm: async () => {
-                                        setRunning(true); setRunStatus(null);
-                                        setTableSyncStatus(prev => ({ ...prev, [t.name]: 'syncing' }));
-                                        const { ok, logs } = await doReplaceTable(t.name);
-                                        setLog(prev => {
-                                          const startIdx = prev.length;
-                                          const next = [...prev, ...logs];
-                                          setTableLogRanges(r => ({ ...r, [t.name]: [startIdx, next.length] }));
-                                          return next;
-                                        });
-                                        setTableSyncStatus(prev => ({ ...prev, [t.name]: ok ? 'done' : 'error' }));
-                                        setRunStatus(ok ? 'success' : 'failed');
-                                        setRunning(false);
-                                        if (ok && analyseResult) void refreshAnalyseSilent(conn, tgtConn);
-                                      },
-                                    });
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-opacity shrink-0">
-                                  <Replace size={11} />
-                                </button>
-                              )}
                             </label>
                           );
                         })}
@@ -1913,30 +1790,46 @@ export default function ExportImportPage() {
                 </>
               )}
 
-              {/* Import: SQL/Excel input */}
-              {tab === 'import' && (
-                <div className="flex-1 flex flex-col overflow-hidden p-3 gap-2">
-                  {importMode === 'sql' ? (
-                    <SqlImportField value={importSql} onChange={setImportSql} />
-                  ) : (
-                    <div
-                      className="flex-1 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-200 dark:border-slate-700 hover:border-emerald-400 dark:hover:border-emerald-700 cursor-pointer transition-colors"
-                      onClick={() => excelFileRef.current?.click()}>
-                      {parsingExcel ? (
-                        <><Loader2 size={24} className="text-emerald-500 animate-spin" /><p className="text-base text-slate-500 dark:text-slate-400">Parsing…</p></>
-                      ) : (
-                        <>
-                          <FileSpreadsheet size={26} className="text-slate-400 dark:text-slate-500" />
-                          <p className="text-base font-medium text-gray-600 dark:text-slate-300">Drop Excel or click to browse</p>
-                          <p className="text-sm text-gray-400 dark:text-slate-500">Each sheet becomes INSERT statements</p>
-                        </>
-                      )}
-                      <input ref={excelFileRef} type="file" accept=".xlsx,.xls" className="hidden"
-                        onChange={e => { const f = e.target.files?.[0]; if (f) void handleExcelFile(f); e.target.value = ''; }} />
+              {/* Import: file drop zone + contextual action selector */}
+              {tab === 'import' && (() => {
+                const secondAction = schema
+                  ? { v: 'replace_schema' as ImportStrategy, label: 'Replace Schema', desc: `Wipe schema "${schema || 'public'}" first`, Icon: AlertCircle, activeClass: 'border-amber-500 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300', iconClass: 'text-amber-500' }
+                  : { v: 'replace_db'     as ImportStrategy, label: 'Replace DB',     desc: `Drop & recreate "${database || '—'}"`,      Icon: ShieldAlert, activeClass: 'border-rose-500 bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-300',     iconClass: 'text-rose-500'   };
+                return (
+                  <div className="flex-1 flex flex-col overflow-hidden p-3 gap-3">
+                    {/* Drop zone — fixed compact height */}
+                    <div className="shrink-0 h-28">
+                      <SqlFileDropZone
+                        file={importFile}
+                        onFile={(f, content) => { setImportFile(f); setImportSql(content); setRunStatus(null); setLog([]); }}
+                        onClear={() => { setImportFile(null); setImportSql(''); setRunStatus(null); setLog([]); }}
+                      />
                     </div>
-                  )}
-                </div>
-              )}
+                    {/* Contextual action selector */}
+                    <div className="shrink-0 space-y-1.5">
+                      <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400">Action</p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {([
+                          { v: 'import_rows' as ImportStrategy, label: 'Import Rows', desc: 'Execute SQL as-is', Icon: UploadCloud, activeClass: 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300', iconClass: 'text-emerald-500' },
+                          secondAction,
+                        ]).map(({ v, label, desc, Icon, activeClass, iconClass }) => {
+                          const active = importStrategy === v;
+                          return (
+                            <button key={v} type="button" onClick={() => setImportStrategy(v)}
+                              className={`flex flex-col items-start gap-1 px-3 py-2.5 rounded-xl border-2 transition-colors ${
+                                active ? activeClass : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                              }`}>
+                              <Icon size={13} className={active ? iconClass : 'text-gray-400 dark:text-slate-500'} />
+                              <p className="text-[12px] font-semibold leading-none mt-0.5">{label}</p>
+                              <p className="text-[11px] opacity-60 leading-none mt-0.5 truncate max-w-full">{desc}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Error */}
               {error && (
@@ -1951,7 +1844,7 @@ export default function ExportImportPage() {
               )}
 
               {/* Log (Import/Sync) */}
-              {tab !== 'export' && <LogPanel lines={log} running={running} focusRange={(tab === 'sync' || tab === 'replace') ? focusRange : null} />}
+              {tab !== 'export' && <LogPanel lines={log} running={running} focusRange={tab === 'sync' ? focusRange : null} />}
             </div>
                 </Panel>
               </PanelGroup>
@@ -1979,13 +1872,7 @@ export default function ExportImportPage() {
             onConfirm={() => { setShowDryRun(false); void doImport(); }}
             onCancel={() => setShowDryRun(false)} />
         )}
-        {excelTables && (
-          <ExcelImportModal
-            tables={excelTables}
-            onApply={s => { setImportSql(s); setImportMode('sql'); setExcelTables(null); }}
-            onClose={() => setExcelTables(null)}
-          />
-        )}
+
 
         {/* Right-click context menu on table rows */}
         {ctxMenu && (
