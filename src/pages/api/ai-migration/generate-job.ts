@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import Anthropic from '@anthropic-ai/sdk';
+import { AI_MIGRATION_MODEL_GENERATE } from '../../../lib/ai-migration/model';
 import { withMysql, type ExplorerConn } from '../../../lib/explorer-db';
 import { saveJob } from '../../../lib/migv2/job-store';
 import type { MigJob, TableMap, ColumnMap, IdConversion } from '../../../lib/migv2/types';
@@ -30,12 +31,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable proxy buffering (nginx)
   res.flushHeaders();
 
   const send = (event: string, data: unknown) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    (res as unknown as { flush?: () => void }).flush?.(); // push immediately if compression middleware is active
   };
 
   // Keep connection alive during long AI calls
@@ -118,25 +121,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const client = new Anthropic();
     const message = await client.messages.create({
-      model: 'claude-opus-4-8',
+      model: AI_MIGRATION_MODEL_GENERATE,
       max_tokens: 16000,
-      thinking: { type: 'adaptive' },
-      messages: [{
-        role: 'user',
-        content: `You are a MySQL→PostgreSQL migration expert. Generate a complete migration job configuration.
+      // Adaptive thinking is only supported on Opus models — skip it on Haiku/Sonnet
+      // so a Haiku default (or any non-Opus override) doesn't 400.
+      ...(AI_MIGRATION_MODEL_GENERATE.includes('opus') ? { thinking: { type: 'adaptive' as const } } : {}),
+      // Static rules in a cached system block; dynamic schema + db names in the user turn.
+      system: [{
+        type: 'text',
+        cache_control: { type: 'ephemeral' },
+        text: `You are a MySQL→PostgreSQL migration expert. Generate a complete migration job configuration from the MySQL schema the user provides.
 
-Source: MySQL "${sourceDb}"
-Target: PostgreSQL database "${targetDb}", schema "${targetSchema}"
-
-MySQL Schema:
-${schemaText}
+For every table, set "source".schema to the source database the user names and "target".schema to the target schema the user names.
 
 Return ONLY valid JSON (no markdown fences, no explanation):
 {
   "tables": [
     {
-      "source": { "schema": "${sourceDb}", "table": "table_name" },
-      "target": { "schema": "${targetSchema}", "table": "table_name" },
+      "source": { "schema": "<source_db>", "table": "table_name" },
+      "target": { "schema": "<target_schema>", "table": "table_name" },
       "order": 1,
       "columns": [
         {
@@ -189,6 +192,15 @@ Table ordering (order field):
 - Topological sort — parent tables always have lower order than child tables
 
 Conversion must be one of: keep, serial_to_uuid, to_text, to_integer, to_bigint, to_numeric, to_boolean, to_timestamptz, to_date, to_jsonb`,
+      }],
+      messages: [{
+        role: 'user',
+        content: `Source: MySQL "${sourceDb}"
+Target: PostgreSQL database "${targetDb}", schema "${targetSchema}"
+Use source.schema = "${sourceDb}" and target.schema = "${targetSchema}" for every table.
+
+MySQL Schema:
+${schemaText}`,
       }],
     });
 

@@ -23,7 +23,11 @@ import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'reac
 
 type Tab = 'export' | 'import' | 'sync';
 type ExportFormat = 'sql' | 'csv';
-type ImportStrategy = 'import_rows' | 'replace_schema' | 'replace_db';
+type ImportStrategy = 'import_rows' | 'replace_schema' | 'replace_db' | 'replace_table';
+type ImportMode = 'new' | 'replace' | 'insert';
+// Target of a per-row import/export action. `database` is the db to act on
+// (the clicked db row, or the currently selected db for schema/table scope).
+interface ScopeInfo { scope: 'db' | 'schema' | 'table'; name: string; database: string; schema?: string }
 interface LogLine { step: string; ok: boolean; text: string; ts?: string }
 interface DryRunSummary {
   total: number; creates: number; inserts: number;
@@ -193,6 +197,296 @@ function SqlFileDropZone({ file, onFile, onClear }: {
       </div>
       <input ref={fileRef} type="file" accept=".sql,.dump,.txt" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); e.target.value = ''; }} />
+    </div>
+  );
+}
+
+// ── Per-row Export dialog ──────────────────────────────────────────────────────
+
+function scopeNoun(s: ScopeInfo): string {
+  return s.scope === 'db' ? 'database' : s.scope === 'schema' ? 'schema' : 'table';
+}
+
+function ExportDialogModal({ info, busy, onConfirm, onCancel }: {
+  info: ScopeInfo;
+  busy: boolean;
+  onConfirm: (include: ExportInclude, format: ExportFormat) => void;
+  onCancel: () => void;
+}) {
+  const [include, setInclude] = useState<ExportInclude>('both');
+  const [format, setFormat] = useState<ExportFormat>('sql');
+  const seg = (active: boolean) =>
+    `px-2.5 py-1 text-[12px] rounded-lg border transition-colors ${active
+      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium'
+      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`;
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl">
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+          <Download size={17} className="text-blue-500" />
+          <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">Export {scopeNoun(info)} “{info.name}”</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">Include</p>
+            <div className="flex gap-1.5">
+              <button type="button" onClick={() => setInclude('schema')} className={seg(include === 'schema')}>Schema only</button>
+              <button type="button" onClick={() => setInclude('both')} className={seg(include === 'both')}>Schema + data</button>
+            </div>
+          </div>
+          <div>
+            <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">Format</p>
+            <div className="flex gap-1.5">
+              {(['sql', 'csv'] as ExportFormat[]).map(f => (
+                <button key={f} type="button" onClick={() => setFormat(f)} className={`${seg(format === f)} uppercase`}>{f}</button>
+              ))}
+            </div>
+            {format === 'csv' && include !== 'data' && (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">CSV exports row data only — schema DDL is not included.</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button type="button" onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" disabled={busy} onClick={() => onConfirm(include, format)}
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50">
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Export
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Per-row Import dialog ──────────────────────────────────────────────────────
+
+function ImportDialogModal({ info, busy, onConfirm, onCancel }: {
+  info: ScopeInfo;
+  busy: boolean;
+  onConfirm: (sql: string, mode: ImportMode) => void;
+  onCancel: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [sql, setSql] = useState('');
+  const [mode, setMode] = useState<ImportMode>('new');
+  const [showPreview, setShowPreview] = useState(false);
+  const noun = scopeNoun(info);
+  const modes: { v: ImportMode; label: string; desc: string }[] = [
+    { v: 'new', label: 'Create new', desc: `Run the dump as-is — creates objects in ${noun} “${info.name}”.` },
+    { v: 'replace', label: 'Replace', desc: `Drop & recreate the ${noun} “${info.name}” first, then import.` },
+    { v: 'insert', label: 'Insert rows', desc: `Append rows only — no structural changes.` },
+  ];
+  const s = sql ? parseDryRun(sql) : null;
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+          <UploadCloud size={17} className="text-emerald-500" />
+          <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">Import into {noun} “{info.name}”</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="h-28">
+            <SqlFileDropZone file={file}
+              onFile={(f, content) => { setFile(f); setSql(content); }}
+              onClear={() => { setFile(null); setSql(''); setShowPreview(false); }} />
+          </div>
+          <div className="space-y-1.5">
+            {modes.map(m => {
+              const active = mode === m.v;
+              const danger = m.v === 'replace';
+              return (
+                <button key={m.v} type="button" onClick={() => setMode(m.v)}
+                  className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-xl border-2 text-left transition-colors ${
+                    active
+                      ? danger
+                        ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/20'
+                        : 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20'
+                      : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  }`}>
+                  <div className={`w-3.5 h-3.5 mt-0.5 rounded-full border-2 flex items-center justify-center shrink-0 ${active ? (danger ? 'border-rose-500' : 'border-emerald-500') : 'border-gray-300 dark:border-slate-600'}`}>
+                    {active && <div className={`w-1.5 h-1.5 rounded-full ${danger ? 'bg-rose-500' : 'bg-emerald-500'}`} />}
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-medium text-gray-800 dark:text-slate-200">{m.label}</p>
+                    <p className="text-[12px] text-gray-400 dark:text-slate-500">{m.desc}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {mode === 'replace' && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[12px] text-rose-700 dark:text-rose-400">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              This drops the existing {noun} “{info.name}” and all its data before importing.
+            </div>
+          )}
+          {s && (
+            <div>
+              <button type="button" onClick={() => setShowPreview(v => !v)}
+                className="inline-flex items-center gap-1 text-[12px] text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200">
+                <Eye size={12} /> {showPreview ? 'Hide' : 'Preview'} statements ({s.total})
+              </button>
+              {showPreview && (
+                <div className="grid grid-cols-3 gap-1.5 mt-2 text-[11px]">
+                  {([['CREATE', s.creates], ['INSERT', s.inserts], ['ALTER', s.alters], ['DROP', s.drops], ['TRUNCATE', s.truncates], ['UPDATE', s.updates]] as [string, number][]).map(([l, c]) => (
+                    <div key={l} className={`flex items-center justify-between px-2 py-1 rounded ${(l === 'DROP' || l === 'TRUNCATE') && c > 0 ? 'bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400' : 'bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-slate-400'}`}>
+                      <span>{l}</span><span className="font-mono font-semibold">{c}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button type="button" onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" disabled={busy || !sql.trim()} onClick={() => onConfirm(sql, mode)}
+            className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white disabled:opacity-50 ${mode === 'replace' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Import
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Per-row Copy / Move (relocate) dialog ──────────────────────────────────────
+
+function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm, onCancel }: {
+  info: ScopeInfo;
+  connections: ConnectionRow[];
+  sourceConnId: number | '';
+  busy: boolean;
+  onConfirm: (target: { connId: number | ''; database: string; schema: string }, operation: 'copy' | 'move', include: ExportInclude, conflict: ConflictStrategy) => void;
+  onCancel: () => void;
+}) {
+  const sourceType = connections.find(c => c.id === sourceConnId)?.db_type;
+  const candidates = connections.filter(c => c.db_type === sourceType);
+  const [connId, setConnId] = useState<number | ''>(sourceConnId);
+  const [database, setDatabase] = useState('');
+  const [dbs, setDbs] = useState<string[]>([]);
+  const [schema, setSchema] = useState(info.scope === 'schema' ? info.name : 'public');
+  const [schemas, setSchemas] = useState<string[]>([]);
+  const [operation, setOperation] = useState<'copy' | 'move' | null>(null);
+  const [include, setInclude] = useState<ExportInclude>('both');
+  const [conflict, setConflict] = useState<ConflictStrategy>('insert_only');
+
+  const targetConn = connections.find(c => c.id === connId) ?? null;
+  const isPg = targetConn?.db_type === 'postgres';
+  const needsSchema = info.scope !== 'db' && isPg;
+  const noun = scopeNoun(info);
+
+  // Load databases for the chosen target connection
+  useEffect(() => {
+    const c = connections.find(x => x.id === connId);
+    if (!c) { setDbs([]); return; }
+    void (async () => {
+      try {
+        const ep = c.db_type === 'postgres' ? '/api/pg-databases' : '/api/list-databases';
+        const { data } = await axios.post(ep, { host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '', ssl: c.ssl_enabled });
+        const list = (data as { databases: string[] }).databases;
+        setDbs(list);
+        setDatabase(prev => prev && list.includes(prev) ? prev : (list[0] ?? ''));
+      } catch { setDbs([]); }
+    })();
+  }, [connId, connections]);
+
+  // Load schemas for the chosen target database (PG)
+  useEffect(() => {
+    const c = connections.find(x => x.id === connId);
+    if (!c || c.db_type !== 'postgres' || !database) { setSchemas([]); return; }
+    void (async () => {
+      try {
+        const { data } = await axios.post('/api/schema-explorer/schemas', connToExplorerConn(c, database));
+        setSchemas((data as { schemas: { schema: string }[] }).schemas.map(s => s.schema));
+      } catch { setSchemas([]); }
+    })();
+  }, [connId, database, connections]);
+
+  const seg = (active: boolean) =>
+    `px-2.5 py-1 text-[12px] rounded-lg border transition-colors ${active
+      ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 font-medium'
+      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`;
+  const sel = 'w-full px-2 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-violet-500';
+
+  const canConfirm = !busy && !!operation && !!targetConn && !!database && (!needsSchema || !!schema.trim());
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+          <ArrowRightLeft size={17} className="text-violet-500" />
+          <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">Copy / Move {noun} “{info.name}”</p>
+        </div>
+        <div className="p-5 space-y-4">
+          {/* Operation */}
+          <div>
+            <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">Operation</p>
+            <div className="flex gap-1.5">
+              <button type="button" onClick={() => setOperation('copy')} className={seg(operation === 'copy')}>Copy</button>
+              <button type="button" onClick={() => setOperation('move')} className={seg(operation === 'move')}>Move (drop source)</button>
+            </div>
+          </div>
+          {/* Target picker */}
+          <div className="space-y-2">
+            <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400">Target</p>
+            <select value={connId} onChange={e => setConnId(e.target.value ? Number(e.target.value) : '')} className={sel}>
+              {candidates.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            <select value={database} onChange={e => setDatabase(e.target.value)} className={sel}>
+              {dbs.length === 0 && <option value="">— no databases —</option>}
+              {dbs.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            {needsSchema && (
+              <>
+                <input list="relocate-schemas" value={schema} onChange={e => setSchema(e.target.value)}
+                  placeholder="target schema (existing or new)" className={`${sel} font-mono`} />
+                <datalist id="relocate-schemas">{schemas.map(s => <option key={s} value={s} />)}</datalist>
+              </>
+            )}
+            {!isPg && info.scope !== 'db' && (
+              <p className="text-[11px] text-rose-500">Schema / table relocation requires PostgreSQL.</p>
+            )}
+          </div>
+          {/* Copy options */}
+          {operation === 'copy' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">Include</p>
+                <div className="flex gap-1.5">
+                  <button type="button" onClick={() => setInclude('schema')} className={seg(include === 'schema')}>Schema</button>
+                  <button type="button" onClick={() => setInclude('both')} className={seg(include === 'both')}>+ data</button>
+                </div>
+              </div>
+              <div>
+                <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">On conflict</p>
+                <select value={conflict} onChange={e => setConflict(e.target.value as ConflictStrategy)} className={sel}>
+                  <option value="insert_only">Insert only</option>
+                  <option value="truncate_insert">Truncate + insert</option>
+                  <option value="upsert">Upsert</option>
+                </select>
+              </div>
+            </div>
+          )}
+          {operation === 'move' && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[12px] text-rose-700 dark:text-rose-400">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              Move drops the source {noun} “{info.name}” after a successful copy.
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button type="button" onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" disabled={!canConfirm}
+            onClick={() => operation && onConfirm({ connId, database, schema }, operation, include, conflict)}
+            className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white disabled:opacity-50 ${operation === 'move' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-violet-600 hover:bg-violet-700'}`}>
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <ArrowRightLeft size={15} />} {operation === 'move' ? 'Move' : 'Copy'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -375,12 +669,12 @@ function GuidePopover() {
             <div>
               <p className={h3}><Info size={14} className="text-blue-500" /> Navigation</p>
               <div className={sec}>
-                <p>Use the <strong>5-panel flow</strong> left to right: pick a connection → database → schema → tables. Then click the action button in the toolbar.</p>
+                <p>Use the <strong>5-panel flow</strong> left to right: pick a connection → database → schema → tables. In the Import/Export view, hover any database, schema or table row for its import / export icons. Sync uses the toolbar action button.</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
                   <li><strong>Panel 1</strong> — saved connections. Click to select one.</li>
-                  <li><strong>Panel 2</strong> — databases for the selected connection. Auto-loads on connection select.</li>
-                  <li><strong>Panel 3</strong> — schemas (PostgreSQL only). Filters the table list. "All" shows every table.</li>
-                  <li><strong>Panel 4</strong> — table selection + action workspace (input / result / log).</li>
+                  <li><strong>Panel 2</strong> — databases. Hover a row for its import / export icons.</li>
+                  <li><strong>Panel 3</strong> — schemas (PostgreSQL only). Hover a row for its import / export icons.</li>
+                  <li><strong>Panel 4</strong> — tables. Hover a row for per-table import / export; result / log appear below.</li>
                   <li><strong>Saved Jobs</strong> (right, collapsible) — history of past operations.</li>
                 </ul>
               </div>
@@ -391,13 +685,12 @@ function GuidePopover() {
             <div>
               <p className={h3}><Download size={14} className="text-blue-500" /> Export</p>
               <div className={sec}>
-                <p>Select connection → database → schema → tables, then configure options in the toolbar and click {pill('Export')}.</p>
+                <p>In the <strong>Import/Export</strong> view, hover a <strong>database</strong>, <strong>schema</strong> or <strong>table</strong> row and click its {pill('⤓')} export icon. A dialog captures the options:</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
-                  <li><strong>Include</strong> — Schema+Data (DDL + rows), Schema only (DDL), Data only (INSERTs).</li>
+                  <li><strong>Include</strong> — Schema + data (DDL + rows) or Schema only (DDL).</li>
                   <li><strong>Format</strong> — SQL (.sql file) or CSV (.zip, one file per table).</li>
-                  <li><strong>WHERE filter</strong> — optional clause applied to all data SELECT queries.</li>
                 </ul>
-                <p>SQL output appears below the table list with Copy and Download options.</p>
+                <p>The export is scoped to the row you clicked — whole database, one schema, or a single table.</p>
               </div>
             </div>
 
@@ -406,15 +699,13 @@ function GuidePopover() {
             <div>
               <p className={h3}><UploadCloud size={14} className="text-emerald-500" /> Import</p>
               <div className={sec}>
-                <p>Select <strong>target</strong> connection → database, then drop or browse a file. Click {pill('Import')} (or {pill('Preview')} first).</p>
+                <p>Hover a <strong>database</strong>, <strong>schema</strong> or <strong>table</strong> row and click its {pill('⤒')} import icon, then drop or browse a <strong>.sql</strong> / <strong>.dump</strong> file. Pick a mode:</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
-                  <li>Accepts <strong>.sql</strong> and <strong>.dump</strong> files — drag & drop or click to browse.</li>
-                  <li>{pill('Import Rows')} — execute SQL as-is (default, safest).</li>
-                  <li>{pill('Replace Schema')} — wipe the schema first (PG: DROP/CREATE public, MySQL: drop all tables), then import.</li>
-                  <li>{pill('Replace DB')} — drop and recreate the entire database, then import.</li>
-                  <li>{pill('Preview')} — shows a dry-run breakdown (CREATE/INSERT/DROP counts) before executing.</li>
+                  <li>{pill('Create new')} — run the dump as-is; creates objects in the target.</li>
+                  <li>{pill('Replace')} — drop & recreate the target db / schema / table first, then import.</li>
+                  <li>{pill('Insert rows')} — append row data only, no structural changes.</li>
                 </ul>
-                <p className="text-[12px] text-gray-400 dark:text-slate-500">Panels 3 (Schema) and 4 (Tables) are not applicable for Import — table selection comes from the SQL file itself.</p>
+                <p className="text-[12px] text-gray-400 dark:text-slate-500">Import targets the row you clicked. The dialog shows a statement preview (CREATE/INSERT/DROP counts) before you run.</p>
               </div>
             </div>
 
@@ -535,7 +826,7 @@ function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgt
 
 // ── Panel 2: Databases ─────────────────────────────────────────────────────────
 
-function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtConn, tgtValue, onTgtChange, onItemContextMenu }: {
+function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtConn, tgtValue, onTgtChange, onItemContextMenu, onRowExport, onRowImport, onRowRelocate }: {
   conn: ConnectionRow | null;
   value: string;
   onChange: (db: string) => void;
@@ -545,6 +836,9 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
   tgtValue?: string;
   onTgtChange?: (db: string) => void;
   onItemContextMenu?: (e: React.MouseEvent, dbName: string) => void;
+  onRowExport?: (db: string) => void;     // per-row export icon (maintain view)
+  onRowImport?: (db: string) => void;     // per-row import icon (maintain view)
+  onRowRelocate?: (db: string) => void;   // per-row copy/move icon (maintain view)
 }) {
   const [dbs, setDbs]           = useState<string[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -644,10 +938,10 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
             {dbs.map(db => {
               const active = value === db;
               return (
-                <div key={db}>
+                <div key={db} className="group relative">
                   <button type="button" onClick={() => onChange(db)}
                     onContextMenu={onItemContextMenu ? e => { e.preventDefault(); e.stopPropagation(); onItemContextMenu(e, db); } : undefined}
-                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
+                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${(onRowExport || onRowImport || onRowRelocate) ? 'pr-[68px]' : ''} ${
                       active
                         ? 'bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300'
                         : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
@@ -658,6 +952,31 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
                       <span className="text-[11px] font-mono text-violet-500 dark:text-violet-400 shrink-0">{pct}%</span>
                     )}
                   </button>
+                  {(onRowExport || onRowImport || onRowRelocate) && (
+                    <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                      {onRowExport && (
+                        <button type="button" title={`Export database "${db}"`}
+                          onClick={e => { e.stopPropagation(); onRowExport(db); }}
+                          className="p-1 rounded text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/40">
+                          <Download size={12} />
+                        </button>
+                      )}
+                      {onRowImport && (
+                        <button type="button" title={`Import into database "${db}"`}
+                          onClick={e => { e.stopPropagation(); onRowImport(db); }}
+                          className="p-1 rounded text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/40">
+                          <UploadCloud size={12} />
+                        </button>
+                      )}
+                      {onRowRelocate && (
+                        <button type="button" title={`Copy / move database "${db}" to another location`}
+                          onClick={e => { e.stopPropagation(); onRowRelocate(db); }}
+                          className="p-1 rounded text-violet-500 hover:bg-violet-100 dark:hover:bg-violet-900/40">
+                          <ArrowRightLeft size={12} />
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {active && pct !== null && (
                     <div className="mx-2.5 mt-0.5 h-1 rounded-full bg-gray-100 dark:bg-slate-800 overflow-hidden">
                       <div className="h-full bg-violet-500 rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
@@ -741,7 +1060,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
 
 // ── Panel 3: Schemas ───────────────────────────────────────────────────────────
 
-function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tgtValue, onTgtChange, onItemContextMenu }: {
+function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tgtValue, onTgtChange, onItemContextMenu, onRowExport, onRowImport, onRowRelocate }: {
   conn: ConnectionRow | null;
   database: string;
   value: string;
@@ -751,6 +1070,9 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
   tgtValue?: string;
   onTgtChange?: (s: string) => void;
   onItemContextMenu?: (e: React.MouseEvent, schemaName: string) => void;
+  onRowExport?: (schema: string) => void;     // per-row export icon (maintain view)
+  onRowImport?: (schema: string) => void;     // per-row import icon (maintain view)
+  onRowRelocate?: (schema: string) => void;   // per-row copy/move icon (maintain view)
 }) {
   const [schemas,    setSchemas]    = useState<{ schema: string; tableCount: number }[]>([]);
   const [loading,    setLoading]    = useState(false);
@@ -812,16 +1134,43 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
               ? 'bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300'
               : 'bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300';
             return (
-              <button key={s.schema} type="button" onClick={() => onSelect(s.schema)}
-                onContextMenu={onCtx ? e => { e.preventDefault(); e.stopPropagation(); onCtx(e, s.schema); } : undefined}
-                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
-                  active ? cls : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
-                }`}>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-mono truncate">{s.schema}</p>
-                  <p className="text-[11px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</p>
-                </div>
-              </button>
+              <div key={s.schema} className="group relative">
+                <button type="button" onClick={() => onSelect(s.schema)}
+                  onContextMenu={onCtx ? e => { e.preventDefault(); e.stopPropagation(); onCtx(e, s.schema); } : undefined}
+                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${(onRowExport || onRowImport || onRowRelocate) ? 'pr-[68px]' : ''} ${
+                    active ? cls : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
+                  }`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-mono truncate">{s.schema}</p>
+                    <p className="text-[11px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</p>
+                  </div>
+                </button>
+                {(onRowExport || onRowImport || onRowRelocate) && (
+                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                    {onRowExport && (
+                      <button type="button" title={`Export schema "${s.schema}"`}
+                        onClick={e => { e.stopPropagation(); onRowExport(s.schema); }}
+                        className="p-1 rounded text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/40">
+                        <Download size={12} />
+                      </button>
+                    )}
+                    {onRowImport && (
+                      <button type="button" title={`Import into schema "${s.schema}"`}
+                        onClick={e => { e.stopPropagation(); onRowImport(s.schema); }}
+                        className="p-1 rounded text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/40">
+                        <UploadCloud size={12} />
+                      </button>
+                    )}
+                    {onRowRelocate && (
+                      <button type="button" title={`Copy / move schema "${s.schema}" to another database`}
+                        onClick={e => { e.stopPropagation(); onRowRelocate(s.schema); }}
+                        className="p-1 rounded text-violet-500 hover:bg-violet-100 dark:hover:bg-violet-900/40">
+                        <ArrowRightLeft size={12} />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -1208,6 +1557,111 @@ export default function ExportImportPage() {
     } finally { setRunning(false); }
   };
 
+  // ── Per-row import/export dialogs (Import/Export view) ───────────────────────
+  const [exportDialog, setExportDialog] = useState<ScopeInfo | null>(null);
+  const [importDialog, setImportDialog] = useState<ScopeInfo | null>(null);
+
+  const runScopedExport = async (info: ScopeInfo, include: ExportInclude, fmt: ExportFormat) => {
+    if (!conn) return;
+    setExportDialog(null);
+    setRunning(true); setExportResult(null); setError(null); setLog([]);
+    setPendingJobEntry(null); setJobSaved(false);
+    const cfg = connToCfg(conn, info.database);
+    const tables = info.scope === 'table' ? [info.name] : 'all';
+    const schemaParam = info.scope === 'db' ? undefined : info.schema;
+    const stamp = new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+    try {
+      const { data } = await axios.post('/api/export-import/export',
+        { cfg, tables, include, format: fmt, schema: schemaParam });
+      if (fmt === 'csv') {
+        const csvData = data as { csvFiles: { table: string; csv: string }[]; tables: string[] };
+        const zip = new JSZip();
+        for (const { table, csv } of csvData.csvFiles) zip.file(`${table}.csv`, csv);
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `${info.name}_${stamp}.zip`; a.click();
+        URL.revokeObjectURL(url);
+        setRunStatus('success');
+        setPendingJobEntry({ operation: 'export', source_label: conn.label, source_db: info.database, tables_count: csvData.tables.length, include, format: 'csv', status: 'success' });
+      } else {
+        const sqlData = data as { sql: string; tables: string[] };
+        setExportResult(sqlData); setRunStatus('success');
+        const blob = new Blob([sqlData.sql], { type: 'text/sql' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `${info.name}_${stamp}.sql`; a.click();
+        URL.revokeObjectURL(url);
+        setPendingJobEntry({ operation: 'export', source_label: conn.label, source_db: info.database, tables_count: sqlData.tables.length, include, format: 'sql', status: 'success' });
+      }
+    } catch (err: unknown) {
+      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err);
+      setError(msg); setRunStatus('failed');
+    } finally { setRunning(false); }
+  };
+
+  const runScopedImport = async (info: ScopeInfo, mode: ImportMode, sql: string) => {
+    if (!conn || !sql.trim()) return;
+    setImportDialog(null);
+    setRunning(true); setLog([]); setRunStatus(null); setError(null);
+    setPendingJobEntry(null); setJobSaved(false);
+    let strategy: ImportStrategy = 'import_rows';
+    if (mode === 'replace') strategy = info.scope === 'db' ? 'replace_db' : info.scope === 'schema' ? 'replace_schema' : 'replace_table';
+    const schemaParam = info.scope === 'db' ? undefined : info.schema;
+    const tableParam = info.scope === 'table' ? info.name : undefined;
+    try {
+      const { data } = await axios.post('/api/export-import/import',
+        { cfg: connToCfg(conn, info.database), sql, strategy, schema: schemaParam, table: tableParam });
+      const d = data as { success: boolean; log?: string[] };
+      setLog((d.log ?? []).map(t => ({ step: 'import', ok: d.success, text: t })));
+      setRunStatus(d.success ? 'success' : 'failed');
+      if (d.success) setPendingJobEntry({ operation: 'import', target_label: conn.label, target_db: info.database, status: 'success' });
+    } catch (err: unknown) {
+      const d = axios.isAxiosError(err) ? err.response?.data as { log?: string[]; error?: string } | undefined : undefined;
+      setLog((d?.log ?? [`[ERROR] ${d?.error ?? String(err)}`]).map(t => ({ step: 'import', ok: false, text: t })));
+      setRunStatus('failed');
+    } finally { setRunning(false); }
+  };
+
+  // ── Copy / Move relocate (unifies Sync) ─────────────────────────────────────
+  const [relocateDialog, setRelocateDialog] = useState<ScopeInfo | null>(null);
+
+  const runRelocate = async (
+    info: ScopeInfo,
+    target: { connId: number | ''; database: string; schema: string },
+    operation: 'copy' | 'move',
+    include: ExportInclude,
+    conflictStrategy: ConflictStrategy,
+  ) => {
+    if (!conn) return;
+    const targetConn = connections.find(c => c.id === target.connId);
+    if (!targetConn) return;
+    setRelocateDialog(null);
+    setRunning(true); setLog([]); setRunStatus(null); setError(null); setExportResult(null);
+    setPendingJobEntry(null); setJobSaved(false);
+    try {
+      const { data } = await axios.post('/api/export-import/relocate', {
+        source: connToCfg(conn, info.database),
+        target: connToCfg(targetConn, target.database),
+        scope: info.scope,
+        sourceSchema: info.schema,
+        targetSchema: target.schema || undefined,
+        table: info.scope === 'table' ? info.name : undefined,
+        operation, include, conflict: conflictStrategy,
+      });
+      const d = data as { success: boolean; log?: LogLine[] };
+      setLog((d.log ?? []).map(l => ({ step: l.step, ok: l.ok, text: l.text })));
+      setRunStatus(d.success ? 'success' : 'failed');
+      if (d.success) setPendingJobEntry({
+        operation: operation === 'move' ? 'replace' : 'sync',
+        source_label: conn.label, source_db: info.database,
+        target_label: targetConn.label, target_db: target.database, status: 'success',
+      });
+    } catch (err: unknown) {
+      const d = axios.isAxiosError(err) ? err.response?.data as { log?: LogLine[]; error?: string } | undefined : undefined;
+      setLog((d?.log ?? [{ step: 'relocate', ok: false, text: `[ERROR] ${d?.error ?? String(err)}` }]));
+      setRunStatus('failed');
+    } finally { setRunning(false); }
+  };
+
   // Core per-table sync call — pure, no state side effects
   const doSyncTable = async (table: string): Promise<{ ok: boolean; logs: LogLine[] }> => {
     const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
@@ -1454,73 +1908,13 @@ export default function ExportImportPage() {
 
           <div className="w-px h-6 bg-gray-200 dark:bg-slate-700 mx-1 shrink-0" />
 
-          {/* Tab buttons */}
-          {([
-            { key: 'export' as Tab, label: 'Export', Icon: Download },
-            { key: 'import' as Tab, label: 'Import', Icon: UploadCloud },
-            { key: 'sync'   as Tab, label: 'Sync',   Icon: ArrowRightLeft },
-          ]).map(({ key, label, Icon }) => (
-            <button key={key} type="button" onClick={() => handleTabChange(key)}
-              className={`self-stretch inline-flex items-center gap-1.5 px-3 text-[13px] font-medium border-b-2 transition-colors ${
-                tab === key
-                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
-              }`}>
-              <Icon size={13} /> {label}
-            </button>
-          ))}
-
-          <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
-
-          {/* Export options */}
-          {tab === 'export' && (
-            <>
-              <div className="flex items-center gap-1">
-                <span className="text-[12px] text-gray-400 dark:text-slate-500 mr-0.5">Include</span>
-                {([
-                  { v: 'both'   as ExportInclude, label: 'Schema+Data' },
-                  { v: 'schema' as ExportInclude, label: 'Schema'      },
-                  { v: 'data'   as ExportInclude, label: 'Data'        },
-                ]).map(({ v, label }) => (
-                  <button key={v} onClick={() => setExportInclude(v)} className={seg(exportInclude === v)}>{label}</button>
-                ))}
-              </div>
-              <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-0.5 shrink-0" />
-              <div className="flex items-center gap-1">
-                <span className="text-[12px] text-gray-400 dark:text-slate-500 mr-0.5">Format</span>
-                {(['sql', 'csv'] as ExportFormat[]).map(v => (
-                  <button key={v} onClick={() => setFormat(v)} className={`${seg(format === v)} uppercase`}>{v}</button>
-                ))}
-              </div>
-              <BtnTip tip="WHERE filter — applies a WHERE clause to all data SELECT queries">
-                <button onClick={() => setShowFilter(v => !v)}
-                  className={`inline-flex items-center gap-1 px-2 py-1 text-[12px] rounded border transition-colors ${showFilter ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
-                  <Filter size={12} /> Filter
-                </button>
-              </BtnTip>
-            </>
-          )}
-
-          {/* Import options — file accepted shown as static hint */}
-          {tab === 'import' && (
-            <span className="text-[12px] text-gray-400 dark:text-slate-500 italic select-none">.sql · .dump</span>
-          )}
-
-          {/* Sync options — removed from toolbar; use right-click context menu on tables instead */}
-          {tab === 'sync' && (
-            <BtnTip tip="Right-click any table to set conflict strategy and copy/replace options">
-              <span className="text-[12px] text-gray-400 dark:text-slate-500 cursor-default select-none italic">right-click table for options</span>
-            </BtnTip>
-          )}
+          {/* Single Import/Export view — actions are per-row (export ⤓ · import ⤒ · copy/move ⇄) */}
+          <span className="text-[12px] text-gray-400 dark:text-slate-500 italic select-none">
+            use the export / import / copy-move icons on any database, schema or table row
+          </span>
 
           {/* Run button */}
           <div className="ml-auto flex items-center gap-2">
-            {tab === 'import' && importSql.trim() && (
-              <button type="button" onClick={() => setShowDryRun(true)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                <Eye size={13} /> Preview
-              </button>
-            )}
             {tab === 'sync' && (
               <button type="button" onClick={() => void handleAnalyse()} disabled={!canAnalyse}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13px] rounded-lg border border-teal-400 dark:border-teal-700 text-teal-700 dark:text-teal-400 bg-transparent hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-40 transition-colors">
@@ -1532,7 +1926,7 @@ export default function ExportImportPage() {
               <span className={`inline-flex items-center gap-1 text-[13px] font-medium ${runStatus === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                 {runStatus === 'success' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                 {runStatus === 'success'
-                  ? (tab === 'export' ? 'Exported' : tab === 'import' ? 'Imported' : 'Synced')
+                  ? (tab === 'sync' ? 'Synced' : 'Done')
                   : 'Failed'}
               </span>
             )}
@@ -1548,34 +1942,16 @@ export default function ExportImportPage() {
                 <CheckCircle2 size={13} /> Saved
               </span>
             )}
-            <button type="button" onClick={handleRun} disabled={!canRun}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors disabled:opacity-40 ${
-                tab === 'export' ? 'border border-blue-500 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-50 dark:hover:bg-blue-900/20' :
-                tab === 'import' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' :
-                'border border-violet-500 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20'
-              }`}>
-              {running
-                ? <Loader2 size={13} className="animate-spin" />
-                : tab === 'export' ? <Download size={13} /> : tab === 'import' ? <UploadCloud size={13} /> : <ArrowRightLeft size={13} />}
-              {running
-                ? (tab === 'export' ? 'Exporting…' : tab === 'import' ? 'Importing…' : 'Syncing…')
-                : (tab === 'export' ? `Export${format === 'csv' ? ' CSV' : ''}` : tab === 'import' ? 'Import' : 'Sync')}
-            </button>
+            {tab === 'sync' && (
+              <button type="button" onClick={handleRun} disabled={!canRun}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors disabled:opacity-40 border border-violet-500 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20">
+                {running ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={13} />}
+                {running ? 'Syncing…' : 'Sync'}
+              </button>
+            )}
             <GuidePopover />
           </div>
         </div>
-
-        {/* ── WHERE filter row (Export only) ── */}
-        {tab === 'export' && showFilter && (
-          <div className="shrink-0 flex items-center gap-2 border-b border-gray-200 dark:border-slate-800 bg-amber-50 dark:bg-amber-950/10 px-4 py-2">
-            <Filter size={13} className="text-amber-500 shrink-0" />
-            <input type="text" value={whereClause} onChange={e => setWhere(e.target.value)}
-              placeholder="WHERE clause applied to all SELECT queries  (e.g.  created_at > '2025-01-01')"
-              className="flex-1 text-[13px] font-mono bg-transparent text-gray-800 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none" />
-            <button onClick={() => { setShowFilter(false); setWhere(''); }}
-              className="text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"><X size={14} /></button>
-          </div>
-        )}
 
         {/* ── 5-Panel Content ── */}
         {loadingConns ? (
@@ -1598,24 +1974,27 @@ export default function ExportImportPage() {
             {/* Panels 2, 3, 4: Resizable group */}
             <div className="flex-1 h-full overflow-hidden">
               <PanelGroup orientation="horizontal" className="h-full">
-                <Panel defaultSize={24} minSize={12}>
-                  <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: null, name: null }); } }}>
+                <Panel defaultSize={33} minSize={12}>
+                  <div className="h-full" onContextMenu={e => { if (tab === 'sync') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: null, name: null }); } }}>
                     <DatabasePanel
                       conn={conn}
                       value={database}
                       onChange={db => { setDatabase(db); setSchema(''); setSelectedTables('all'); }}
-                      allowCreate={tab === 'import'}
+                      allowCreate={tab === 'export'}
                       syncProgress={syncProgress}
                       tgtConn={tab === 'sync' ? tgtConn : undefined}
                       tgtValue={tab === 'sync' ? tgtDatabase : undefined}
                       onTgtChange={tab === 'sync' ? setTgtDatabase : undefined}
                       onItemContextMenu={tab === 'sync' ? (e, dbName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'db', name: dbName }) : undefined}
+                      onRowExport={tab === 'export' ? (db) => setExportDialog({ scope: 'db', name: db, database: db }) : undefined}
+                      onRowImport={tab === 'export' ? (db) => setImportDialog({ scope: 'db', name: db, database: db }) : undefined}
+                      onRowRelocate={tab === 'export' ? (db) => setRelocateDialog({ scope: 'db', name: db, database: db }) : undefined}
                     />
                   </div>
                 </Panel>
                 <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
-                <Panel defaultSize={18} minSize={8}>
-                  <div className="h-full" onContextMenu={e => { if (tab !== 'import') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: null, name: null }); } }}>
+                <Panel defaultSize={33} minSize={12}>
+                  <div className="h-full" onContextMenu={e => { if (tab === 'sync') { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: null, name: null }); } }}>
                     <SchemaPanel
                       conn={conn}
                       database={database}
@@ -1626,11 +2005,14 @@ export default function ExportImportPage() {
                       tgtValue={tab === 'sync' ? tgtSchema : undefined}
                       onTgtChange={tab === 'sync' ? (s) => { setTgtSchema(s); setAnalyseResult(null); } : undefined}
                       onItemContextMenu={tab === 'sync' ? (e, schemaName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'schema', name: schemaName }) : undefined}
+                      onRowExport={tab === 'export' ? (s) => setExportDialog({ scope: 'schema', name: s, database, schema: s }) : undefined}
+                      onRowImport={tab === 'export' ? (s) => setImportDialog({ scope: 'schema', name: s, database, schema: s }) : undefined}
+                      onRowRelocate={tab === 'export' ? (s) => setRelocateDialog({ scope: 'schema', name: s, database, schema: s }) : undefined}
                     />
                   </div>
                 </Panel>
                 <PanelResizeHandle className="w-px bg-gray-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors" />
-                <Panel defaultSize={58} minSize={30}>
+                <Panel defaultSize={34} minSize={20}>
 
             {/* Panel 4: Tables + Workspace */}
             <div className="h-full flex flex-col overflow-hidden min-w-0 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800">
@@ -1706,7 +2088,7 @@ export default function ExportImportPage() {
                           return (
                             <label key={key}
                               className={`group flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer ${hasError ? 'bg-rose-50/50 dark:bg-rose-950/10' : ''}`}
-                              onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'table', name: t.name }); }}>
+                              onContextMenu={tab === 'sync' ? e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'table', name: t.name }); } : undefined}>
 
                               {/* Sync status indicator (replaces checkbox area when status is set) */}
                               {syncSt === 'syncing' && <Loader2 size={12} className="animate-spin text-violet-500 shrink-0" />}
@@ -1766,6 +2148,29 @@ export default function ExportImportPage() {
                                   className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-opacity shrink-0">
                                   <ArrowRightLeft size={11} />
                                 </button>
+                              )}
+
+                              {/* Per-table import/export (maintain view) */}
+                              {tab === 'export' && (
+                                <span className="flex items-center gap-0.5 shrink-0">
+                                  <button type="button" title={`Export table "${t.name}"`}
+                                    onClick={e => { e.preventDefault(); setExportDialog({ scope: 'table', name: t.name, database, schema: t.schema }); }}
+                                    className="ml-0.5 p-0.5 rounded text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20">
+                                    <Download size={11} />
+                                  </button>
+                                  <button type="button" title={`Import into table "${t.name}"`}
+                                    onClick={e => { e.preventDefault(); setImportDialog({ scope: 'table', name: t.name, database, schema: t.schema }); }}
+                                    className="p-0.5 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
+                                    <UploadCloud size={11} />
+                                  </button>
+                                  <button type="button"
+                                    disabled={conn?.db_type !== 'postgres'}
+                                    title={conn?.db_type === 'postgres' ? `Copy / move table "${t.name}" to another schema` : 'Table relocation requires PostgreSQL'}
+                                    onClick={e => { e.preventDefault(); setRelocateDialog({ scope: 'table', name: t.name, database, schema: t.schema }); }}
+                                    className="p-0.5 rounded text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/20 disabled:opacity-30 disabled:cursor-not-allowed">
+                                    <ArrowRightLeft size={11} />
+                                  </button>
+                                </span>
                               )}
                             </label>
                           );
@@ -1871,6 +2276,23 @@ export default function ExportImportPage() {
           <DryRunModal sql={importSql}
             onConfirm={() => { setShowDryRun(false); void doImport(); }}
             onCancel={() => setShowDryRun(false)} />
+        )}
+
+        {/* Per-row export / import dialogs (Import/Export view) */}
+        {exportDialog && (
+          <ExportDialogModal info={exportDialog} busy={running}
+            onCancel={() => setExportDialog(null)}
+            onConfirm={(include, fmt) => void runScopedExport(exportDialog, include, fmt)} />
+        )}
+        {importDialog && (
+          <ImportDialogModal info={importDialog} busy={running}
+            onCancel={() => setImportDialog(null)}
+            onConfirm={(sql, mode) => void runScopedImport(importDialog, mode, sql)} />
+        )}
+        {relocateDialog && (
+          <RelocateDialogModal info={relocateDialog} connections={connections} sourceConnId={connId} busy={running}
+            onCancel={() => setRelocateDialog(null)}
+            onConfirm={(target, op, include, conflictStrategy) => void runRelocate(relocateDialog, target, op, include, conflictStrategy)} />
         )}
 
 

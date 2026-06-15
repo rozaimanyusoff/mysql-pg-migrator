@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import Anthropic from '@anthropic-ai/sdk';
+import { AI_MIGRATION_MODEL } from '../../../lib/ai-migration/model';
 import { withMysql, type ExplorerConn } from '../../../lib/explorer-db';
 
 export const config = {
@@ -19,12 +20,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable proxy buffering (nginx)
   res.flushHeaders();
 
   const send = (event: string, data: unknown) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    (res as unknown as { flush?: () => void }).flush?.(); // push immediately if compression middleware is active
   };
 
   try {
@@ -80,15 +83,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const client = new Anthropic();
     const stream = client.messages.stream({
-      model: 'claude-sonnet-4-6',
+      model: AI_MIGRATION_MODEL,
       max_tokens: 4096,
-      messages: [{
-        role: 'user',
-        content: `You are an expert MySQL→PostgreSQL migration engineer. Analyze the following MySQL schema and produce a thorough pre-flight migration report.
+      // Static instructions in a cached system block; only the (dynamic) schema
+      // varies per request, so it stays in the user turn.
+      system: [{
+        type: 'text',
+        cache_control: { type: 'ephemeral' },
+        text: `You are an expert MySQL→PostgreSQL migration engineer. Analyze the MySQL schema the user provides and produce a thorough pre-flight migration report.
 
-${tableSchemas.join('\n\n')}
-
----
 Write the report in this exact format:
 
 ## Executive Summary
@@ -122,6 +125,10 @@ Key things to check for each column type:
 - Tables with no primary key → add surrogate PK before migration
 - Collation/charset → UTF8MB4 maps to UTF8 in PG
 - FK dependency order → parent tables must be created/migrated before child tables`,
+      }],
+      messages: [{
+        role: 'user',
+        content: `MySQL schema to analyze:\n\n${tableSchemas.join('\n\n')}`,
       }],
     });
 

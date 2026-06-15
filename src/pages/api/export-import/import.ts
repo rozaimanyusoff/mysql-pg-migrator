@@ -3,7 +3,12 @@ import { Pool, Client } from 'pg';
 import mysql from 'mysql2/promise';
 import { ConnCfg } from '../../../lib/sql-exporter';
 
-type ImportStrategy = 'import_rows' | 'replace_schema' | 'replace_db';
+type ImportStrategy = 'import_rows' | 'replace_schema' | 'replace_db' | 'replace_table';
+
+interface ImportScopeOpts {
+  schema?: string;   // PostgreSQL target schema (default 'public')
+  table?: string;    // required for replace_table
+}
 
 // ── pg_dump preprocessor ─────────────────────────────────────────────────────
 // Strips psql meta-commands (\restrict, \unrestrict, \connect, …) and converts
@@ -98,21 +103,28 @@ function parseCopyRow(line: string): (string | null)[] {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { cfg, sql, strategy = 'import_rows' } = req.body as { cfg?: ConnCfg; sql?: string; strategy?: ImportStrategy };
+  const { cfg, sql, strategy = 'import_rows', schema, table } = req.body as {
+    cfg?: ConnCfg; sql?: string; strategy?: ImportStrategy; schema?: string; table?: string;
+  };
   if (!cfg?.host || !cfg?.user || !cfg?.database || !cfg?.db_type)
     return res.status(400).json({ error: 'cfg (db_type, host, user, database) required' });
   if (!sql?.trim()) return res.status(400).json({ error: 'sql is required' });
+  if (strategy === 'replace_table' && !table?.trim())
+    return res.status(400).json({ error: 'table is required for replace_table' });
+
+  const scope: ImportScopeOpts = { schema: schema?.trim() || undefined, table: table?.trim() || undefined };
 
   try {
-    if (cfg.db_type === 'postgres') return await pgImport(cfg, sql, strategy, res);
-    return await mysqlImport(cfg, sql, strategy, res);
+    if (cfg.db_type === 'postgres') return await pgImport(cfg, sql, strategy, res, scope);
+    return await mysqlImport(cfg, sql, strategy, res, scope);
   } catch (err: unknown) {
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }
 
-async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse) {
+async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse, scope: ImportScopeOpts = {}) {
   const log: string[] = [];
+  const targetSchema = scope.schema || 'public';
 
   // Preprocess: convert COPY blocks → INSERT, strip psql meta-commands
   const { sql, converted, copyTables } = preprocessSql(rawSql);
@@ -148,6 +160,7 @@ async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
     if (strategy === 'replace_schema') {
       if (copyTables.length > 0) {
         // Data-only dump: truncate only the tables referenced in the dump so the
@@ -157,17 +170,27 @@ async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, 
         );
         log.push(`[INFO] Truncated ${copyTables.length} table(s) before import: ${copyTables.join(', ')}`);
       } else {
-        // Full SQL dump (has CREATE TABLE): drop and recreate public schema.
-        await client.query('DROP SCHEMA IF EXISTS public CASCADE');
-        await client.query('CREATE SCHEMA public');
-        await client.query(`GRANT ALL ON SCHEMA public TO "${cfg.user}"`);
-        await client.query('GRANT ALL ON SCHEMA public TO public');
-        log.push('[INFO] Replaced public schema');
+        // Full SQL dump (has CREATE TABLE): drop and recreate the target schema.
+        await client.query(`DROP SCHEMA IF EXISTS "${targetSchema}" CASCADE`);
+        await client.query(`CREATE SCHEMA "${targetSchema}"`);
+        await client.query(`GRANT ALL ON SCHEMA "${targetSchema}" TO "${cfg.user}"`);
+        if (targetSchema === 'public') await client.query('GRANT ALL ON SCHEMA public TO public');
+        log.push(`[INFO] Replaced schema "${targetSchema}"`);
       }
+    } else if (strategy === 'replace_table') {
+      await client.query(`DROP TABLE IF EXISTS "${targetSchema}"."${scope.table}" CASCADE`);
+      log.push(`[INFO] Dropped table "${targetSchema}"."${scope.table}" before import`);
+    } else if (targetSchema !== 'public') {
+      // Create-new / insert into a non-public schema: ensure it exists.
+      await client.query(`CREATE SCHEMA IF NOT EXISTS "${targetSchema}"`);
     }
+
+    // Route unqualified objects in the dump into the target schema.
+    await client.query(`SET search_path TO "${targetSchema}", public`);
+
     await client.query(sql);
     await client.query('COMMIT');
-    log.push(`[OK] SQL imported and committed to "${cfg.database}"`);
+    log.push(`[OK] SQL imported and committed to "${cfg.database}"${targetSchema !== 'public' ? ` (schema "${targetSchema}")` : ''}`);
     return res.status(200).json({ success: true, log });
   } catch (err: unknown) {
     await client.query('ROLLBACK').catch(() => {});
@@ -184,7 +207,7 @@ async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, 
   } finally { client.release(); await pool.end(); }
 }
 
-async function mysqlImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse) {
+async function mysqlImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse, scope: ImportScopeOpts = {}) {
   const log: string[] = [];
 
   // Preprocess handles psql dumps gracefully even if targeting MySQL
@@ -192,7 +215,19 @@ async function mysqlImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrateg
   if (converted > 0)
     log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
 
-  if (strategy === 'replace_db') {
+  if (strategy === 'replace_table') {
+    // MySQL has no separate schema; drop the single named table before import.
+    const tblConn = await mysql.createConnection({
+      host: cfg.host, port: cfg.port ?? 3306, user: cfg.user,
+      password: cfg.password, database: cfg.database,
+    });
+    try {
+      await tblConn.execute('SET FOREIGN_KEY_CHECKS = 0');
+      await tblConn.execute(`DROP TABLE IF EXISTS \`${scope.table}\``);
+      await tblConn.execute('SET FOREIGN_KEY_CHECKS = 1');
+      log.push(`[INFO] Dropped table "${scope.table}" before import`);
+    } finally { await tblConn.end(); }
+  } else if (strategy === 'replace_db') {
     const adminConn = await mysql.createConnection({
       host: cfg.host, port: cfg.port ?? 3306, user: cfg.user, password: cfg.password,
     });

@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import Anthropic from '@anthropic-ai/sdk';
+import { AI_MIGRATION_MODEL } from '../../../lib/ai-migration/model';
 import { withMysql, withPg, type ExplorerConn } from '../../../lib/explorer-db';
 
 export const config = { api: { responseLimit: false } };
@@ -242,12 +243,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   };
 
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable proxy buffering (nginx)
   res.flushHeaders();
 
   const send = (event: string, data: unknown) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    (res as unknown as { flush?: () => void }).flush?.(); // push immediately if compression middleware is active
   };
 
   const hb = setInterval(() => res.write('event: ping\ndata: {}\n\n'), 10000);
@@ -279,7 +282,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const client = new Anthropic();
 
     const stream = client.messages.stream({
-      model: 'claude-sonnet-4-6',
+      model: AI_MIGRATION_MODEL,
       max_tokens: 8000,
       system: [
         {

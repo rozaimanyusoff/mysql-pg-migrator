@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import Anthropic from '@anthropic-ai/sdk';
+import { AI_MIGRATION_MODEL } from '../../../lib/ai-migration/model';
 
 export interface ExplainFix {
   action: string;
@@ -25,7 +26,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const client = new Anthropic();
     const message = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: AI_MIGRATION_MODEL,
       max_tokens: 1024,
       messages: [{
         role: 'user',

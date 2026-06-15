@@ -49,23 +49,24 @@ function csvVal(v: unknown): string {
 
 // ── PostgreSQL ─────────────────────────────────────────────────────────────────
 
-async function pgListTablesWithCounts(client: PoolClient): Promise<TableInfo[]> {
+async function pgListTablesWithCounts(client: PoolClient, schema = 'public'): Promise<TableInfo[]> {
   const { rows } = await client.query<{ table_name: string }>(
     `SELECT table_name FROM information_schema.tables
-     WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+     WHERE table_schema = $1 AND table_type = 'BASE TABLE'
      ORDER BY table_name`,
+    [schema],
   );
   const tables = rows.map((r) => r.table_name);
   const counts = await Promise.all(
     tables.map(async (t) => {
-      const { rows: cr } = await client.query<{ c: string }>(`SELECT COUNT(*)::text AS c FROM "${t}"`);
+      const { rows: cr } = await client.query<{ c: string }>(`SELECT COUNT(*)::text AS c FROM "${schema}"."${t}"`);
       return { name: t, rowCount: parseInt(cr[0]?.c ?? '0', 10) };
     }),
   );
   return counts;
 }
 
-async function pgExportSchema(client: PoolClient, table: string): Promise<string> {
+async function pgExportSchema(client: PoolClient, table: string, schema = 'public'): Promise<string> {
   const { rows: cols } = await client.query<{
     column_name: string; data_type: string; udt_name: string;
     character_maximum_length: number | null; numeric_precision: number | null;
@@ -74,9 +75,9 @@ async function pgExportSchema(client: PoolClient, table: string): Promise<string
     `SELECT column_name, data_type, udt_name, character_maximum_length,
             numeric_precision, numeric_scale, is_nullable, column_default
      FROM information_schema.columns
-     WHERE table_schema = 'public' AND table_name = $1
+     WHERE table_schema = $2 AND table_name = $1
      ORDER BY ordinal_position`,
-    [table],
+    [table, schema],
   );
 
   const { rows: pkCols } = await client.query<{ column_name: string }>(
@@ -84,9 +85,9 @@ async function pgExportSchema(client: PoolClient, table: string): Promise<string
      FROM information_schema.table_constraints tc
      JOIN information_schema.key_column_usage kcu
        ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-     WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = $1 AND tc.table_schema = 'public'
+     WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = $1 AND tc.table_schema = $2
      ORDER BY kcu.ordinal_position`,
-    [table],
+    [table, schema],
   );
 
   const { rows: fks } = await client.query<{
@@ -101,18 +102,18 @@ async function pgExportSchema(client: PoolClient, table: string): Promise<string
        ON tc.constraint_name = rc.constraint_name
      JOIN information_schema.constraint_column_usage ccu
        ON rc.unique_constraint_name = ccu.constraint_name
-     WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = $1 AND tc.table_schema = 'public'`,
-    [table],
+     WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = $1 AND tc.table_schema = $2`,
+    [table, schema],
   );
 
   const { rows: idxs } = await client.query<{ indexname: string; indexdef: string }>(
     `SELECT indexname, indexdef FROM pg_indexes
-     WHERE tablename = $1 AND schemaname = 'public'
+     WHERE tablename = $1 AND schemaname = $2
        AND indexname NOT IN (
          SELECT constraint_name FROM information_schema.table_constraints
-         WHERE table_name = $1 AND table_schema = 'public'
+         WHERE table_name = $1 AND table_schema = $2
        )`,
-    [table],
+    [table, schema],
   );
 
   const colDefs = cols.map((c) => {
@@ -144,10 +145,13 @@ async function pgExportSchema(client: PoolClient, table: string): Promise<string
 
   let sql = `CREATE TABLE IF NOT EXISTS "${table}" (\n${colDefs.join(',\n')}\n);\n`;
   for (const idx of idxs) {
-    // Add IF NOT EXISTS so re-running schema on an existing DB doesn't fail
+    // Add IF NOT EXISTS so re-running schema on an existing DB doesn't fail.
+    // Strip the source schema qualifier (e.g. ON billings.foo → ON foo) so the
+    // dump is portable and re-imports into whatever schema the target chooses.
     const def = idx.indexdef
       .replace(/^CREATE UNIQUE INDEX /, 'CREATE UNIQUE INDEX IF NOT EXISTS ')
-      .replace(/^CREATE INDEX /, 'CREATE INDEX IF NOT EXISTS ');
+      .replace(/^CREATE INDEX /, 'CREATE INDEX IF NOT EXISTS ')
+      .replace(new RegExp(` ON "?${schema}"?\\.`), ' ON ');
     sql += `${def};\n`;
   }
   return sql;
@@ -155,10 +159,10 @@ async function pgExportSchema(client: PoolClient, table: string): Promise<string
 
 async function pgExportData(
   client: PoolClient, table: string,
-  whereClause?: string, conflictStrategy?: ConflictStrategy,
+  whereClause?: string, conflictStrategy?: ConflictStrategy, schema = 'public',
 ): Promise<string> {
   const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
-  const { rows, fields } = await client.query(`SELECT * FROM "${table}"${where}`);
+  const { rows, fields } = await client.query(`SELECT * FROM "${schema}"."${table}"${where}`);
   if (rows.length === 0) return '';
   const cols = fields.map((f) => `"${f.name}"`).join(', ');
   const vals = rows.map((r) => `(${fields.map((f) => pgVal(r[f.name])).join(', ')})`).join(',\n');
@@ -169,9 +173,9 @@ async function pgExportData(
   return `INSERT INTO "${table}" (${cols}) VALUES\n${vals};\n`;
 }
 
-async function pgExportDataCsv(client: PoolClient, table: string, whereClause?: string): Promise<string> {
+async function pgExportDataCsv(client: PoolClient, table: string, whereClause?: string, schema = 'public'): Promise<string> {
   const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
-  const { rows, fields } = await client.query(`SELECT * FROM "${table}"${where}`);
+  const { rows, fields } = await client.query(`SELECT * FROM "${schema}"."${table}"${where}`);
   const header = fields.map((f) => f.name).join(',');
   if (rows.length === 0) return header + '\n';
   const dataRows = rows.map((r) => fields.map((f) => csvVal(r[f.name])).join(','));
@@ -259,6 +263,7 @@ export interface ExportResult {
 export interface ExportOptions {
   whereClause?: string;
   conflictStrategy?: ConflictStrategy;
+  schema?: string;            // PostgreSQL source schema (default 'public')
 }
 
 export async function exportDatabase(
@@ -268,6 +273,7 @@ export async function exportDatabase(
   opts: ExportOptions = {},
 ): Promise<ExportResult> {
   const { whereClause, conflictStrategy } = opts;
+  const schema = opts.schema || 'public';
   const header = `-- Export: ${cfg.database} (${cfg.db_type})\n-- Generated: ${new Date().toISOString()}\n-- Include: ${include}\n\n`;
   const parts: string[] = [header];
 
@@ -275,7 +281,7 @@ export async function exportDatabase(
     const pool = makePgPool(cfg);
     const client = await pool.connect();
     try {
-      const allInfo = await pgListTablesWithCounts(client);
+      const allInfo = await pgListTablesWithCounts(client, schema);
       const allNames = allInfo.map((t) => t.name);
       const target = tables === 'all' ? allNames : tables;
       parts.push('SET client_min_messages TO WARNING;\n\n');
@@ -288,8 +294,8 @@ export async function exportDatabase(
 
       for (const t of target) {
         parts.push(`-- Table: ${t}\n`);
-        if (include !== 'data') parts.push(await pgExportSchema(client, t));
-        if (include !== 'schema') parts.push(await pgExportData(client, t, whereClause, conflictStrategy));
+        if (include !== 'data') parts.push(await pgExportSchema(client, t, schema));
+        if (include !== 'schema') parts.push(await pgExportData(client, t, whereClause, conflictStrategy, schema));
         parts.push('\n');
       }
       return { sql: parts.join(''), tables: target, include };
@@ -328,16 +334,17 @@ export async function exportDatabaseCsv(
   cfg: ConnCfg,
   tables: string[] | 'all',
   whereClause?: string,
+  schema = 'public',
 ): Promise<CsvExportResult> {
   if (cfg.db_type === 'postgres') {
     const pool = makePgPool(cfg);
     const client = await pool.connect();
     try {
-      const allInfo = await pgListTablesWithCounts(client);
+      const allInfo = await pgListTablesWithCounts(client, schema);
       const allNames = allInfo.map((t) => t.name);
       const target = tables === 'all' ? allNames : tables;
       const csvFiles = await Promise.all(
-        target.map(async (t) => ({ table: t, csv: await pgExportDataCsv(client, t, whereClause) })),
+        target.map(async (t) => ({ table: t, csv: await pgExportDataCsv(client, t, whereClause, schema) })),
       );
       return { csvFiles, tables: target };
     } finally { client.release(); await pool.end(); }

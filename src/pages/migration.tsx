@@ -10,6 +10,7 @@ import {
   Database, FileCode, FileText, Layers, Loader2,
   Pause, Pencil, Play, Plus, Undo2, Save, Search, Sparkles, Square,
   Table2, Terminal, Trash2, X, AlertTriangle, CheckCircle2, Clock, Eye, RotateCcw,
+  Calendar, Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
@@ -236,6 +237,9 @@ export default function Migration() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [saveJobName, setSaveJobName] = useState('');
   const [saveJobDesc, setSaveJobDesc] = useState('');
+  // When true, after a successful Save the user is taken straight to the
+  // Scheduler with the Add-Schedule form open for the new job.
+  const [scheduleAfterSave, setScheduleAfterSave] = useState(false);
   const [filterCol, setFilterCol] = useState('');
   const [filterFrom, setFilterFrom] = useState('');
   const [filterTo, setFilterTo] = useState('');
@@ -695,6 +699,72 @@ export default function Migration() {
   const includedCount = tableMaps.filter(m => m.include).length;
   const canStart = srcConnected && tgtConnected && includedCount > 0 && !polling;
 
+  // Included tables whose target table does not exist yet — these are created
+  // fresh on first run, preserving source columns & data types. Drives the
+  // "migrating into a new schema" guidance banner.
+  const newTargetTables = useMemo(
+    () => tableMaps.filter(m =>
+      m.include &&
+      !tgtTables.some(t =>
+        t.schema === m.target.schema &&
+        (m.targetAlias?.trim() || m.target.table) === t.name
+      )
+    ),
+    [tableMaps, tgtTables]
+  );
+  const newTargetSchema = newTargetTables[0]?.target.schema ?? '';
+
+  // Change the default target schema and re-point any table maps still on the
+  // previous default, so already-selected tables follow the schema you pick.
+  const changeTgtSchema = (next: string) => {
+    const schema = next.trim();
+    setTgtNewSchemaMode(false); setTgtNewSchemaName('');
+    if (!schema || schema === tgtDefaultSchema) { setTgtDefaultSchema(schema); return; }
+    const prev = tgtDefaultSchema;
+    setTgtDefaultSchema(schema);
+    setTableMaps(ms => {
+      const moved = ms.some(m => m.target.schema === prev);
+      if (moved) setDirty(true);
+      return ms.map(m =>
+        m.target.schema === prev ? { ...m, target: { ...m.target, schema } } : m
+      );
+    });
+  };
+
+  // Open the Save dialog pre-filled. When schedule=true, jump to the Scheduler
+  // after a successful save; otherwise stay on the page (save now, schedule later).
+  const openSave = (schedule: boolean) => {
+    if (!saveJobName.trim()) {
+      const def = `${srcConn.database || 'source'} → ${newTargetSchema || tgtConn.database || 'target'}`;
+      setSaveJobName(def);
+    }
+    setSaveAsTarget(null);
+    setScheduleAfterSave(schedule);
+    setShowSaveDialog(true);
+  };
+
+  // Confirm before adopting a brand-new target schema — guards against typos,
+  // since the schema is created on the target DB on first run.
+  const confirmNewSchema = (raw: string) => {
+    const name = raw.trim();
+    if (!name) return;
+    if (tgtSchemas.includes(name)) { changeTgtSchema(name); return; }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      showWarning({
+        title: 'Invalid schema name',
+        description: `"${name}" isn't a valid schema name. Use letters, digits and underscores, starting with a letter or underscore.`,
+      });
+      return;
+    }
+    showConfirm({
+      title: 'Create new schema?',
+      description: `A new schema "${name}" will be created on the target database "${tgtConn.database}" on the first run. Double-check the spelling — a typo creates an unintended schema.`,
+      confirmLabel: 'Use this schema',
+      cancelLabel: 'Cancel',
+      onConfirm: () => changeTgtSchema(name),
+    });
+  };
+
   // Source keys already saved in any job — exclude from pending-save list
   const savedJobSourceKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -852,13 +922,19 @@ export default function Migration() {
       await loadJobs(); void loadTableRefs();
 
       const savedJobId = data.job.id;
-      toast.success(`Job "${data.job.name}" saved.`, {
-        description: 'Schedule it to run server-side via the Scheduler.',
-        action: {
-          label: 'Go to Scheduler',
-          onClick: () => { void router.push(`/scheduler?highlight=${savedJobId}`); },
-        },
-      });
+      if (scheduleAfterSave) {
+        setScheduleAfterSave(false);
+        toast.success(`Job "${data.job.name}" saved — set up its schedule.`);
+        void router.push(`/scheduler?highlight=${savedJobId}`);
+      } else {
+        toast.success(`Job "${data.job.name}" saved.`, {
+          description: 'Schedule it to run server-side via the Scheduler.',
+          action: {
+            label: 'Go to Scheduler',
+            onClick: () => { void router.push(`/scheduler?highlight=${savedJobId}`); },
+          },
+        });
+      }
     } catch { /* ignore */ } finally { setSavingJob(false); }
   };
 
@@ -1702,6 +1778,18 @@ export default function Migration() {
                                   </span>
                                 );
                               })()}
+                              {/* Mapping status: distinguishes auto (1:1, no badge) from hand-configured maps */}
+                              {mapEntry && mapEntry.columns.length > 0 && (
+                                mapEntry.isSet ? (
+                                  <span title="Mapping reviewed & marked ready to run"
+                                    className="inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">
+                                    <Check size={9} />set
+                                  </span>
+                                ) : (
+                                  <span title="Columns configured — click to review or edit"
+                                    className="text-[10px] px-1 py-0.5 rounded bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 font-semibold shrink-0">custom</span>
+                                )
+                              )}
                               {isMigrated && <span className="text-[11px] text-emerald-500 dark:text-emerald-600 shrink-0">✓</span>}
                               <span className="text-[12px] text-gray-400 shrink-0">{t.rowCount.toLocaleString()}</span>
                               <button
@@ -1809,10 +1897,10 @@ export default function Migration() {
                                   ? (
                                     <div className="flex items-center gap-1">
                                       <input value={tgtNewSchemaName} onChange={e => setTgtNewSchemaName(e.target.value)}
-                                        onKeyDown={e => { if (e.key === 'Enter' && tgtNewSchemaName.trim()) { setTgtDefaultSchema(tgtNewSchemaName.trim()); setTgtNewSchemaMode(false); setTgtNewSchemaName(''); } }}
+                                        onKeyDown={e => { if (e.key === 'Enter' && tgtNewSchemaName.trim()) confirmNewSchema(tgtNewSchemaName); }}
                                         placeholder="new_schema" autoFocus
                                         className="flex-1 min-w-0 px-2 py-1 text-[13px] rounded border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 font-mono focus:outline-none focus:border-violet-500" />
-                                      <button onClick={() => { if (tgtNewSchemaName.trim()) { setTgtDefaultSchema(tgtNewSchemaName.trim()); setTgtNewSchemaMode(false); setTgtNewSchemaName(''); } }}
+                                      <button onClick={() => { if (tgtNewSchemaName.trim()) confirmNewSchema(tgtNewSchemaName); }}
                                         disabled={!tgtNewSchemaName.trim()}
                                         className="px-2 py-1 text-[13px] rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50">Use</button>
                                       <button onClick={() => { setTgtNewSchemaMode(false); setTgtNewSchemaName(''); }}
@@ -1820,7 +1908,7 @@ export default function Migration() {
                                     </div>
                                   ) : (
                                     <div className="flex items-center gap-0.5">
-                                      <select value={tgtDefaultSchema} onChange={e => setTgtDefaultSchema(e.target.value)}
+                                      <select value={tgtDefaultSchema} onChange={e => changeTgtSchema(e.target.value)}
                                         title="Default target schema"
                                         className="flex-1 min-w-0 px-2 py-1 text-[13px] rounded border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 focus:outline-none cursor-pointer font-mono">
                                         {tgtSchemas.map(s => <option key={s} value={s}>{s}</option>)}
@@ -1873,6 +1961,42 @@ export default function Migration() {
                         ) : null}
                       </div>
                     </div>
+
+                    {/* New-schema migration guidance */}
+                    {!polling && tgtConnected && srcConnected && newTargetTables.length > 0 && (
+                      <div className="shrink-0 mx-3 mt-2 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 p-3">
+                        <div className="flex items-start gap-2">
+                          <Info size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <p className="text-[12.5px] font-semibold text-amber-700 dark:text-amber-300">
+                              Migrating into a new schema{newTargetSchema ? ` “${newTargetSchema}”` : ''}
+                            </p>
+                            <p className="text-[12px] text-amber-700/90 dark:text-amber-200/80 mt-0.5 leading-snug">
+                              {newTargetTables.length} target {newTargetTables.length === 1 ? 'table doesn’t' : 'tables don’t'} exist yet —
+                              each maps 1:1 by default and is created on first run, preserving source columns &amp; data types.
+                              Click any source table to customize its columns, types, or PK&nbsp;→&nbsp;UUID before running.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 mt-2.5">
+                          <button onClick={() => void startMigration()}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium bg-violet-600 text-white hover:bg-violet-700 transition-colors">
+                            <Play size={12} /> Run now
+                          </button>
+                          <button onClick={() => openSave(false)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors">
+                            <Save size={12} /> Save
+                          </button>
+                          <button onClick={() => openSave(true)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors">
+                            <Calendar size={12} /> Save &amp; Schedule
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-amber-700/70 dark:text-amber-200/60 mt-1.5">
+                          Save stores the job (editable later &amp; runnable from the Scheduler). Save &amp; Schedule also opens the scheduler now.
+                        </p>
+                      </div>
+                    )}
 
                     {/* Tables list */}
                     <div className="flex-1 min-h-0 overflow-y-auto panel-scroll">
@@ -3258,7 +3382,12 @@ export default function Migration() {
       {showSaveDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 p-6 w-full max-w-sm shadow-xl">
-            <h3 className="text-base font-semibold text-gray-800 dark:text-slate-200 mb-4">Save Migration Job</h3>
+            <h3 className="text-base font-semibold text-gray-800 dark:text-slate-200 mb-1">{scheduleAfterSave ? 'Save & Schedule Job' : 'Save Migration Job'}</h3>
+            {scheduleAfterSave && (
+              <p className="text-[12px] text-gray-500 dark:text-slate-400 mb-3">
+                Saves this configuration, then opens the Scheduler so you can pick when it runs.
+              </p>
+            )}
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Job name *</label>
@@ -3329,13 +3458,13 @@ export default function Migration() {
               )}
             </div>
             <div className="flex gap-2 mt-5">
-              <button onClick={() => { setShowSaveDialog(false); setSaveAsTarget(null); }}
+              <button onClick={() => { setShowSaveDialog(false); setSaveAsTarget(null); setScheduleAfterSave(false); }}
                 className="flex-1 py-2 rounded-lg text-base text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
                 Cancel
               </button>
               <button onClick={handleSaveJob} disabled={savingJob || !saveJobName.trim()}
                 className="flex-1 py-2 rounded-lg text-base font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                {savingJob ? 'Saving…' : saveAsTarget ? 'Update Job' : 'Save'}
+                {savingJob ? 'Saving…' : scheduleAfterSave ? 'Save & Schedule' : saveAsTarget ? 'Update Job' : 'Save'}
               </button>
             </div>
           </div>
