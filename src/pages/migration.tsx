@@ -806,6 +806,8 @@ export default function Migration() {
   };
 
   const doSaveJob = async () => {
+    if (!srcConn.host) { showError('Select a source connection before saving.'); return; }
+    if (!tgtConn.host) { showError('Select a target connection before saving.'); return; }
     setSavingJob(true);
     try {
       const targetId = saveAsTarget ?? activeJobId ?? undefined;

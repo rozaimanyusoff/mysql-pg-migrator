@@ -2,6 +2,13 @@
 
 ---
 
+## 2026-06-15
+- **fix** — Fresh migration: runner auto-discovers columns when no mapping configured
+  - `src/lib/migv2/runner.ts`: Added `fetchSourceColumns(conn, schema, table, targetType)` — queries `information_schema.COLUMNS` for both PG and MySQL, maps types via `suggestTargetType()`. In `advanceRun()`, when `tableMap.columns.length === 0`, auto-discovers columns before the row-count + DDL steps; logs discovery count; marks table failed on error (with message in run logs).
+  - `src/pages/migration.tsx` `doSaveJob()`: Added early guard — shows error if source or target connection not set, preventing jobs with empty `sourceMeta`/`targetMeta` from being saved.
+  - Root cause: `handleCheckAll()` intentionally defers column fetch (`columns: []` lazy), but runner previously silently skipped tables with no columns. Now runner handles the lazy case transparently — scheduler jobs saved without manual column mapping will auto-migrate all columns.
+  - Status: done
+
 ## 2026-06-14
 - **implement** — Reliability bundle for large-scale scheduled runs: pre-flight, crash-safe/resumable runs, email notify
   - **Pre-flight check** (`src/lib/migv2/preflight.ts` + `src/pages/api/migv2/preflight.ts`): `runPreflight(job, source, target)` validates a saved job before a long run. Checks source/target connectivity (`SELECT 1`), real per-table source **row counts** (applying the job's range filter + incremental watermark, mirroring runner), target-table existence (`information_schema`), static type/FK sanity (serial→uuid target type, target-only NOT NULL without default, FK-parent ordering), and a duration **ETA** (~2,000 rows/s). Returns `{ ok, totalRows, estimatedSeconds, tables[], globalIssues[] }`. Self-contained DB helpers; no client imports.

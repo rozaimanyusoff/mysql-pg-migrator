@@ -1,7 +1,8 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 import { Client as PgClient } from 'pg';
 import mysql from 'mysql2/promise';
-import type { MigConn, MigRun, MigRunTableState, TableMap, ColumnMap } from './types';
+import type { MigConn, MigRun, TableMap, ColumnMap, DbType } from './types';
+import { suggestTargetType } from './type-map';
 
 const CHUNK_SIZE = 500;
 const MAX_ADVANCE_MS = 8_000;
@@ -437,6 +438,54 @@ async function ensureTargetTable(conn: MigConn, tableMap: TableMap): Promise<voi
   }
 }
 
+// ── Auto-discover columns from source schema (fresh migration, no mapping) ────
+
+async function fetchSourceColumns(
+  conn: MigConn,
+  schema: string,
+  table: string,
+  targetType: DbType,
+): Promise<ColumnMap[]> {
+  if (conn.type === 'postgresql') {
+    return withPg(conn, async c => {
+      const { rows } = await c.query<any>(`
+        SELECT c.column_name, c.udt_name, c.data_type,
+          c.character_maximum_length, c.numeric_precision, c.numeric_scale,
+          c.is_nullable, c.column_default
+        FROM information_schema.columns c
+        WHERE c.table_schema = $1 AND c.table_name = $2
+        ORDER BY c.ordinal_position
+      `, [schema, table]);
+      return rows.map((c: any): ColumnMap => {
+        let rawType: string = c.udt_name;
+        if (c.character_maximum_length) rawType += `(${c.character_maximum_length})`;
+        else if (c.numeric_precision && ['numeric', 'decimal'].includes(c.data_type))
+          rawType += `(${c.numeric_precision},${c.numeric_scale ?? 0})`;
+        return {
+          sourceCol: c.column_name, targetCol: c.column_name, targetName: null,
+          targetType: suggestTargetType(rawType, 'postgresql', targetType),
+          nullable: c.is_nullable === 'YES', defaultValue: c.column_default ?? null,
+          include: true, conversion: 'keep', fkRef: null, keepLegacyAs: null,
+        };
+      });
+    });
+  }
+  return withMysql(conn, async c => {
+    const [rows] = await c.query<any[]>(`
+      SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+      ORDER BY ORDINAL_POSITION
+    `, [schema, table]);
+    return (rows as any[]).map((c): ColumnMap => ({
+      sourceCol: c.COLUMN_NAME, targetCol: c.COLUMN_NAME, targetName: null,
+      targetType: suggestTargetType(c.COLUMN_TYPE, 'mysql', targetType),
+      nullable: c.IS_NULLABLE === 'YES', defaultValue: c.COLUMN_DEFAULT ?? null,
+      include: true, conversion: 'keep', fkRef: null, keepLegacyAs: null,
+    }));
+  });
+}
+
 // ── Advance: migrate one chunk for all pending/running tables ─────────────────
 
 export async function advanceRun(
@@ -483,6 +532,28 @@ export async function advanceRun(
       const tableSource: MigConn = tableMap.sourceDatabase && tableMap.sourceDatabase !== source.database
         ? { ...source, database: tableMap.sourceDatabase }
         : source;
+
+      // Fresh migration: no column mapping configured — auto-discover from source schema
+      if (tableMap.columns.length === 0) {
+        try {
+          const discovered = await fetchSourceColumns(
+            tableSource, tableMap.source.schema, tableMap.source.table, target.type
+          );
+          if (!discovered.length) {
+            ts.status = 'completed';
+            log(`[${ts.sourceKey}] source table has no columns, skipping`);
+            continue;
+          }
+          tableMap.columns = discovered;
+          log(`[${ts.sourceKey}] auto-discovered ${discovered.length} columns`);
+        } catch (err) {
+          ts.status = 'failed';
+          ts.error = err instanceof Error ? err.message : String(err);
+          log(`[${ts.sourceKey}] failed to auto-discover columns: ${ts.error}`);
+          run.errors.push(ts.error);
+          continue;
+        }
+      }
 
       // Count source rows (once)
       if (ts.rowsSource === 0 && ts.offset === 0) {
