@@ -66,7 +66,9 @@ async function pgListTablesWithCounts(client: PoolClient, schema = 'public'): Pr
   return counts;
 }
 
-async function pgExportSchema(client: PoolClient, table: string, schema = 'public'): Promise<string> {
+async function pgExportSchema(
+  client: PoolClient, table: string, schema = 'public',
+): Promise<{ tableSql: string; fkSql: string }> {
   const { rows: cols } = await client.query<{
     column_name: string; data_type: string; udt_name: string;
     character_maximum_length: number | null; numeric_precision: number | null;
@@ -138,12 +140,10 @@ async function pgExportSchema(client: PoolClient, table: string, schema = 'publi
   if (pkCols.length > 0)
     colDefs.push(`  PRIMARY KEY (${pkCols.map((r) => `"${r.column_name}"`).join(', ')})`);
 
-  for (const fk of fks)
-    colDefs.push(
-      `  CONSTRAINT "${fk.constraint_name}" FOREIGN KEY ("${fk.column_name}") REFERENCES "${fk.foreign_table}" ("${fk.foreign_column}")`,
-    );
-
-  let sql = `CREATE TABLE IF NOT EXISTS "${table}" (\n${colDefs.join(',\n')}\n);\n`;
+  // FK constraints are intentionally omitted from CREATE TABLE and emitted as
+  // separate ALTER TABLE statements after all tables are created, so that
+  // alphabetical export order doesn't cause "referenced table doesn't exist" errors on re-import.
+  let tableSql = `CREATE TABLE IF NOT EXISTS "${table}" (\n${colDefs.join(',\n')}\n);\n`;
   for (const idx of idxs) {
     // Add IF NOT EXISTS so re-running schema on an existing DB doesn't fail.
     // Strip the source schema qualifier (e.g. ON billings.foo → ON foo) so the
@@ -152,9 +152,17 @@ async function pgExportSchema(client: PoolClient, table: string, schema = 'publi
       .replace(/^CREATE UNIQUE INDEX /, 'CREATE UNIQUE INDEX IF NOT EXISTS ')
       .replace(/^CREATE INDEX /, 'CREATE INDEX IF NOT EXISTS ')
       .replace(new RegExp(` ON "?${schema}"?\\.`), ' ON ');
-    sql += `${def};\n`;
+    tableSql += `${def};\n`;
   }
-  return sql;
+
+  const fkSql = fks
+    .map(
+      (fk) =>
+        `ALTER TABLE "${table}" ADD CONSTRAINT IF NOT EXISTS "${fk.constraint_name}" FOREIGN KEY ("${fk.column_name}") REFERENCES "${fk.foreign_table}" ("${fk.foreign_column}");\n`,
+    )
+    .join('');
+
+  return { tableSql, fkSql };
 }
 
 async function pgExportData(
@@ -292,12 +300,33 @@ export async function exportDatabase(
         parts.push('\n');
       }
 
-      for (const t of target) {
-        parts.push(`-- Table: ${t}\n`);
-        if (include !== 'data') parts.push(await pgExportSchema(client, t, schema));
-        if (include !== 'schema') parts.push(await pgExportData(client, t, whereClause, conflictStrategy, schema));
-        parts.push('\n');
+      // Two-pass schema export: all CREATE TABLE first, then all FK constraints.
+      // This ensures FK references to tables that come later alphabetically don't
+      // fail during re-import (matches pg_dump behavior).
+      if (include !== 'data') {
+        const fkParts: string[] = [];
+        for (const t of target) {
+          parts.push(`-- Table: ${t}\n`);
+          const { tableSql, fkSql } = await pgExportSchema(client, t, schema);
+          parts.push(tableSql);
+          parts.push('\n');
+          if (fkSql) fkParts.push(fkSql);
+        }
+        if (fkParts.length > 0) {
+          parts.push('-- Foreign key constraints\n');
+          parts.push(fkParts.join(''));
+          parts.push('\n');
+        }
       }
+
+      if (include !== 'schema') {
+        for (const t of target) {
+          parts.push(`-- Data: ${t}\n`);
+          parts.push(await pgExportData(client, t, whereClause, conflictStrategy, schema));
+          parts.push('\n');
+        }
+      }
+
       return { sql: parts.join(''), tables: target, include };
     } finally { client.release(); await pool.end(); }
   } else {

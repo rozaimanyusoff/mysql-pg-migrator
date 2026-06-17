@@ -2,6 +2,15 @@
 
 ---
 
+## 2026-06-18
+- **fix** — Export-Import: fix FK constraint ordering bug breaking Replace re-import
+  - Root cause: `pgExportSchema` in `src/lib/sql-exporter.ts` embedded FK constraints inline in `CREATE TABLE`. Tables are exported in alphabetical order, so when re-importing, a table like `item_transactions` would fail with "referenced table `items` does not exist" because `items` alphabetically comes after `item_transactions`.
+  - Fix: `pgExportSchema` now returns `{ tableSql, fkSql }` — `tableSql` is `CREATE TABLE` without any FK constraints; `fkSql` is the FK constraints as `ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS` statements.
+  - `exportDatabase` (PostgreSQL branch) restructured to two-pass: first emit all `CREATE TABLE` for all tables, then emit all FK `ALTER TABLE` constraints, then emit all INSERT data. This mirrors `pg_dump` behavior.
+  - `session_replication_role = replica` in `replace.ts` was already set but only suppresses FK trigger checks on DML — it cannot bypass `CREATE TABLE` FK definition errors, so the ordering fix was necessary.
+  - Files changed: `src/lib/sql-exporter.ts`
+  - Status: done
+
 ## 2026-06-15
 - **update** — AI Migration: standardise on Haiku, broaden prompt caching, snappier streaming
   - New `src/lib/ai-migration/model.ts`: `AI_MIGRATION_MODEL` (default `claude-haiku-4-5-20251001`, env `AI_MIGRATION_MODEL`) and `AI_MIGRATION_MODEL_GENERATE` (defaults to the shared model, env override) — generate-job kept separately overridable since it emits the real job config. All five endpoints (chat, analyze, explain, generate-job, suggest-columns) now use the shared constant instead of hardcoded sonnet/opus/haiku ids.
