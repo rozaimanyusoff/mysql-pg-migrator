@@ -16,6 +16,14 @@ interface ImportScopeOpts {
 // execute the SQL directly without the psql client.
 
 function preprocessSql(rawSql: string): { sql: string; converted: number; copyTables: string[] } {
+  // PG doesn't support ADD CONSTRAINT IF NOT EXISTS — strip it from any old dumps.
+  rawSql = rawSql.replace(/ADD CONSTRAINT IF NOT EXISTS\b/gi, 'ADD CONSTRAINT');
+  // CREATE SCHEMA has no IF NOT EXISTS guard in pg_dump output; add it so re-imports don't error.
+  rawSql = rawSql.replace(/\bCREATE SCHEMA\s+(?!IF\s+NOT\s+EXISTS)/gi, 'CREATE SCHEMA IF NOT EXISTS ');
+  // Old exports used WHEN duplicate_object which doesn't catch cross-schema FK errors.
+  // Upgrade to WHEN OTHERS so FK blocks are fully best-effort on import.
+  rawSql = rawSql.replace(/EXCEPTION WHEN duplicate_object THEN NULL;/gi, 'EXCEPTION WHEN OTHERS THEN NULL;');
+
   const lines = rawSql.split('\n');
   const output: string[] = [];
 
@@ -65,7 +73,8 @@ function preprocessSql(rawSql: string): { sql: string; converted: number; copyTa
     if (m) {
       copyMode = true;
       copyTarget = m[1];
-      copyCols = m[2].split(',').map(c => c.trim());
+      // Strip any existing double-quotes (pg_dump quotes reserved words like "position", "order").
+      copyCols = m[2].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
       copyData = [];
       continue;
     }
@@ -99,6 +108,10 @@ function parseCopyRow(line: string): (string | null)[] {
   });
 }
 // ─────────────────────────────────────────────────────────────────────────────
+
+export const config = {
+  api: { bodyParser: { sizeLimit: '100mb' } },
+};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });

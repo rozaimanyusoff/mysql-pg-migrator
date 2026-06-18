@@ -3,6 +3,32 @@
 ---
 
 ## 2026-06-18
+- **fix** — Export-Import: schema-level import (new/replace) still failing — cross-schema FK exception not caught
+  - Root cause: FK constraints in our own export format are wrapped in `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN NULL; END $$;`. This only catches `duplicate_object` (constraint already exists). When a FK references a table in a **different schema** not included in the export (e.g. `stock.item_transactions → public.store`), PostgreSQL throws `undefined_table` which is not caught → the DO block propagates the error → transaction aborts → 500.
+  - Fix 1 (`src/lib/sql-exporter.ts`): FK query now fetches `ccu.table_schema AS foreign_schema`. When the referenced table lives in a different schema, the FK is emitted with a fully-qualified reference (`"schema"."table"`) so it can resolve even without a matching `search_path`. Exception handler upgraded from `WHEN duplicate_object` to `WHEN OTHERS` making FKs fully best-effort/portable.
+  - Fix 2 (`src/pages/api/export-import/import.ts`): `preprocessSql` now rewrites old-format `EXCEPTION WHEN duplicate_object THEN NULL;` → `EXCEPTION WHEN OTHERS THEN NULL;` so SQL files exported before this fix are also handled robustly on import.
+  - Status: done
+
+- **fix** — Export-Import: pg_dump import 500 caused by reserved-word column double-quoting + bare CREATE SCHEMA
+  - Root cause 1: pg_dump wraps reserved-word column names in double quotes in COPY headers (e.g. `"position"`, `"order"`, `"group"`). The preprocessor then re-wrapped each column name with `"…"`, producing `""position""` — an invalid quoted identifier that caused a syntax error on every INSERT for any table with a reserved-word column.
+  - Fix: `preprocessSql` now strips any existing outer double-quotes when parsing COPY column names (`c.trim().replace(/^"|"$/g, '')`) before re-wrapping, so `"position"` becomes `"position"` (not `""position""`).
+  - Root cause 2: pg_dump emits `CREATE SCHEMA assetmain;` with no `IF NOT EXISTS`. On any import into an existing database that already has those schemas the statement would fail immediately.
+  - Fix: global regex at the top of `preprocessSql` rewrites `CREATE SCHEMA name` → `CREATE SCHEMA IF NOT EXISTS name` (negative lookahead prevents double-adding the guard).
+  - Files changed: `src/pages/api/export-import/import.ts`
+  - Status: done
+- **fix** — Export-Import: import fails for "Create new" and "Replace" on schemas with SERIAL columns + duplicate FK on re-import
+  - Root cause 1: `pgExportSchema` exported `DEFAULT nextval('seq_name'::regclass)` for SERIAL-backed columns. PostgreSQL resolves `::regclass` to an OID **at `CREATE TABLE` analysis time**, so if the sequence doesn't exist (fresh schema, or after `DROP SCHEMA CASCADE` in replace mode), `CREATE TABLE` fails immediately. This broke both "Create new" (empty schema) and "Replace" (drops schema → sequences gone → recreate tables fails).
+  - Fix: `pgExportSchema` now scans column defaults for `nextval(...)` patterns, extracts the sequence name (stripping any schema prefix), and emits `CREATE SEQUENCE IF NOT EXISTS "seq_name";` immediately before the `CREATE TABLE`. Mirrors `pg_dump` behaviour which always exports sequences before their tables.
+  - Root cause 2: FK `ALTER TABLE ADD CONSTRAINT` had no guard against duplicate constraints, so re-importing a dump into an existing schema (e.g. "Create new" on a DB that already has the tables) would fail.
+  - Fix: FK statements are now wrapped in `DO $$ BEGIN … EXCEPTION WHEN duplicate_object THEN NULL; END $$;` making the dump fully idempotent.
+  - Files changed: `src/lib/sql-exporter.ts`
+  - Status: done
+- **fix** — Export-Import: 500 on import/replace_schema due to invalid SQL syntax + body size limit
+  - `ADD CONSTRAINT IF NOT EXISTS` is not valid PostgreSQL syntax (only `ADD COLUMN IF NOT EXISTS` is). The exporter was generating this and PostgreSQL rejected it on import, causing a 500.
+  - Fix 1: `src/lib/sql-exporter.ts` line ~161: removed `IF NOT EXISTS` from `ALTER TABLE … ADD CONSTRAINT` — constraint names are unique per table so the guard was unnecessary and invalid.
+  - Fix 2: `src/pages/api/export-import/import.ts` preprocessSql: added regex strip of `ADD CONSTRAINT IF NOT EXISTS` → `ADD CONSTRAINT` to gracefully handle dumps already generated with the broken format.
+  - Fix 3: added `export const config = { api: { bodyParser: { sizeLimit: '100mb' } } }` to import.ts — default Next.js 1 MB limit would silently 500 on any non-trivial SQL dump.
+  - Status: done
 - **fix** — Export-Import: fix FK constraint ordering bug breaking Replace re-import
   - Root cause: `pgExportSchema` in `src/lib/sql-exporter.ts` embedded FK constraints inline in `CREATE TABLE`. Tables are exported in alphabetical order, so when re-importing, a table like `item_transactions` would fail with "referenced table `items` does not exist" because `items` alphabetically comes after `item_transactions`.
   - Fix: `pgExportSchema` now returns `{ tableSql, fkSql }` — `tableSql` is `CREATE TABLE` without any FK constraints; `fkSql` is the FK constraints as `ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS` statements.

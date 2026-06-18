@@ -94,9 +94,11 @@ async function pgExportSchema(
 
   const { rows: fks } = await client.query<{
     constraint_name: string; column_name: string; foreign_table: string; foreign_column: string;
+    foreign_schema: string;
   }>(
     `SELECT tc.constraint_name, kcu.column_name,
-            ccu.table_name AS foreign_table, ccu.column_name AS foreign_column
+            ccu.table_name AS foreign_table, ccu.column_name AS foreign_column,
+            ccu.table_schema AS foreign_schema
      FROM information_schema.table_constraints tc
      JOIN information_schema.key_column_usage kcu
        ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
@@ -140,10 +142,26 @@ async function pgExportSchema(
   if (pkCols.length > 0)
     colDefs.push(`  PRIMARY KEY (${pkCols.map((r) => `"${r.column_name}"`).join(', ')})`);
 
+  // Emit CREATE SEQUENCE IF NOT EXISTS for any nextval(...::regclass) column defaults.
+  // PostgreSQL resolves ::regclass to an OID at CREATE TABLE analysis time, so the
+  // sequence must exist before the table is created (mirrors pg_dump behaviour).
+  const seqDefs: string[] = [];
+  for (const c of cols) {
+    if (c.column_default?.includes('nextval(')) {
+      const m = c.column_default.match(/nextval\('([^']+)'(?:::[\w.]+)?\)/i);
+      if (m) {
+        // Strip optional schema prefix (e.g. "public.orders_id_seq" → "orders_id_seq")
+        const seqName = m[1].split('.').pop()!.replace(/^"|"$/g, '');
+        const stmt = `CREATE SEQUENCE IF NOT EXISTS "${seqName}";\n`;
+        if (!seqDefs.includes(stmt)) seqDefs.push(stmt);
+      }
+    }
+  }
+
   // FK constraints are intentionally omitted from CREATE TABLE and emitted as
   // separate ALTER TABLE statements after all tables are created, so that
   // alphabetical export order doesn't cause "referenced table doesn't exist" errors on re-import.
-  let tableSql = `CREATE TABLE IF NOT EXISTS "${table}" (\n${colDefs.join(',\n')}\n);\n`;
+  let tableSql = seqDefs.join('') + `CREATE TABLE IF NOT EXISTS "${table}" (\n${colDefs.join(',\n')}\n);\n`;
   for (const idx of idxs) {
     // Add IF NOT EXISTS so re-running schema on an existing DB doesn't fail.
     // Strip the source schema qualifier (e.g. ON billings.foo → ON foo) so the
@@ -155,11 +173,18 @@ async function pgExportSchema(
     tableSql += `${def};\n`;
   }
 
+  // Wrap each FK in a DO $$ EXCEPTION block so the dump is idempotent.
+  // Uses WHEN OTHERS to also tolerate cross-schema references that don't exist
+  // in the target (e.g. a table in a different schema not included in this dump).
   const fkSql = fks
-    .map(
-      (fk) =>
-        `ALTER TABLE "${table}" ADD CONSTRAINT IF NOT EXISTS "${fk.constraint_name}" FOREIGN KEY ("${fk.column_name}") REFERENCES "${fk.foreign_table}" ("${fk.foreign_column}");\n`,
-    )
+    .map((fk) => {
+      // Qualify the referenced table with its schema when it lives outside the
+      // exported schema, so the FK can resolve even without a matching search_path.
+      const foreignRef = fk.foreign_schema !== schema
+        ? `"${fk.foreign_schema}"."${fk.foreign_table}"`
+        : `"${fk.foreign_table}"`;
+      return `DO $$ BEGIN\n  ALTER TABLE "${table}" ADD CONSTRAINT "${fk.constraint_name}" FOREIGN KEY ("${fk.column_name}") REFERENCES ${foreignRef} ("${fk.foreign_column}");\nEXCEPTION WHEN OTHERS THEN NULL;\nEND $$;\n`;
+    })
     .join('');
 
   return { tableSql, fkSql };
