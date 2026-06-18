@@ -65,10 +65,22 @@ function csvVal(v: unknown): string {
 
 // ── PostgreSQL ─────────────────────────────────────────────────────────────────
 
+// List all user (non-system) schemas. Used for whole-database export.
+async function pgListUserSchemas(client: PoolClient): Promise<string[]> {
+  const { rows } = await client.query<{ nspname: string }>(
+    `SELECT nspname FROM pg_namespace
+     WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+       AND nspname NOT LIKE 'pg_temp%' AND nspname NOT LIKE 'pg_toast_temp%'
+     ORDER BY nspname`,
+  );
+  return rows.map((r) => r.nspname);
+}
+
 // Export user-defined ENUM types in the schema as idempotent CREATE TYPE
-// statements. Column definitions reference these by bare udt_name, so the types
-// must exist in the target schema before any CREATE TABLE that uses them.
-async function pgExportEnumTypes(client: PoolClient, schema = 'public'): Promise<string> {
+// statements. Column definitions reference these by udt_name, so the types must
+// exist before any CREATE TABLE that uses them. When `qualify` is set (whole-DB
+// export across schemas) the type is created in its own schema.
+async function pgExportEnumTypes(client: PoolClient, schema = 'public', qualify = false): Promise<string> {
   const { rows } = await client.query<{ typname: string; labels: string }>(
     `SELECT t.typname,
             (SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder)
@@ -82,9 +94,10 @@ async function pgExportEnumTypes(client: PoolClient, schema = 'public'): Promise
   if (rows.length === 0) return '';
   // PG has no CREATE TYPE IF NOT EXISTS — wrap in a DO block so re-imports are idempotent.
   return rows
-    .map((r) =>
-      `DO $$ BEGIN\n  CREATE TYPE "${r.typname}" AS ENUM (${r.labels});\nEXCEPTION WHEN duplicate_object THEN NULL;\nEND $$;\n`,
-    )
+    .map((r) => {
+      const name = qualify ? `"${schema}"."${r.typname}"` : `"${r.typname}"`;
+      return `DO $$ BEGIN\n  CREATE TYPE ${name} AS ENUM (${r.labels});\nEXCEPTION WHEN duplicate_object THEN NULL;\nEND $$;\n`;
+    })
     .join('');
 }
 
@@ -106,14 +119,14 @@ async function pgListTablesWithCounts(client: PoolClient, schema = 'public'): Pr
 }
 
 async function pgExportSchema(
-  client: PoolClient, table: string, schema = 'public',
+  client: PoolClient, table: string, schema = 'public', qualify = false,
 ): Promise<{ tableSql: string; fkSql: string }> {
   const { rows: cols } = await client.query<{
-    column_name: string; data_type: string; udt_name: string;
+    column_name: string; data_type: string; udt_name: string; udt_schema: string;
     character_maximum_length: number | null; numeric_precision: number | null;
     numeric_scale: number | null; is_nullable: string; column_default: string | null;
   }>(
-    `SELECT column_name, data_type, udt_name, character_maximum_length,
+    `SELECT column_name, data_type, udt_name, udt_schema, character_maximum_length,
             numeric_precision, numeric_scale, is_nullable, column_default
      FROM information_schema.columns
      WHERE table_schema = $2 AND table_name = $1
@@ -163,16 +176,20 @@ async function pgExportSchema(
     [table, schema],
   );
 
-  // Strip the source-schema qualifier from default expressions so references to
-  // schema-local objects (enum casts like ::core.user_type, nextval('core.seq'))
-  // resolve to the target schema on import rather than the original one.
+  // Single-schema export strips the source-schema qualifier from default
+  // expressions (enum casts like ::core.user_type, nextval('core.seq')) so they
+  // resolve to whatever target schema the import lands in. Whole-DB export
+  // (qualify) keeps every reference fully schema-qualified instead, so each
+  // object is recreated in its original schema regardless of search_path.
   const schemaRe = new RegExp(`(^|[^\\w."])"?${schema.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"?\\.`, 'g');
-  const deQualify = (expr: string) => expr.replace(schemaRe, '$1');
+  const deQualify = (expr: string) => (qualify ? expr : expr.replace(schemaRe, '$1'));
+  const qname = qualify ? `"${schema}"."${table}"` : `"${table}"`;
 
   const colDefs = cols.map((c) => {
     let type: string;
     if (c.data_type === 'USER-DEFINED') {
-      type = c.udt_name;
+      // Qualify the enum/domain type with its own schema in whole-DB export.
+      type = qualify ? `"${c.udt_schema}"."${c.udt_name}"` : c.udt_name;
     } else if (c.data_type === 'ARRAY') {
       // udt_name for arrays is '_text', '_int4', etc. — strip leading '_' and append '[]'
       type = c.udt_name.startsWith('_') ? c.udt_name.slice(1) + '[]' : 'text[]';
@@ -199,9 +216,13 @@ async function pgExportSchema(
     if (c.column_default?.includes('nextval(')) {
       const m = c.column_default.match(/nextval\('([^']+)'(?:::[\w.]+)?\)/i);
       if (m) {
-        // Strip optional schema prefix (e.g. "public.orders_id_seq" → "orders_id_seq")
-        const seqName = m[1].split('.').pop()!.replace(/^"|"$/g, '');
-        const stmt = `CREATE SEQUENCE IF NOT EXISTS "${seqName}";\n`;
+        const parts = m[1].split('.').map((p) => p.replace(/^"|"$/g, ''));
+        const seqName = parts.pop()!;
+        // Whole-DB export keeps the sequence in its source schema (from the
+        // nextval ref, falling back to the table's schema); single-schema export
+        // creates it unqualified so it lands wherever the table is imported.
+        const seqRef = qualify ? `"${parts[0] ?? schema}"."${seqName}"` : `"${seqName}"`;
+        const stmt = `CREATE SEQUENCE IF NOT EXISTS ${seqRef};\n`;
         if (!seqDefs.includes(stmt)) seqDefs.push(stmt);
       }
     }
@@ -210,15 +231,16 @@ async function pgExportSchema(
   // FK constraints are intentionally omitted from CREATE TABLE and emitted as
   // separate ALTER TABLE statements after all tables are created, so that
   // alphabetical export order doesn't cause "referenced table doesn't exist" errors on re-import.
-  let tableSql = seqDefs.join('') + `CREATE TABLE IF NOT EXISTS "${table}" (\n${colDefs.join(',\n')}\n);\n`;
+  let tableSql = seqDefs.join('') + `CREATE TABLE IF NOT EXISTS ${qname} (\n${colDefs.join(',\n')}\n);\n`;
   for (const idx of idxs) {
     // Add IF NOT EXISTS so re-running schema on an existing DB doesn't fail.
-    // Strip the source schema qualifier (e.g. ON billings.foo → ON foo) so the
-    // dump is portable and re-imports into whatever schema the target chooses.
-    const def = idx.indexdef
+    // Single-schema export strips the source schema qualifier from the ON clause
+    // (ON billings.foo → ON foo) so the dump re-imports into any target schema;
+    // whole-DB export keeps it so the index lands on the right schema's table.
+    let def = idx.indexdef
       .replace(/^CREATE UNIQUE INDEX /, 'CREATE UNIQUE INDEX IF NOT EXISTS ')
-      .replace(/^CREATE INDEX /, 'CREATE INDEX IF NOT EXISTS ')
-      .replace(new RegExp(` ON "?${schema}"?\\.`), ' ON ');
+      .replace(/^CREATE INDEX /, 'CREATE INDEX IF NOT EXISTS ');
+    if (!qualify) def = def.replace(new RegExp(` ON "?${schema}"?\\.`), ' ON ');
     tableSql += `${def};\n`;
   }
 
@@ -229,10 +251,10 @@ async function pgExportSchema(
     .map((fk) => {
       // Qualify the referenced table with its schema when it lives outside the
       // exported schema, so the FK can resolve even without a matching search_path.
-      const foreignRef = fk.foreign_schema !== schema
+      const foreignRef = qualify || fk.foreign_schema !== schema
         ? `"${fk.foreign_schema}"."${fk.foreign_table}"`
         : `"${fk.foreign_table}"`;
-      return `DO $$ BEGIN\n  ALTER TABLE "${table}" ADD CONSTRAINT "${fk.constraint_name}" FOREIGN KEY ("${fk.column_name}") REFERENCES ${foreignRef} ("${fk.foreign_column}");\nEXCEPTION WHEN OTHERS THEN NULL;\nEND $$;\n`;
+      return `DO $$ BEGIN\n  ALTER TABLE ${qname} ADD CONSTRAINT "${fk.constraint_name}" FOREIGN KEY ("${fk.column_name}") REFERENCES ${foreignRef} ("${fk.foreign_column}");\nEXCEPTION WHEN OTHERS THEN NULL;\nEND $$;\n`;
     })
     .join('');
 
@@ -241,18 +263,19 @@ async function pgExportSchema(
 
 async function pgExportData(
   client: PoolClient, table: string,
-  whereClause?: string, conflictStrategy?: ConflictStrategy, schema = 'public',
+  whereClause?: string, conflictStrategy?: ConflictStrategy, schema = 'public', qualify = false,
 ): Promise<string> {
   const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
   const { rows, fields } = await client.query({ text: `SELECT * FROM "${schema}"."${table}"${where}`, types: exportTypeParsers });
   if (rows.length === 0) return '';
+  const target = qualify ? `"${schema}"."${table}"` : `"${table}"`;
   const cols = fields.map((f) => `"${f.name}"`).join(', ');
   const vals = rows.map((r) => `(${fields.map((f) => pgVal(r[f.name])).join(', ')})`).join(',\n');
 
   if (conflictStrategy === 'upsert') {
-    return `INSERT INTO "${table}" (${cols}) VALUES\n${vals}\nON CONFLICT DO NOTHING;\n`;
+    return `INSERT INTO ${target} (${cols}) VALUES\n${vals}\nON CONFLICT DO NOTHING;\n`;
   }
-  return `INSERT INTO "${table}" (${cols}) VALUES\n${vals};\n`;
+  return `INSERT INTO ${target} (${cols}) VALUES\n${vals};\n`;
 }
 
 async function pgExportDataCsv(client: PoolClient, table: string, whereClause?: string, schema = 'public'): Promise<string> {
@@ -345,7 +368,7 @@ export interface ExportResult {
 export interface ExportOptions {
   whereClause?: string;
   conflictStrategy?: ConflictStrategy;
-  schema?: string;            // PostgreSQL source schema (default 'public')
+  schema?: string;            // PostgreSQL source schema (default 'public'); '*' = whole database, all schemas
 }
 
 export async function exportDatabase(
@@ -355,56 +378,80 @@ export async function exportDatabase(
   opts: ExportOptions = {},
 ): Promise<ExportResult> {
   const { whereClause, conflictStrategy } = opts;
-  const schema = opts.schema || 'public';
-  const header = `-- Export: ${cfg.database} (${cfg.db_type})\n-- Generated: ${new Date().toISOString()}\n-- Include: ${include}\n\n`;
+  const allSchemas = opts.schema === '*';
+  const schema = opts.schema && !allSchemas ? opts.schema : 'public';
+  const header = `-- Export: ${cfg.database} (${cfg.db_type})\n-- Generated: ${new Date().toISOString()}\n-- Include: ${include}${allSchemas ? ' (all schemas)' : ''}\n\n`;
   const parts: string[] = [header];
 
   if (cfg.db_type === 'postgres') {
     const pool = makePgPool(cfg);
     const client = await pool.connect();
     try {
-      const allInfo = await pgListTablesWithCounts(client, schema);
-      const allNames = allInfo.map((t) => t.name);
-      const target = tables === 'all' ? allNames : tables;
       parts.push('SET client_min_messages TO WARNING;\n\n');
 
-      if (conflictStrategy === 'truncate_insert' && include !== 'schema') {
-        for (const t of [...target].reverse())
-          parts.push(`TRUNCATE TABLE "${t}" CASCADE;\n`);
+      // Whole-DB export: every non-system schema, fully schema-qualified so each
+      // object is recreated in its original schema. An explicit table list is
+      // only meaningful for a single schema, so all-schemas implies 'all' tables.
+      const schemaList = allSchemas ? await pgListUserSchemas(client) : [schema];
+      if (allSchemas) {
+        for (const s of schemaList) parts.push(`CREATE SCHEMA IF NOT EXISTS "${s}";\n`);
         parts.push('\n');
       }
 
-      // Three-pass export (matches pg_dump ordering):
-      //   1. all CREATE TABLE (no inline FKs),
-      //   2. all data inserts,
-      //   3. all FK constraints last.
-      // FKs are emitted after data because data is inserted in alphabetical
-      // table order — a child table may be loaded before its parent, so the FK
-      // constraint must not exist yet or the insert fails.
+      // Ordered passes (per pg_dump): enums → CREATE TABLE → data → FKs.
+      //   - All enums come before any table: a table in one schema may reference
+      //     an enum defined in a schema that sorts later, so every type must
+      //     exist first.
+      //   - FKs come last: data loads in alphabetical table order, so a child
+      //     may be inserted before its parent — and cross-schema FKs need every
+      //     schema's tables to exist. Deferring all FKs to the end avoids both.
+      const label = (s: string, t: string) => (allSchemas ? `${s}.${t}` : t);
+      const tablesBySchema = new Map<string, string[]>();
+      for (const s of schemaList) {
+        const allNames = (await pgListTablesWithCounts(client, s)).map((t) => t.name);
+        tablesBySchema.set(s, (tables === 'all' || allSchemas) ? allNames : tables);
+      }
+
       const fkParts: string[] = [];
+      const resultTables: string[] = [];
+
       if (include !== 'data') {
-        const enumSql = await pgExportEnumTypes(client, schema);
-        if (enumSql) {
-          parts.push('-- Enum types\n');
-          parts.push(enumSql);
-          parts.push('\n');
+        for (const s of schemaList) {
+          const enumSql = await pgExportEnumTypes(client, s, allSchemas);
+          if (enumSql) {
+            parts.push(`-- Enum types${allSchemas ? ` (${s})` : ''}\n`);
+            parts.push(enumSql);
+            parts.push('\n');
+          }
         }
-        for (const t of target) {
-          parts.push(`-- Table: ${t}\n`);
-          const { tableSql, fkSql } = await pgExportSchema(client, t, schema);
-          parts.push(tableSql);
-          parts.push('\n');
-          if (fkSql) fkParts.push(fkSql);
+        for (const s of schemaList) {
+          for (const t of tablesBySchema.get(s)!) {
+            parts.push(`-- Table: ${label(s, t)}\n`);
+            const { tableSql, fkSql } = await pgExportSchema(client, t, s, allSchemas);
+            parts.push(tableSql);
+            parts.push('\n');
+            if (fkSql) fkParts.push(fkSql);
+          }
         }
       }
 
       if (include !== 'schema') {
-        for (const t of target) {
-          parts.push(`-- Data: ${t}\n`);
-          parts.push(await pgExportData(client, t, whereClause, conflictStrategy, schema));
+        // Single-schema truncate_insert: clear tables (reverse order) before data.
+        if (!allSchemas && conflictStrategy === 'truncate_insert') {
+          for (const t of [...tablesBySchema.get(schema)!].reverse())
+            parts.push(`TRUNCATE TABLE "${t}" CASCADE;\n`);
           parts.push('\n');
         }
+        for (const s of schemaList) {
+          for (const t of tablesBySchema.get(s)!) {
+            parts.push(`-- Data: ${label(s, t)}\n`);
+            parts.push(await pgExportData(client, t, whereClause, conflictStrategy, s, allSchemas));
+            parts.push('\n');
+          }
+        }
       }
+
+      for (const s of schemaList) resultTables.push(...tablesBySchema.get(s)!.map((t) => label(s, t)));
 
       if (fkParts.length > 0) {
         parts.push('-- Foreign key constraints\n');
@@ -412,7 +459,7 @@ export async function exportDatabase(
         parts.push('\n');
       }
 
-      return { sql: parts.join(''), tables: target, include };
+      return { sql: parts.join(''), tables: resultTables, include };
     } finally { client.release(); await pool.end(); }
   } else {
     const conn = await makeMySQLConn(cfg);
@@ -454,13 +501,22 @@ export async function exportDatabaseCsv(
     const pool = makePgPool(cfg);
     const client = await pool.connect();
     try {
-      const allInfo = await pgListTablesWithCounts(client, schema);
-      const allNames = allInfo.map((t) => t.name);
-      const target = tables === 'all' ? allNames : tables;
-      const csvFiles = await Promise.all(
-        target.map(async (t) => ({ table: t, csv: await pgExportDataCsv(client, t, whereClause, schema) })),
-      );
-      return { csvFiles, tables: target };
+      // Whole-DB CSV export spans every schema; file names are prefixed with the
+      // schema so tables of the same name in different schemas don't collide.
+      const allSchemas = schema === '*';
+      const schemaList = allSchemas ? await pgListUserSchemas(client) : [schema];
+      const csvFiles: { table: string; csv: string }[] = [];
+      const resultTables: string[] = [];
+      for (const s of schemaList) {
+        const allNames = (await pgListTablesWithCounts(client, s)).map((t) => t.name);
+        const target = (tables === 'all' || allSchemas) ? allNames : tables;
+        for (const t of target) {
+          const name = allSchemas ? `${s}.${t}` : t;
+          csvFiles.push({ table: name, csv: await pgExportDataCsv(client, t, whereClause, s) });
+          resultTables.push(name);
+        }
+      }
+      return { csvFiles, tables: resultTables };
     } finally { client.release(); await pool.end(); }
   } else {
     const conn = await makeMySQLConn(cfg);

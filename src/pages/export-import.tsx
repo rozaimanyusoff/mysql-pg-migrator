@@ -1568,7 +1568,11 @@ export default function ExportImportPage() {
     setPendingJobEntry(null); setJobSaved(false);
     const cfg = connToCfg(conn, info.database);
     const tables = info.scope === 'table' ? [info.name] : 'all';
-    const schemaParam = info.scope === 'db' ? undefined : info.schema;
+    // A whole-database export on PostgreSQL spans every schema ('*'); a single
+    // schema would only cover 'public'. MySQL has no schemas so it stays unset.
+    const schemaParam = info.scope === 'db'
+      ? (conn.db_type === 'postgres' ? '*' : undefined)
+      : info.schema;
     const stamp = new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
     try {
       const { data } = await axios.post('/api/export-import/export',

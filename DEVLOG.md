@@ -3,6 +3,13 @@
 ---
 
 ## 2026-06-18
+- **implement** — Export-Import: true whole-database (all-schemas) export for PostgreSQL
+  - Problem: the database-level export only ever dumped the `public` schema (UI sent no `schema`, API defaulted to `'public'`). For `adms-data` — whose 113 tables live in `assetmain`/`core`/`stock`/`services`/`helpdesk`/`drizzle`, with `public` holding only enum types — "Export database" produced a ~5 KB file with 0 tables.
+  - Implemented (`src/lib/sql-exporter.ts`): `schema: '*'` now means whole-database export. Added `pgListUserSchemas()`; threaded a `qualify` flag through `pgExportEnumTypes`/`pgExportSchema`/`pgExportData` so every object (tables, enum types, sequences, indexes, FK targets, INSERT targets) is fully schema-qualified and each is recreated in its original schema. Emits `CREATE SCHEMA IF NOT EXISTS` for every schema first. Ordered passes: **all enums (all schemas) → all tables → all data → all FKs last** — enums must precede any table (a table can reference an enum from a later-sorting schema) and FKs are deferred so cross-schema references resolve. CSV whole-DB export prefixes filenames with the schema.
+  - UI (`src/pages/export-import.tsx`): a `db`-scope export on PostgreSQL now sends `schema: '*'` (MySQL has no schemas, stays unset).
+  - Single-schema export path is unchanged (`qualify=false` keeps the de-qualified, search-path-portable output verified earlier).
+  - Verified: exported `adms-data` (`schema='*'`, 113 tables, 1.25 MB) and imported into a fresh DB via `replace_db`. Result: 7 schemas, 113 tables, 4,903 rows byte-identical (md5), 124 FKs, 31 enum types, and per-schema index counts all match source. `npm run build` clean.
+  - Status: done
 - **fix** — Export-Import: round-trip testing of `adms-data` surfaced and fixed 3 bugs in the PG export engine (`src/lib/sql-exporter.ts`)
   - Tested by exporting every schema of the `adms-data` PG database (`assetmain`, `core`, `stock`, `services`, `helpdesk`, `drizzle` — 113 tables, ~4,900 rows) via `/api/export-import/export` and re-importing each into a `<schema>_test` schema via `/api/export-import/import` (`import_rows`), then comparing per-table row counts, full-row `md5` content checksums, and FK constraint counts. Final result: all 113 tables byte-identical, all FK constraints recreated.
   - Bug 1 — FK constraints emitted **before** data: the prior two-pass export wrote all `ALTER TABLE … ADD CONSTRAINT` FK statements right after the `CREATE TABLE`s, but data inserts run in alphabetical table order, so a child table (e.g. `asset_assignment_history`) was inserted before its parent (`asset_registry`) existed → FK violation. Fixed by reordering to a three-pass layout matching pg_dump: CREATE TABLEs → data → FK constraints last.
