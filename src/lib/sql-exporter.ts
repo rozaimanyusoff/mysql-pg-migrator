@@ -1,5 +1,21 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool, PoolClient, types as pgTypes } from 'pg';
 import mysql from 'mysql2/promise';
+
+// Per-query type parsers used when reading rows for export. The default pg
+// parser turns `timestamp without time zone`, `timestamptz` and `date` into JS
+// Date objects interpreted in the process timezone; emitting those via
+// toISOString() (UTC) shifts wall-clock values by the server's TZ offset and
+// corrupts the data. Returning the raw string instead emits each value exactly
+// as stored (timestamptz keeps its +HH offset; bare timestamps stay wall-clock).
+const RAW = (v: string) => v;
+const exportTypeParsers = {
+  getTypeParser(oid: number, format?: unknown) {
+    // 1082 = date, 1114 = timestamp without tz, 1184 = timestamptz
+    if (oid === 1082 || oid === 1114 || oid === 1184) return RAW;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (pgTypes.getTypeParser as any)(oid, format);
+  },
+};
 
 export interface ConnCfg {
   db_type: 'postgres' | 'mysql';
@@ -48,6 +64,29 @@ function csvVal(v: unknown): string {
 }
 
 // ── PostgreSQL ─────────────────────────────────────────────────────────────────
+
+// Export user-defined ENUM types in the schema as idempotent CREATE TYPE
+// statements. Column definitions reference these by bare udt_name, so the types
+// must exist in the target schema before any CREATE TABLE that uses them.
+async function pgExportEnumTypes(client: PoolClient, schema = 'public'): Promise<string> {
+  const { rows } = await client.query<{ typname: string; labels: string }>(
+    `SELECT t.typname,
+            (SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder)
+             FROM pg_enum e WHERE e.enumtypid = t.oid) AS labels
+     FROM pg_type t
+     JOIN pg_namespace n ON n.oid = t.typnamespace
+     WHERE n.nspname = $1 AND t.typtype = 'e'
+     ORDER BY t.typname`,
+    [schema],
+  );
+  if (rows.length === 0) return '';
+  // PG has no CREATE TYPE IF NOT EXISTS — wrap in a DO block so re-imports are idempotent.
+  return rows
+    .map((r) =>
+      `DO $$ BEGIN\n  CREATE TYPE "${r.typname}" AS ENUM (${r.labels});\nEXCEPTION WHEN duplicate_object THEN NULL;\nEND $$;\n`,
+    )
+    .join('');
+}
 
 async function pgListTablesWithCounts(client: PoolClient, schema = 'public'): Promise<TableInfo[]> {
   const { rows } = await client.query<{ table_name: string }>(
@@ -110,15 +149,25 @@ async function pgExportSchema(
     [table, schema],
   );
 
+  // Exclude only the PRIMARY KEY's backing index (emitted inline in CREATE TABLE).
+  // UNIQUE-constraint indexes ARE included here so their uniqueness is preserved —
+  // they re-emit as CREATE UNIQUE INDEX, which still enforces uniqueness and can
+  // back a foreign key. Without this they were dropped on export entirely.
   const { rows: idxs } = await client.query<{ indexname: string; indexdef: string }>(
     `SELECT indexname, indexdef FROM pg_indexes
      WHERE tablename = $1 AND schemaname = $2
        AND indexname NOT IN (
          SELECT constraint_name FROM information_schema.table_constraints
-         WHERE table_name = $1 AND table_schema = $2
+         WHERE table_name = $1 AND table_schema = $2 AND constraint_type = 'PRIMARY KEY'
        )`,
     [table, schema],
   );
+
+  // Strip the source-schema qualifier from default expressions so references to
+  // schema-local objects (enum casts like ::core.user_type, nextval('core.seq'))
+  // resolve to the target schema on import rather than the original one.
+  const schemaRe = new RegExp(`(^|[^\\w."])"?${schema.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"?\\.`, 'g');
+  const deQualify = (expr: string) => expr.replace(schemaRe, '$1');
 
   const colDefs = cols.map((c) => {
     let type: string;
@@ -134,7 +183,7 @@ async function pgExportSchema(
     else if (c.numeric_precision != null && c.data_type === 'numeric')
       type += `(${c.numeric_precision},${c.numeric_scale ?? 0})`;
     let def = `  "${c.column_name}" ${type}`;
-    if (c.column_default != null) def += ` DEFAULT ${c.column_default}`;
+    if (c.column_default != null) def += ` DEFAULT ${deQualify(c.column_default)}`;
     if (c.is_nullable === 'NO') def += ' NOT NULL';
     return def;
   });
@@ -195,7 +244,7 @@ async function pgExportData(
   whereClause?: string, conflictStrategy?: ConflictStrategy, schema = 'public',
 ): Promise<string> {
   const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
-  const { rows, fields } = await client.query(`SELECT * FROM "${schema}"."${table}"${where}`);
+  const { rows, fields } = await client.query({ text: `SELECT * FROM "${schema}"."${table}"${where}`, types: exportTypeParsers });
   if (rows.length === 0) return '';
   const cols = fields.map((f) => `"${f.name}"`).join(', ');
   const vals = rows.map((r) => `(${fields.map((f) => pgVal(r[f.name])).join(', ')})`).join(',\n');
@@ -208,7 +257,7 @@ async function pgExportData(
 
 async function pgExportDataCsv(client: PoolClient, table: string, whereClause?: string, schema = 'public'): Promise<string> {
   const where = whereClause?.trim() ? ` WHERE ${whereClause}` : '';
-  const { rows, fields } = await client.query(`SELECT * FROM "${schema}"."${table}"${where}`);
+  const { rows, fields } = await client.query({ text: `SELECT * FROM "${schema}"."${table}"${where}`, types: exportTypeParsers });
   const header = fields.map((f) => f.name).join(',');
   if (rows.length === 0) return header + '\n';
   const dataRows = rows.map((r) => fields.map((f) => csvVal(r[f.name])).join(','));
@@ -325,22 +374,27 @@ export async function exportDatabase(
         parts.push('\n');
       }
 
-      // Two-pass schema export: all CREATE TABLE first, then all FK constraints.
-      // This ensures FK references to tables that come later alphabetically don't
-      // fail during re-import (matches pg_dump behavior).
+      // Three-pass export (matches pg_dump ordering):
+      //   1. all CREATE TABLE (no inline FKs),
+      //   2. all data inserts,
+      //   3. all FK constraints last.
+      // FKs are emitted after data because data is inserted in alphabetical
+      // table order — a child table may be loaded before its parent, so the FK
+      // constraint must not exist yet or the insert fails.
+      const fkParts: string[] = [];
       if (include !== 'data') {
-        const fkParts: string[] = [];
+        const enumSql = await pgExportEnumTypes(client, schema);
+        if (enumSql) {
+          parts.push('-- Enum types\n');
+          parts.push(enumSql);
+          parts.push('\n');
+        }
         for (const t of target) {
           parts.push(`-- Table: ${t}\n`);
           const { tableSql, fkSql } = await pgExportSchema(client, t, schema);
           parts.push(tableSql);
           parts.push('\n');
           if (fkSql) fkParts.push(fkSql);
-        }
-        if (fkParts.length > 0) {
-          parts.push('-- Foreign key constraints\n');
-          parts.push(fkParts.join(''));
-          parts.push('\n');
         }
       }
 
@@ -350,6 +404,12 @@ export async function exportDatabase(
           parts.push(await pgExportData(client, t, whereClause, conflictStrategy, schema));
           parts.push('\n');
         }
+      }
+
+      if (fkParts.length > 0) {
+        parts.push('-- Foreign key constraints\n');
+        parts.push(fkParts.join(''));
+        parts.push('\n');
       }
 
       return { sql: parts.join(''), tables: target, include };
