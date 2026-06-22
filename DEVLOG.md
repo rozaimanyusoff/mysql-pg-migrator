@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-06-23 (2)
+- **fix** — Migration run log panel: stale display, invisible errors, false reconcile
+  - Root cause 1: `advance.ts` & `start.ts` top-level catch blocks only pushed errors to `run.errors`, not `run.logs`. Console only renders `run.logs`, so top-level errors were invisible.
+  - Root cause 2: `startMigration` & `startTableMigration` waited for `start.ts` (up to 8s) before calling `setCurrentRun` — during that window, the console still showed the previous job run's logs loaded at job-select time.
+  - Root cause 3: `advance.ts` never stamped `heartbeatAt`. For long-running client-driven migrations (>90s), `reconcileStaleRuns()` would mark the run as `interrupted` because the heartbeat was stale (it's only stamped by `driveRun` in scheduler path).
+  - Fix: `start.ts` & `advance.ts` catch blocks now also `push` to `run.logs` and set `completedAt`; `advance.ts` stamps `heartbeatAt` on every successful advance.
+  - Fix: `startMigration` & `startTableMigration` now call `setCurrentRun(null)` immediately before the axios request so the console resets at once (shows "Starting…" placeholder instead of stale logs).
+  - Fix: Console panel now also renders `run.errors` items that aren't already in `run.logs`, with rose colouring. Added "No log output" and "Starting…" states for empty-log runs.
+  - Files: `src/pages/api/migv2/run/start.ts`, `src/pages/api/migv2/run/advance.ts`, `src/pages/migration.tsx`
+  - Status: done
+
+## 2026-06-23
+- **fix** — Resume now retries failed tables (connection exhaustion recovery)
+  - Root cause: `advanceRun` skips tables whose `status !== 'pending' && status !== 'running'`. When a run fails due to DB connection exhaustion, affected tables are marked `failed` — Resume only reset `running` → `pending`, so those `failed` tables were silently skipped on resume, leaving the run stuck.
+  - Fix (`src/pages/api/migv2/run/resume.ts`): also reset `failed` → `pending` so all unfinished tables are retried from their saved offsets.
+  - Status: done
+
+- **implement** — Restart & Restart with Truncate for scheduler runs
+  - New API `POST /api/migv2/run/restart` (`src/pages/api/migv2/run/restart.ts`): accepts `{ runId, truncate }`. Creates a new run (new UUID, `restartedFromRunId` back-reference) with all table offsets reset to 0 and all states `pending`. When `truncate=true`, sets `truncateBeforeMigrate: true` on every table so the runner clears target data before the first chunk.
+  - Type (`src/lib/migv2/types.ts`): added `restartedFromRunId?: string | null` to `MigRun`.
+  - UI (`src/pages/scheduler.tsx`): added `restarting` state, `handleRestart` handler (with confirm dialog for truncate variant), Restart (amber) and `+ Truncate` (rose) buttons on `failed`/`aborted`/`completed` runs. Resume button tooltip updated. Restarted runs show a "restarted" badge with tooltip linking back to the source run ID.
+  - Status: done
+
 ## 2026-06-18
 - **implement** — Export-Import: true whole-database (all-schemas) export for PostgreSQL
   - Problem: the database-level export only ever dumped the `public` schema (UI sent no `schema`, API defaulted to `'public'`). For `adms-data` — whose 113 tables live in `assetmain`/`core`/`stock`/`services`/`helpdesk`/`drizzle`, with `public` holding only enum types — "Export database" produced a ~5 KB file with 0 tables.

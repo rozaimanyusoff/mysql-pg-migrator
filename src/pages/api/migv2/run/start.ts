@@ -63,8 +63,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     saveRun(advanced);
     return res.status(200).json({ run: advanced });
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     run.status = 'failed';
-    run.errors.push(err instanceof Error ? err.message : String(err));
+    run.errors.push(msg);
+    run.logs.push(`[${new Date().toISOString()}] ERROR: ${msg}`);
+    run.completedAt = new Date().toISOString();
     saveRun(run);
     return res.status(200).json({ run });
   }

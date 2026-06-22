@@ -123,6 +123,7 @@ export default function SchedulerPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState<string | null>(null);
   const [preflight, setPreflight] = useState<{ jobName: string; loading: boolean; report: PreflightReport | null; error: string | null } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const highlightHandledRef = useRef(false);
@@ -237,6 +238,35 @@ export default function SchedulerPage() {
       const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Resume failed') : 'Resume failed';
       showError('Resume failed', msg);
     } finally { setResuming(null); }
+  };
+
+  const handleRestart = async (runId: string, truncate: boolean) => {
+    if (truncate) {
+      showConfirm({
+        title: 'Restart with truncate?',
+        description: 'Target tables will be cleared before migrating. All previously migrated data in target will be deleted. This cannot be undone.',
+        confirmLabel: 'Truncate & Restart',
+        onConfirm: async () => {
+          setRestarting(runId);
+          try {
+            await axios.post('/api/migv2/run/restart', { runId, truncate: true });
+            await pollRuns();
+          } catch (err) {
+            const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Restart failed') : 'Restart failed';
+            showError('Restart failed', msg);
+          } finally { setRestarting(null); }
+        },
+      });
+    } else {
+      setRestarting(runId);
+      try {
+        await axios.post('/api/migv2/run/restart', { runId, truncate: false });
+        await pollRuns();
+      } catch (err) {
+        const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Restart failed') : 'Restart failed';
+        showError('Restart failed', msg);
+      } finally { setRestarting(null); }
+    }
   };
 
   const handleDelete = (s: CronSchedule) => {
@@ -542,6 +572,13 @@ export default function SchedulerPage() {
                               </span>
                             </Tooltip>
                           )}
+                          {run.restartedFromRunId && (
+                            <Tooltip content={`Restarted from run ${run.restartedFromRunId.slice(0, 8)}`} side="top">
+                              <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-semibold shrink-0">
+                                <RotateCcw size={9} />restarted
+                              </span>
+                            </Tooltip>
+                          )}
                           <div className="flex-1 min-w-0">
                             <span className="text-[12px] text-gray-500 dark:text-slate-400 font-mono">{run.id.slice(0, 8)}</span>
                             <span className="text-[12px] text-gray-400 dark:text-slate-500 ml-2">{relativeTime(run.createdAt)}</span>
@@ -550,14 +587,37 @@ export default function SchedulerPage() {
                             {run.tableStates.length} tables · {totalRows.toLocaleString()} rows
                           </span>
                           {(run.status === 'failed' || run.status === 'aborted') && (
-                            <button
-                              onClick={e => { e.stopPropagation(); void handleResume(run.id); }}
-                              disabled={resuming === run.id}
-                              title="Resume from last saved offset"
-                              className="flex items-center gap-1 px-2 py-1 rounded border border-violet-300 dark:border-violet-600 text-violet-600 dark:text-violet-300 text-[11px] font-medium hover:bg-violet-50 dark:hover:bg-violet-950/40 disabled:opacity-40 transition-colors shrink-0">
-                              {resuming === run.id ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
-                              Resume
-                            </button>
+                            <Tooltip content="Continue from last saved offset — retries failed tables" side="top">
+                              <button
+                                onClick={e => { e.stopPropagation(); void handleResume(run.id); }}
+                                disabled={resuming === run.id || restarting === run.id}
+                                className="flex items-center gap-1 px-2 py-1 rounded border border-violet-300 dark:border-violet-600 text-violet-600 dark:text-violet-300 text-[11px] font-medium hover:bg-violet-50 dark:hover:bg-violet-950/40 disabled:opacity-40 transition-colors shrink-0">
+                                {resuming === run.id ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
+                                Resume
+                              </button>
+                            </Tooltip>
+                          )}
+                          {(run.status === 'failed' || run.status === 'aborted' || run.status === 'completed') && (
+                            <>
+                              <Tooltip content="Re-run all tables from row 0 — skips duplicates via ON CONFLICT" side="top">
+                                <button
+                                  onClick={e => { e.stopPropagation(); void handleRestart(run.id, false); }}
+                                  disabled={restarting === run.id || resuming === run.id}
+                                  className="flex items-center gap-1 px-2 py-1 rounded border border-amber-300 dark:border-amber-700 text-amber-600 dark:text-amber-400 text-[11px] font-medium hover:bg-amber-50 dark:hover:bg-amber-950/40 disabled:opacity-40 transition-colors shrink-0">
+                                  {restarting === run.id ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
+                                  Restart
+                                </button>
+                              </Tooltip>
+                              <Tooltip content="Truncate target tables then re-migrate from scratch — destructive" side="top">
+                                <button
+                                  onClick={e => { e.stopPropagation(); void handleRestart(run.id, true); }}
+                                  disabled={restarting === run.id || resuming === run.id}
+                                  className="flex items-center gap-1 px-2 py-1 rounded border border-rose-300 dark:border-rose-700 text-rose-600 dark:text-rose-400 text-[11px] font-medium hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-40 transition-colors shrink-0">
+                                  {restarting === run.id ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
+                                  + Truncate
+                                </button>
+                              </Tooltip>
+                            </>
                           )}
                           {isExpanded ? <ChevronUp size={13} className="text-slate-400 shrink-0" /> : <ChevronDown size={13} className="text-slate-400 shrink-0" />}
                         </div>

@@ -18,6 +18,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const advanced = await advanceRun(run, source, target, pausedTableIds);
+    advanced.heartbeatAt = new Date().toISOString();
     saveRun(advanced);
 
     // Persist incremental watermarks back to the saved job so next run picks them up
@@ -36,7 +37,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({ run: advanced });
   } catch (err) {
-    run.errors.push(err instanceof Error ? err.message : String(err));
+    const msg = err instanceof Error ? err.message : String(err);
+    run.status = 'failed';
+    run.errors.push(msg);
+    run.logs.push(`[${new Date().toISOString()}] ERROR: ${msg}`);
+    run.completedAt = new Date().toISOString();
     saveRun(run);
     return res.status(200).json({ run });
   }

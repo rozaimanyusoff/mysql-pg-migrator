@@ -1214,6 +1214,7 @@ export default function Migration() {
     stopRequestedRef.current = false;
     setPausedTableIds(new Set());
     setPolling(true);
+    setCurrentRun(null);
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/start', {
         source: srcConn, target: tgtConn, tables: included,
@@ -1355,6 +1356,7 @@ export default function Migration() {
     stopRequestedRef.current = false;
     setPausedTableIds(new Set());
     setPolling(true);
+    setCurrentRun(null);
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/start', {
         source: srcConn, target: tgtConn,
@@ -2733,10 +2735,21 @@ export default function Migration() {
                 <X size={13} />
               </button>
               <div className="h-full overflow-auto panel-scroll bg-gray-900 dark:bg-black p-3 font-mono text-[13px] text-gray-300">
+                {currentRun.logs.length === 0 && currentRun.status !== 'running' && currentRun.status !== 'pending' && (
+                  <div className="text-gray-500 italic">No log output.</div>
+                )}
+                {currentRun.logs.length === 0 && (currentRun.status === 'running' || currentRun.status === 'pending') && (
+                  <div className="text-gray-500 italic flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-violet-400 animate-pulse" />Starting…
+                  </div>
+                )}
                 {currentRun.logs.map((line, i) => (
                   <div key={i} className={`leading-5 ${line.includes('ERROR') ? 'text-rose-400' : line.includes('completed') ? 'text-emerald-400' : line.includes('ROLLBACK') ? 'text-amber-400' : line.includes('skipped') ? 'text-amber-400' : ''}`}>
                     {line}
                   </div>
+                ))}
+                {currentRun.errors.filter(e => !currentRun.logs.some(l => l.includes(e))).map((e, i) => (
+                  <div key={`err-${i}`} className="leading-5 text-rose-400">[error] {e}</div>
                 ))}
                 <div ref={logsEndRef} />
               </div>

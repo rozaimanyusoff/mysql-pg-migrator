@@ -38,9 +38,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   run.completedAt = null;
   run.heartbeatAt = new Date().toISOString();
   for (const ts of run.tableStates) {
-    if (ts.status === 'running') ts.status = 'pending';
+    if (ts.status === 'running' || ts.status === 'failed') ts.status = 'pending';
   }
-  run.logs.push(`[${new Date().toISOString()}] Run resumed from saved offsets.`);
+  run.logs.push(`[${new Date().toISOString()}] Run resumed from saved offsets (failed tables retried).`);
   saveRun(run);
 
   const schedule = listSchedules().find(s => s.jobId === run.jobId) ?? null;

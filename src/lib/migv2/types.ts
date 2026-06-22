@@ -150,6 +150,7 @@ export interface MigRun {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  restartedFromRunId?: string | null;
   // Liveness: server-driven runs stamp this each advance loop. Used to detect
   // orphaned runs (process restart mid-run) so they can be resumed.
   heartbeatAt?: string | null;
