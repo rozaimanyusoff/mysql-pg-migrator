@@ -134,6 +134,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 For every table, set "source".schema to the source database the user names and "target".schema to the target schema the user names.
 
+STRICT COLUMN RULES — violating these will break the migration:
+- "sourceCol" MUST be the exact MySQL column name as given in the schema. NEVER set it to null, empty, or any invented name.
+- ONLY include columns that physically exist in the source MySQL table. Do NOT invent extra target columns.
+- "targetCol" is the PostgreSQL column name. Set it equal to "sourceCol" unless renaming is needed (e.g. reserved word conflicts). Rename sparingly.
+- Every column entry must have both "sourceCol" (real MySQL column) and "targetCol" (PG column).
+
 Return ONLY valid JSON (no markdown fences, no explanation):
 {
   "tables": [
@@ -143,8 +149,8 @@ Return ONLY valid JSON (no markdown fences, no explanation):
       "order": 1,
       "columns": [
         {
-          "sourceCol": "col_name",
-          "targetCol": "col_name",
+          "sourceCol": "exact_mysql_col_name",
+          "targetCol": "pg_col_name",
           "targetType": "pg_type",
           "nullable": false,
           "defaultValue": null,
@@ -226,30 +232,53 @@ ${schemaText}`,
 
     const sorted = [...aiJson.tables].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
-    const tableMaps: TableMap[] = sorted.map((t): TableMap => ({
-      id: randomUUID(),
-      include: true,
-      source: { schema: t.source?.schema ?? sourceDb, table: t.source?.table ?? '' },
-      sourceDatabase: sourceDb,
-      target: { schema: t.target?.schema ?? targetSchema, table: t.target?.table ?? t.source?.table ?? '' },
-      columns: (t.columns ?? []).map((c: any): ColumnMap => ({
-        sourceCol: c.sourceCol ?? null,
-        targetCol: c.targetCol ?? c.sourceCol ?? '',
-        targetName: null,
-        targetType: c.targetType ?? 'text',
-        nullable: Boolean(c.nullable),
-        defaultValue: c.defaultValue ?? null,
+    // Build a lookup of valid source column names per table so we can reject
+    // AI-invented columns (sourceCol: null or names that don't exist in MySQL).
+    const validSourceCols = new Map<string, Set<string>>();
+    for (const ts of tableSchemas) {
+      validSourceCols.set(`${ts.schema}.${ts.name}`, new Set(ts.columns.map(c => c.name)));
+    }
+
+    const tableMaps: TableMap[] = sorted.map((t): TableMap => {
+      const srcKey = `${t.source?.schema ?? sourceDb}.${t.source?.table ?? ''}`;
+      const allowedCols = validSourceCols.get(srcKey);
+      const rawCols: any[] = t.columns ?? [];
+
+      const columns: ColumnMap[] = rawCols
+        .filter((c: any) => {
+          // Drop any column the AI invented with no real source column
+          if (!c.sourceCol || typeof c.sourceCol !== 'string') return false;
+          // Drop if the source column doesn't exist in MySQL schema
+          if (allowedCols && !allowedCols.has(c.sourceCol)) return false;
+          return true;
+        })
+        .map((c: any): ColumnMap => ({
+          sourceCol: c.sourceCol as string,
+          targetCol: c.targetCol ?? c.sourceCol ?? '',
+          targetName: null,
+          targetType: c.targetType ?? 'text',
+          nullable: Boolean(c.nullable),
+          defaultValue: c.defaultValue ?? null,
+          include: true,
+          conversion: VALID_CONVERSIONS.has(c.conversion) ? (c.conversion as IdConversion) : 'keep',
+          fkRef: null,
+          keepLegacyAs: null,
+        }));
+
+      return {
+        id: randomUUID(),
         include: true,
-        conversion: VALID_CONVERSIONS.has(c.conversion) ? (c.conversion as IdConversion) : 'keep',
-        fkRef: null,
-        keepLegacyAs: null,
-      })),
-      truncateBeforeMigrate: false,
-      syncMode: 'full',
-      incrementalCol: null,
-      incrementalStrategy: 'id',
-      lastSyncedValue: null,
-    }));
+        source: { schema: t.source?.schema ?? sourceDb, table: t.source?.table ?? '' },
+        sourceDatabase: sourceDb,
+        target: { schema: t.target?.schema ?? targetSchema, table: t.target?.table ?? t.source?.table ?? '' },
+        columns,
+        truncateBeforeMigrate: false,
+        syncMode: 'full',
+        incrementalCol: null,
+        incrementalStrategy: 'id',
+        lastSyncedValue: null,
+      };
+    });
 
     const now = new Date().toISOString();
     const job: MigJob = {
