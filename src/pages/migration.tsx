@@ -227,6 +227,9 @@ export default function Migration() {
   const [openColPickerIdx, setOpenColPickerIdx] = useState<number | null>(null);
   const [colPickerPos, setColPickerPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const [colPickerFilter, setColPickerFilter] = useState('');
+  const [openSrcColPickerIdx, setOpenSrcColPickerIdx] = useState<number | null>(null);
+  const [srcColPickerPos, setSrcColPickerPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [srcColPickerFilter, setSrcColPickerFilter] = useState('');
   const [fkManualInput, setFkManualInput] = useState('');
   const [dirty, setDirty] = useState(false);
   useUnsavedGuard(dirty, 'This job has unsaved changes that will be lost if you leave.\nSave the job first or discard changes.');
@@ -2457,19 +2460,40 @@ export default function Migration() {
                                       onChange={e => updateColumn(selectedMap.id, idx, { include: e.target.checked })}
                                       className="accent-violet-500" />
                                   </td>
-                                  <td className="px-2 py-1.5 max-w-[100px]">
-                                    <div className="flex flex-col gap-0.5">
-                                      <span className="font-mono text-[13px] text-gray-700 dark:text-slate-300 truncate">
-                                        {col.sourceCol ?? <span className="italic text-gray-400">*(new)*</span>}
-                                      </span>
-                                      {srcMeta && (
-                                        <div className="flex items-center gap-0.5">
-                                          {srcMeta.isPk && <span className="text-[10px] px-1 py-px rounded bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 font-semibold">PK</span>}
-                                          {srcMeta.isFk && <span className="text-[10px] px-1 py-px rounded bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold">FK</span>}
-                                          {!srcMeta.nullable && <span className="text-[10px] px-1 py-px rounded bg-rose-100 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400 font-semibold">NN</span>}
+                                  <td className="px-2 py-1.5 max-w-[120px]">
+                                    {(() => {
+                                      const isSrcOpen = openSrcColPickerIdx === idx;
+                                      return (
+                                        <div className="flex flex-col gap-0.5">
+                                          <input
+                                            readOnly={!isSrcOpen}
+                                            value={isSrcOpen ? srcColPickerFilter : (col.sourceCol ?? '')}
+                                            placeholder="*(new)*"
+                                            onFocus={e => {
+                                              const rect = e.currentTarget.getBoundingClientRect();
+                                              setSrcColPickerPos({ top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 160) });
+                                              setOpenSrcColPickerIdx(idx);
+                                              setSrcColPickerFilter('');
+                                            }}
+                                            onChange={e => setSrcColPickerFilter(e.target.value)}
+                                            onBlur={() => setTimeout(() => { setOpenSrcColPickerIdx(null); setSrcColPickerPos(null); }, 120)}
+                                            className={`w-full px-1.5 py-0.5 text-[13px] rounded border font-mono focus:outline-none bg-white dark:bg-slate-800 truncate
+                                              ${isSrcOpen
+                                                ? 'border-violet-400 dark:border-violet-500 text-gray-800 dark:text-slate-200'
+                                                : col.sourceCol
+                                                ? 'border-transparent text-gray-700 dark:text-slate-300 cursor-pointer hover:border-gray-300 dark:hover:border-slate-600'
+                                                : 'border-dashed border-gray-300 dark:border-slate-600 text-gray-400 dark:text-slate-500 italic cursor-pointer hover:border-violet-400 dark:hover:border-violet-500'}`}
+                                          />
+                                          {srcMeta && (
+                                            <div className="flex items-center gap-0.5">
+                                              {srcMeta.isPk && <span className="text-[10px] px-1 py-px rounded bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 font-semibold">PK</span>}
+                                              {srcMeta.isFk && <span className="text-[10px] px-1 py-px rounded bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold">FK</span>}
+                                              {!srcMeta.nullable && <span className="text-[10px] px-1 py-px rounded bg-rose-100 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400 font-semibold">NN</span>}
+                                            </div>
+                                          )}
                                         </div>
-                                      )}
-                                    </div>
+                                      );
+                                    })()}
                                   </td>
                                   <td className="px-2 py-1.5 font-mono text-[12px] text-gray-400 dark:text-slate-500">
                                     {colsCache[`${selectedMap.sourceDatabase ?? ''}.${selectedMap.source.schema}.${selectedMap.source.table}`]?.find(c => c.name === col.sourceCol)?.rawType ?? '—'}
@@ -3136,6 +3160,61 @@ export default function Migration() {
                   ✎ new &ldquo;{colPickerFilter}&rdquo;
                 </div>
               );
+            })()}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* SRC COL picker portal */}
+      {openSrcColPickerIdx !== null && srcColPickerPos && selectedMap && typeof window !== 'undefined' && createPortal(
+        <div
+          style={{ position: 'fixed', top: srcColPickerPos.top, left: srcColPickerPos.left, width: srcColPickerPos.width, zIndex: 9999 }}
+          className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden"
+          onMouseDown={e => e.preventDefault()}
+        >
+          <div className="max-h-48 overflow-y-auto">
+            {(() => {
+              const filter = srcColPickerFilter.toLowerCase();
+              const filtered = srcColsForSelected.filter(c => !filter || c.name.toLowerCase().includes(filter));
+              const currentSourceCol = selectedMap.columns[openSrcColPickerIdx]?.sourceCol;
+              if (filtered.length === 0) {
+                return (
+                  <div className="px-2.5 py-2 text-[12px] text-gray-400 dark:text-slate-500 italic">
+                    {srcColsForSelected.length === 0 ? 'Load source table columns first' : 'No match'}
+                  </div>
+                );
+              }
+              return filtered.map(c => {
+                const assignedTo = selectedMap.columns.find((r, rIdx) => rIdx !== openSrcColPickerIdx && r.sourceCol === c.name);
+                const isCurrent = currentSourceCol === c.name;
+                return (
+                  <div
+                    key={c.name}
+                    onMouseDown={() => {
+                      const suggestedType = suggestTargetType(c.rawType, selectedMap.source.schema === selectedMap.sourceDatabase ? 'mysql' : 'mysql', tgtConn.type);
+                      updateColumn(selectedMap.id, openSrcColPickerIdx, {
+                        sourceCol: c.name,
+                        targetType: suggestedType,
+                        nullable: c.nullable,
+                      });
+                      setOpenSrcColPickerIdx(null); setSrcColPickerPos(null);
+                    }}
+                    className={`flex items-center justify-between gap-2 px-2.5 py-1.5 cursor-pointer text-[13px] font-mono ${
+                      isCurrent
+                        ? 'bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300'
+                        : assignedTo
+                        ? 'text-gray-400 dark:text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'
+                        : 'text-gray-700 dark:text-slate-300 hover:bg-violet-50 dark:hover:bg-violet-950/30'
+                    }`}
+                  >
+                    <span>{c.name}</span>
+                    <span className="text-[11px] shrink-0 text-gray-400 dark:text-slate-500">{c.rawType}</span>
+                    {assignedTo && <span className="text-[11px] shrink-0 text-amber-500">→ {assignedTo.targetCol}</span>}
+                    {isCurrent && <Check size={11} className="shrink-0 text-violet-500" />}
+                  </div>
+                );
+              });
             })()}
           </div>
         </div>,
