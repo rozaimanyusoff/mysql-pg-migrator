@@ -2,6 +2,113 @@
 
 ---
 
+## 2026-06-26
+- **fix** — Column mapping: FK REF always visible regardless of conversion type
+  - FK REF picker was hidden (`—`) when `conversion === 'serial_to_uuid'`. This made sense for PK columns (generates a new UUID — no ref), but FK columns also use `serial_to_uuid` + `fkRef` to look up the UUID assigned to an integer value in the referenced table. With no picker visible, FK columns could never have their `fkRef` set.
+  - Fix: removed the `serial_to_uuid` guard — FK REF `pick…` button is now always shown for all columns.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Load job: nothing restored when job saved via pending-save flow
+  - Root cause: `handleSaveMigratedTables` (bulk pending-save) called `POST /api/migv2/jobs` with only `{ name, tables }` — no `sourceMeta`/`targetMeta`. The API saved both as `undefined`.
+  - On load, `handleLoadJob` accessed `job.sourceMeta.host` on the `undefined` object, throwing a TypeError that was silently swallowed by `catch { /* ignore */ }`, causing the entire load to abort with no UI feedback.
+  - Fix 1: `handleSaveMigratedTables` now includes `sourceMeta`/`targetMeta` built from current `srcConn`/`tgtConn` state (skipped if no connection is active at save time).
+  - Fix 2: `handleLoadJob` now null-checks `job.sourceMeta` and `job.targetMeta` before calling `.find()` on connections, so jobs saved without meta still load their `tables` into the session.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Column mapping: auto-detect int → UUID mismatch
+  - Problem: when source column is `int`/`bigint` and target column is `UUID` but conversion is `keep`, the runner passes the raw integer string into a UUID column and fails with `invalid input syntax for type uuid`.
+  - Added `intUuidMismatchIndices` useMemo that scans `selectedMap.columns` — flags any included column where source rawType matches int/bigint variants, targetType is UUID, and conversion is `keep`.
+  - Per-row: amber background + `AlertTriangle` icon with tooltip in the Conv cell explaining the issue and correct fix.
+  - Banner above the column table: shows count of mismatched columns + "Fix All →UUID" button that bulk-sets `conversion: 'serial_to_uuid'` on all flagged rows in one click. User still needs to set `fkRef` per column manually via the existing FK Ref picker.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+## 2026-06-25
+- **fix** — Runner: TRUNCATE before ensureTargetTable caused "relation does not exist" on new tables
+  - Root cause: `TRUNCATE "schema"."table" CASCADE` ran at offset===0 before `ensureTargetTable`. For tables that don't exist yet in the target, this immediately failed with `relation "schema.table" does not exist`.
+  - Fix: moved `ensureTargetTable` above the TRUNCATE block so the table is always created first. TRUNCATE on a freshly-created empty table is a no-op. `DISABLE TRIGGER ALL` (skipConstraints) also moved after the table-exists guarantee.
+  - Files: `src/lib/migv2/runner.ts`
+  - Status: done
+
+- **fix** — New-schema notice: add Cancel button to remove proposed auto-created tables
+  - The "Migrating into a new schema" banner had no escape hatch — if the user wanted to map to an existing target table instead, they had to manually uncheck each auto-proposed table.
+  - Added a "Cancel" button (right-aligned, neutral style) that removes all `newTargetTables` from `tableMaps` in one click. Also clears `selectedMapId` if the currently selected map is among the removed ones.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Skip Constraints: migrate data while bypassing FK/check violations
+  - Problem: tables with FK references to tables not yet migrated fail with constraint violations (e.g. `insert or update on table "asset_categories" violates foreign key constraint`). With no option to bypass, those rows are silently lost.
+  - Backend (`src/lib/migv2/types.ts`): added `skipConstraints?: boolean` to `TableMap`.
+  - Runner (`src/lib/migv2/runner.ts`): added `setTriggers(conn, schema, table, enable)` helper that issues `ALTER TABLE "schema"."table" DISABLE/ENABLE TRIGGER ALL`. On first chunk (offset===0) with `skipConstraints=true`, disables triggers before any inserts. On last chunk (chunk.length < CHUNK_SIZE) or empty-result run, re-enables. Catch block also re-enables (best-effort, ignores errors) so triggers are never left permanently disabled even after a crash.
+  - UI (`src/pages/migration.tsx`): added "Skip Constraints" checkbox (accent-amber) next to the Truncate checkbox in the column mapping header. Includes a Tooltip explaining the DISABLE TRIGGER ALL mechanism, when to use it, and the PostgreSQL-only / owner-or-superuser requirement.
+  - Files: `src/lib/migv2/types.ts`, `src/lib/migv2/runner.ts`, `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Pending Save: persists across page reloads and multiple runs
+  - Root cause 1: `accumulatedTableStates`/`accumulatedTableMaps` were in-memory only. Page reload or Next.js route navigation cleared them. The restore useEffect only loaded from the single latest run (REPLACE, not merge), so earlier runs' pending saves were lost.
+  - Root cause 2: `handleSaveMigratedTables` gated on `!currentRun`, so the Save button silently failed if `currentRun` was null (between runs or after closing the console).
+  - Root cause 3: localStorage was keyed by run ID (`mig_saved_{runId}`), so saved-state tracking reset on each new run.
+  - Fix: added a `useEffect` that auto-persists `accumulatedTableStates` + `accumulatedTableMaps` + `savedMigratedSources` to a stable key `mig_pending_session` whenever they change. Restore useEffect now reads from this key first (merges all past runs); falls back to the latest run scan if key doesn't exist yet. `handleSaveMigratedTables` no longer requires `currentRun`. Reset and rollback both clean the `mig_pending_session` key.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Per-table Restart with Truncate button
+  - Problem: when a table completes with partial errors (e.g. FK constraint violations — 44 written, 7 errors), clicking Play re-runs the table but skips already-inserted rows via ON CONFLICT DO NOTHING. The 7 failed rows will fail again. If the user fixes the root cause and wants a clean slate, there was no way to truncate and restart just that table.
+  - `startTableMigration` now accepts a `truncate` boolean (3rd param). When true, it passes `truncateBeforeMigrate: true` on that table's payload to `/api/migv2/run/start` without permanently modifying the saved mapping.
+  - Added a `RotateCcw` "Restart with Truncate" button next to the Play button in both the target table list and the source table list. It appears only when the table's `runState` is `completed` or `failed`. Clicking shows a confirm dialog before proceeding.
+  - Re-run workflow: **Play** = re-run keeping existing rows (conflicts skipped); **RotateCcw** = clear target table then re-run all rows from scratch.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **update** — Migration: restrict source to MySQL, target to PostgreSQL only
+  - Source `ConnSelect` now filters `connections` to `db_type === 'mysql'` only.
+  - Target `ConnSelect` now filters `connections` to `db_type === 'postgres'` only.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Pending Save: restore exact run mapping on click via accumulatedTableMaps
+  - Previous approach matched by `ts.id` then fell back to sourceKey in `tableMaps` — this could land on a modified/different mapping for the same source table.
+  - Fix: use `accumulatedTableMaps.get(ts.sourceKey)` as the authoritative mapping snapshot (set by `onRunFinished` from `run.tables`). If that snapshot's id is not in `tableMaps`, inject it (removing any stale entry for the same source table first) before navigating. This ensures the column mapping panel always shows the exact config that was used during migration.
+  - Tooltip warning updated to reflect when snapshot is unavailable.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Pending Save: show source→target mapping and navigate on click
+  - Each pending save item now shows `sourceKey → targetKey` (e.g., `assets.types → assetmain.asset_types`) so it's clear where data was migrated to.
+  - Clicking a pending save item now also calls `setSelectedMapId(ts.id)` (when the tableMap exists in the current session) — the column mapping panel scrolls to that table's mapping for quick inspection.
+  - Active navigation state highlighted in violet to distinguish from blue selection state.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **implement** — Column mapping: show all unmatched target columns for validation
+  - Target columns that exist in the target table but have no source mapping are now displayed below the mapped rows as a separate "Unmatched target columns — N not in mapping" section.
+  - Each unmatched row shows: target column name with PK/NN badges, EXISTING badge, raw type, and DB default value. All are unchecked (dimmed) by default.
+  - Checking the checkbox on an unmatched row calls `addUnmatchedTgtCol`, which adds it to the mapping as a target-only entry (`sourceCol: null`, `include: true`) with type and nullable info pre-filled from the live target schema. If the target column has a DB-level default, it is pre-populated into `defaultValue`.
+  - Computed via `unmatchedTgtCols` useMemo derived from `tgtColsForSelected` minus already-mapped columns; updates live as columns are added/removed.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **fix** — Target-only columns: default value input, pre-run validation, run console error coloring
+  - Problem 1: target-only columns (`*(new)*`) always inserted NULL because there was no UI to set a default value. If the target column is NOT NULL this caused a constraint violation.
+  - Fix: replaced the `—` placeholder in the KEEP ORIG cell with a text input for `defaultValue` when `col.sourceCol === null`. Input turns violet when a value is set. Tooltip explains expected format (literals: `true`, `0`, `2024-01-01`). Runner already reads `col.defaultValue`.
+  - Problem 2: no warning before running when target-only columns have no default value set — run fails silently with a NOT NULL error.
+  - Fix: added pre-run validation in `startMigration` and `startTableMigration` — if any included target-only column has no `defaultValue`, a confirm dialog lists the affected columns and explains both remedies: set a default, or uncheck the column to let the DB handle it via its own DEFAULT constraint.
+  - Problem 3: run console colored `completed (0 rows)` green; "N errors" lines were not colored rose.
+  - Fix: console coloring — `completed (0 rows)` / `Total: 0 rows migrated` → amber; `/\d+ errors/` lines → rose.
+  - Renamed column header "Keep Orig" → "Keep / Default" with updated tooltip.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+- **update** — npm security audit: patch high-severity vulnerabilities
+  - Ran `npm audit`; found 6 vulnerabilities (2 high, 4 moderate).
+  - `npm audit fix` patched `form-data` (CRLF injection, GHSA-hmw2-7cc7-3qxx).
+  - Upgraded `nodemailer` from ^8.0.7 → ^9.0.1 to fix SSRF, TLS validation bypass, and CRLF injection (GHSA-p6gq-j5cr-w38f etc.). API usage in `src/lib/mailer.ts` is compatible with v9.
+  - 4 moderate vulnerabilities remain (postcss inside next, uuid inside exceljs) — both require major breaking downgrades and are not exploitable through this project's usage patterns.
+  - Files: `package.json`, `package-lock.json`
+  - Status: done
+
 ## 2026-06-23 (2)
 - **fix** — Migration run log panel: stale display, invisible errors, false reconcile
   - Root cause 1: `advance.ts` & `start.ts` top-level catch blocks only pushed errors to `run.errors`, not `run.logs`. Console only renders `run.logs`, so top-level errors were invisible.

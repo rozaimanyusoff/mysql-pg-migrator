@@ -265,7 +265,8 @@ export default function Migration() {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [selectedMigratedKeys, setSelectedMigratedKeys] = useState<Set<string>>(new Set());
   const [savedMigratedSources, setSavedMigratedSources] = useState<Set<string>>(new Set());
-  // Accumulate completed table states across multiple runs (session-only)
+  // Accumulate completed table states across multiple runs — persisted to localStorage
+  const PENDING_KEY = 'mig_pending_session';
   const [accumulatedTableStates, setAccumulatedTableStates] = useState<MigRunTableState[]>([]);
   const [accumulatedTableMaps, setAccumulatedTableMaps] = useState<Map<string, TableMap>>(new Map());
   const [showSaveMigratedDialog, setShowSaveMigratedDialog] = useState(false);
@@ -314,6 +315,7 @@ export default function Migration() {
 
   // ── Target column cache ───────────────────────────────────────────────────────
   const [tgtColsCache, setTgtColsCache] = useState<Record<string, MigColumnInfo[]>>({});
+  const [newSchemaBannerDismissed, setNewSchemaBannerDismissed] = useState(false);
 
   // ── Load connections ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -677,6 +679,23 @@ export default function Migration() {
     setDirty(true);
   };
 
+  const addUnmatchedTgtCol = (mapId: string, col: MigColumnInfo) => {
+    setTableMaps(prev => prev.map(m => {
+      if (m.id !== mapId) return m;
+      const entry: ColumnMap = {
+        sourceCol: null, targetCol: col.name, targetName: null,
+        targetType: col.rawType.toUpperCase(),
+        nullable: col.nullable,
+        defaultValue: col.defaultValue,
+        include: true, conversion: 'keep',
+        fkRef: col.fkRef ? col.fkRef.split('.').slice(0, 2).join('.') : null,
+        keepLegacyAs: null,
+      };
+      return { ...m, columns: [...m.columns, entry] };
+    }));
+    setDirty(true);
+  };
+
   // ── Derived ───────────────────────────────────────────────────────────────────
   const srcConnRow = connections.find(c => c.id === srcConnId);
   const srcIsPg = srcConnRow?.db_type === 'postgres';
@@ -699,6 +718,30 @@ export default function Migration() {
     ? (tgtColsCache[`${selectedMap.target.schema}.${selectedMap.target.table}`] ?? [])
     : [];
 
+  // Columns where source is int/bigint but target is UUID and conversion is still 'keep' —
+  // these will fail at runtime with "invalid input syntax for type uuid".
+  const intUuidMismatchIndices = useMemo(() => {
+    if (!selectedMap) return new Set<number>();
+    const isIntSrc = (rawType: string) =>
+      /^(tinyint|smallint|mediumint|int|integer|bigint|int4|int8|serial|bigserial|smallserial)(\(.*\))?$/i.test(rawType.trim());
+    const isUuidTgt = (t: string) => /^uuid$/i.test(t.trim());
+    const result = new Set<number>();
+    selectedMap.columns.forEach((col, idx) => {
+      if (!col.include || col.conversion !== 'keep') return;
+      if (!isUuidTgt(col.targetType)) return;
+      const srcMeta = col.sourceCol ? srcColsForSelected.find(c => c.name === col.sourceCol) : undefined;
+      if (srcMeta && isIntSrc(srcMeta.rawType)) result.add(idx);
+    });
+    return result;
+  }, [selectedMap, srcColsForSelected]);
+
+  // Target columns that exist in the target table but are not yet in the mapping
+  const unmatchedTgtCols = useMemo(() => {
+    if (!selectedMap || !tgtColsForSelected.length) return [];
+    const mappedNames = new Set(selectedMap.columns.map(c => c.targetName ?? c.targetCol));
+    return tgtColsForSelected.filter(c => !mappedNames.has(c.name));
+  }, [selectedMap, tgtColsForSelected]);
+
   const includedCount = tableMaps.filter(m => m.include).length;
   const canStart = srcConnected && tgtConnected && includedCount > 0 && !polling;
 
@@ -708,6 +751,7 @@ export default function Migration() {
   const newTargetTables = useMemo(
     () => tableMaps.filter(m =>
       m.include &&
+      !!m.target.table &&
       !tgtTables.some(t =>
         t.schema === m.target.schema &&
         (m.targetAlias?.trim() || m.target.table) === t.name
@@ -716,6 +760,12 @@ export default function Migration() {
     [tableMaps, tgtTables]
   );
   const newTargetSchema = newTargetTables[0]?.target.schema ?? '';
+  // Re-show banner whenever a genuinely new auto-create candidate appears
+  const prevNewTargetCountRef = useRef(0);
+  useEffect(() => {
+    if (newTargetTables.length > prevNewTargetCountRef.current) setNewSchemaBannerDismissed(false);
+    prevNewTargetCountRef.current = newTargetTables.length;
+  }, [newTargetTables.length]);
 
   // Change the default target schema and re-point any table maps still on the
   // previous default, so already-selected tables follow the schema you pick.
@@ -801,10 +851,48 @@ export default function Migration() {
   };
   useEffect(() => { void loadJobs(); void loadTableRefs(); }, []);
 
-  // On page load: restore the most recent finished run — but only if there are genuinely
-  // unsaved pending tables. If all tables were already saved/cleared in a prior session,
-  // skip restore entirely so stale strikethrough doesn't appear.
+  // Persist accumulated pending states to localStorage whenever they change.
+  // This lets multiple runs accumulate across page reloads and route navigations.
   useEffect(() => {
+    if (accumulatedTableStates.length === 0) return;
+    try {
+      const mapsObj: Record<string, TableMap> = {};
+      accumulatedTableMaps.forEach((v, k) => { mapsObj[k] = v; });
+      localStorage.setItem(PENDING_KEY, JSON.stringify({
+        states: accumulatedTableStates,
+        maps: mapsObj,
+        saved: [...savedMigratedSources],
+      }));
+    } catch { /* ignore */ }
+  }, [accumulatedTableStates, accumulatedTableMaps]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On page load: restore accumulated pending states from localStorage (merges all past runs).
+  // Falls back to scanning the latest run file if no localStorage key exists yet.
+  useEffect(() => {
+    // Primary: restore from persisted pending session
+    try {
+      const raw = localStorage.getItem(PENDING_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          states: MigRunTableState[];
+          maps: Record<string, TableMap>;
+          saved?: string[];
+        };
+        if (parsed.states?.length > 0) {
+          const savedSet = new Set<string>(parsed.saved ?? []);
+          const unsaved = parsed.states.filter(ts => !savedSet.has(ts.sourceKey));
+          if (unsaved.length > 0) {
+            setAccumulatedTableStates(unsaved);
+            setAccumulatedTableMaps(new Map(Object.entries(parsed.maps ?? {})));
+            setMigratedTableKeys(new Set(unsaved.map(ts => ts.sourceKey)));
+            if (savedSet.size > 0) setSavedMigratedSources(savedSet);
+            return; // primary restore succeeded — skip legacy run-based restore
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
+    // Fallback: restore from the single latest run (legacy path, no localStorage key yet)
     void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status')
       .then(({ data }) => {
         const latest = data.runs.find(r => r.status === 'completed' || r.status === 'failed');
@@ -839,7 +927,7 @@ export default function Migration() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveMigratedTables = async () => {
-    if (!currentRun || selectedMigratedKeys.size === 0) return;
+    if (selectedMigratedKeys.size === 0) return;
     setSavingMigrated(true);
     try {
       const selectedTables = [...selectedMigratedKeys]
@@ -851,13 +939,25 @@ export default function Migration() {
         const merged = [...existing.job.tables, ...selectedTables.filter(t => !existingIds.has(t.id))];
         await axios.put(`/api/migv2/jobs/${saveMigratedTargetJobId}`, { tables: merged });
       } else {
-        await axios.post('/api/migv2/jobs', { name: saveMigratedJobName.trim(), tables: selectedTables });
+        const srcMeta = srcConn.host
+          ? { type: srcConn.type, host: srcConn.host, port: srcConn.port, database: srcConn.database, username: srcConn.username }
+          : undefined;
+        const tgtMeta = tgtConn.host
+          ? { type: tgtConn.type, host: tgtConn.host, port: tgtConn.port, database: tgtConn.database, username: tgtConn.username }
+          : undefined;
+        await axios.post('/api/migv2/jobs', { name: saveMigratedJobName.trim(), tables: selectedTables, sourceMeta: srcMeta, targetMeta: tgtMeta });
       }
       await loadJobs();
       const newSaved = new Set([...savedMigratedSources, ...selectedMigratedKeys]);
       setSavedMigratedSources(newSaved);
+      // Update persisted pending session — mark saved keys so they survive reload
       try {
-        localStorage.setItem(`mig_saved_${currentRun.id}`, JSON.stringify([...newSaved]));
+        const raw = localStorage.getItem(PENDING_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { states: MigRunTableState[]; maps: Record<string, TableMap>; saved?: string[] };
+          parsed.saved = [...newSaved];
+          localStorage.setItem(PENDING_KEY, JSON.stringify(parsed));
+        }
       } catch { /* ignore */ }
       // If we added tables to the active job, sync tableMaps so "Save Job" won't overwrite them
       if (saveMigratedTargetJobId && saveMigratedTargetJobId === activeJobId) {
@@ -995,18 +1095,18 @@ export default function Migration() {
 
       // Try to restore source and target connections from saved metadata
       const normType = (t: string) => t === 'postgresql' ? 'postgres' : t;
-      const srcMatch = connections.find(c =>
+      const srcMatch = job.sourceMeta ? connections.find(c =>
         c.host === job.sourceMeta.host &&
         c.port === job.sourceMeta.port &&
         c.username === job.sourceMeta.username &&
         c.db_type === normType(job.sourceMeta.type)
-      );
-      const tgtMatch = connections.find(c =>
+      ) : undefined;
+      const tgtMatch = job.targetMeta ? connections.find(c =>
         c.host === job.targetMeta.host &&
         c.port === job.targetMeta.port &&
         c.username === job.targetMeta.username &&
         c.db_type === normType(job.targetMeta.type)
-      );
+      ) : undefined;
 
       if (srcMatch) {
         const srcDbs = [...new Set(job.tables.map(t => t.sourceDatabase).filter((d): d is string => !!d))];
@@ -1201,7 +1301,7 @@ export default function Migration() {
     void loadTableRefs();
   };
 
-  const startMigration = async () => {
+  const startMigration = async (force = false) => {
     const included = tableMaps.filter(t => t.include);
     if (!included.length) return;
     const unset = included.filter(t => t.columns.length > 0 && !t.isSet);
@@ -1213,6 +1313,21 @@ export default function Migration() {
           '\n\nOpen each table, review the mapping, then click Set before running.',
       });
       return;
+    }
+    if (!force) {
+      const badCols = included.flatMap(m =>
+        m.columns
+          .filter(c => c.include && c.sourceCol === null && !c.defaultValue)
+          .map(c => `• ${m.source.schema}.${m.source.table} → ${c.targetCol} (${c.targetType})`)
+      );
+      if (badCols.length) {
+        showConfirm({
+          title: 'Target-only columns without a default value',
+          description: `These columns have no source column and no default value set:\n\n${badCols.join('\n')}\n\nThey will insert NULL for every row. If any are NOT NULL in the target, the migration will fail.\n\nTo fix: set a value in "Keep / Default", or uncheck the column to let the DB handle it with its own DEFAULT.\n\nRun anyway?`,
+          onConfirm: () => void startMigration(true),
+        });
+        return;
+      }
     }
     stopRequestedRef.current = false;
     setPausedTableIds(new Set());
@@ -1279,6 +1394,11 @@ export default function Migration() {
         setDirty(false);
         setCurrentRun(null);
         setPausedTableIds(new Set());
+        setAccumulatedTableStates([]);
+        setAccumulatedTableMaps(new Map());
+        setSavedMigratedSources(new Set());
+        setMigratedTableKeys(new Set());
+        try { localStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
       },
     });
   };
@@ -1349,12 +1469,23 @@ export default function Migration() {
     setShowDriftDialog(false);
   };
 
-  const startTableMigration = async (mapId: string) => {
+  const startTableMigration = async (mapId: string, force = false, truncate = false) => {
     const map = tableMaps.find(m => m.id === mapId);
     if (!map || polling) return;
     if (map.columns.length > 0 && !map.isSet) {
       showWarning({ title: 'Mapping not ready', description: `Mapping for ${map.source.schema}.${map.source.table} has not been marked as ready.\n\nOpen the column mapping, review it, then click Set before running.` });
       return;
+    }
+    if (!force) {
+      const badCols = map.columns.filter(c => c.include && c.sourceCol === null && !c.defaultValue);
+      if (badCols.length) {
+        showConfirm({
+          title: 'Target-only columns without a default value',
+          description: `These columns in ${map.source.schema}.${map.source.table} have no source column and no default value:\n\n${badCols.map(c => `• ${c.targetCol} (${c.targetType})`).join('\n')}\n\nThey will insert NULL for every row. If any are NOT NULL in the target, the migration will fail.\n\nTo fix: set a value in "Keep / Default", or uncheck the column to let the DB use its own DEFAULT.\n\nRun anyway?`,
+          onConfirm: () => void startTableMigration(mapId, true, truncate),
+        });
+        return;
+      }
     }
     stopRequestedRef.current = false;
     setPausedTableIds(new Set());
@@ -1363,7 +1494,7 @@ export default function Migration() {
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/start', {
         source: srcConn, target: tgtConn,
-        tables: [{ ...map, include: true }],
+        tables: [{ ...map, include: true, truncateBeforeMigrate: truncate || map.truncateBeforeMigrate }],
         jobId: activeJobId, jobName: saveJobName || 'Migration',
         filterCol: filterCol.trim() || null,
         filterFrom: filterFrom.trim() || null,
@@ -1402,6 +1533,16 @@ export default function Migration() {
       const rolledBackKeys = new Set(currentRun.tableStates.map(ts => ts.sourceKey));
       setAccumulatedTableStates(prev => prev.filter(ts => !rolledBackKeys.has(ts.sourceKey)));
       setAccumulatedTableMaps(prev => { const n = new Map(prev); for (const k of rolledBackKeys) n.delete(k); return n; });
+      try {
+        const raw = localStorage.getItem(PENDING_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { states: MigRunTableState[]; maps: Record<string, TableMap>; saved?: string[] };
+          parsed.states = parsed.states.filter(ts => !rolledBackKeys.has(ts.sourceKey));
+          for (const k of rolledBackKeys) delete parsed.maps[k];
+          if (parsed.states.length > 0) localStorage.setItem(PENDING_KEY, JSON.stringify(parsed));
+          else localStorage.removeItem(PENDING_KEY);
+        }
+      } catch { /* ignore */ }
     } catch { /* ignore */ } finally { setRollingBack(false); }
   };
 
@@ -1680,7 +1821,7 @@ export default function Migration() {
                         )}
                       </div>
                       <div className="flex flex-col gap-1.5">
-                        <ConnSelect connections={connections} value={srcConnId}
+                        <ConnSelect connections={connections.filter(c => c.db_type === 'mysql')} value={srcConnId}
                           onChange={id => setSrcConnId(id)} onNew={() => void router.push('/settings')} accent="blue" />
                         <div className="flex items-center gap-1.5">
                           {srcConnId && (srcLoadingDbs
@@ -1854,7 +1995,7 @@ export default function Migration() {
                         )}
                       </div>
                       <div className="flex flex-col gap-1.5">
-                        <ConnSelect connections={connections} value={tgtConnId}
+                        <ConnSelect connections={connections.filter(c => c.db_type === 'postgres')} value={tgtConnId}
                           onChange={id => setTgtConnId(id)} onNew={() => void router.push('/settings')} accent="violet" />
 
                         {/* DB + Schema side by side */}
@@ -1968,7 +2109,7 @@ export default function Migration() {
                     </div>
 
                     {/* New-schema migration guidance */}
-                    {!polling && tgtConnected && srcConnected && newTargetTables.length > 0 && (
+                    {!polling && tgtConnected && srcConnected && newTargetTables.length > 0 && !newSchemaBannerDismissed && (
                       <div className="shrink-0 mx-3 mt-2 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 p-3">
                         <div className="flex items-start gap-2">
                           <Info size={14} className="text-amber-500 shrink-0 mt-0.5" />
@@ -1995,6 +2136,20 @@ export default function Migration() {
                           <button onClick={() => openSave(true)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors">
                             <Calendar size={12} /> Save &amp; Schedule
+                          </button>
+                          <button
+                            onClick={() => {
+                              const newIds = new Set(newTargetTables.map(m => m.id));
+                              setTableMaps(prev => prev.map(m =>
+                                newIds.has(m.id)
+                                  ? { ...m, target: { ...m.target, table: '' } }
+                                  : m
+                              ));
+                              setNewSchemaBannerDismissed(true);
+                              setDirty(true);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium border border-gray-300 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors ml-auto">
+                            <X size={12} /> Cancel
                           </button>
                         </div>
                         <p className="text-[11px] text-amber-700/70 dark:text-amber-200/60 mt-1.5">
@@ -2132,7 +2287,7 @@ export default function Migration() {
                                 {/* status badge */}
                                 {runState && <StatusBadge status={runState.status} />}
 
-                                {/* play / pause / stop */}
+                                {/* play / pause / stop / restart+truncate */}
                                 <div className="flex items-center gap-0.5 shrink-0">
                                   {isRunning && !isPaused ? (
                                     <>
@@ -2151,11 +2306,26 @@ export default function Migration() {
                                       <Play size={12} />
                                     </button>
                                   ) : (
-                                    <button onClick={() => void startTableMigration(mapping.id)}
-                                      disabled={polling} title="Run this table"
-                                      className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-400 dark:hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors">
-                                      <Play size={12} />
-                                    </button>
+                                    <>
+                                      <button onClick={() => void startTableMigration(mapping.id)}
+                                        disabled={polling} title="Re-run this table (keep existing rows, skip conflicts)"
+                                        className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-400 dark:hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors">
+                                        <Play size={12} />
+                                      </button>
+                                      {runState && (runState.status === 'completed' || runState.status === 'failed') && (
+                                        <button
+                                          onClick={() => showConfirm({
+                                            title: `Restart with Truncate — ${mapping.source.schema}.${mapping.source.table}`,
+                                            description: `This will DELETE all existing rows in the target table "${mapping.target.schema}.${mapping.targetAlias?.trim() || mapping.target.table}" before re-running.\n\nUse this when a previous run wrote partial data that must be cleared first.\n\nProceed?`,
+                                            onConfirm: () => void startTableMigration(mapping.id, true, true),
+                                          })}
+                                          disabled={polling}
+                                          title="Restart with Truncate — clear target rows then re-run from scratch"
+                                          className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-400 dark:hover:border-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-30 transition-colors">
+                                          <RotateCcw size={12} />
+                                        </button>
+                                      )}
+                                    </>
                                   )}
                                 </div>
 
@@ -2295,11 +2465,26 @@ export default function Migration() {
                                       <Play size={12} />
                                     </button>
                                   ) : (
-                                    <button onClick={() => void startTableMigration(m.id)}
-                                      disabled={polling} title="Run this table"
-                                      className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-violet-600 hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors">
-                                      <Play size={12} />
-                                    </button>
+                                    <>
+                                      <button onClick={() => void startTableMigration(m.id)}
+                                        disabled={polling} title="Re-run this table (keep existing rows, skip conflicts)"
+                                        className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-violet-600 hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors">
+                                        <Play size={12} />
+                                      </button>
+                                      {runState && (runState.status === 'completed' || runState.status === 'failed') && (
+                                        <button
+                                          onClick={() => showConfirm({
+                                            title: `Restart with Truncate — ${m.source.schema}.${m.source.table}`,
+                                            description: `This will DELETE all existing rows in the target table "${m.target.schema}.${m.targetAlias?.trim() || m.target.table}" before re-running.\n\nUse this when a previous run wrote partial data that must be cleared first.\n\nProceed?`,
+                                            onConfirm: () => void startTableMigration(m.id, true, true),
+                                          })}
+                                          disabled={polling}
+                                          title="Restart with Truncate — clear target rows then re-run from scratch"
+                                          className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-400 dark:hover:border-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-30 transition-colors">
+                                          <RotateCcw size={12} />
+                                        </button>
+                                      )}
+                                    </>
                                   )}
                                 </div>
                               </div>
@@ -2340,6 +2525,21 @@ export default function Migration() {
                           className="accent-rose-500" />
                         Truncate
                       </label>
+                      <Tooltip side="top" content={
+                        <div>
+                          <p className="font-semibold text-white mb-1">Skip Constraints</p>
+                          <p className="text-gray-300">Runs <span className="font-mono text-white">DISABLE TRIGGER ALL</span> on the target table before inserting, then re-enables after.</p>
+                          <p className="text-gray-300 mt-1">Use when FK or check constraints block rows that depend on tables not yet migrated. All rows will be inserted regardless of violations.</p>
+                          <p className="text-amber-400 mt-1">PostgreSQL only. Requires table owner or superuser.</p>
+                        </div>
+                      }>
+                        <label className="inline-flex items-center gap-1 text-[12px] text-gray-500 dark:text-slate-400 cursor-help">
+                          <input type="checkbox" checked={selectedMap.skipConstraints ?? false}
+                            onChange={e => updateTableMap(selectedMap.id, { skipConstraints: e.target.checked })}
+                            className="accent-amber-500" />
+                          Skip Constraints
+                        </label>
+                      </Tooltip>
                       <div className="h-3 w-px bg-gray-200 dark:bg-slate-700" />
                       <button
                         onClick={() => updateTableMap(selectedMap.id, { isSet: !selectedMap.isSet })}
@@ -2411,6 +2611,34 @@ export default function Migration() {
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
+                      {intUuidMismatchIndices.size > 0 && (
+                        <div className="sticky top-0 z-20 mx-0 px-3 py-2 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-300 dark:border-amber-700/60 flex items-center gap-2">
+                          <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+                          <p className="text-[12px] text-amber-700 dark:text-amber-300 flex-1">
+                            <span className="font-semibold">{intUuidMismatchIndices.size} column{intUuidMismatchIndices.size > 1 ? 's' : ''}</span> map int → UUID with <span className="font-mono">keep</span> — nilai integer tidak akan diterima oleh UUID column.
+                            Set <span className="font-mono">→UUID</span> conversion + pilih <span className="font-mono">FK Ref</span> untuk setiap column.
+                          </p>
+                          <button
+                            onClick={() => {
+                              if (!selectedMap) return;
+                              setTableMaps(prev => prev.map(m => {
+                                if (m.id !== selectedMap.id) return m;
+                                return {
+                                  ...m,
+                                  columns: m.columns.map((c, i) =>
+                                    intUuidMismatchIndices.has(i)
+                                      ? { ...c, conversion: 'serial_to_uuid' as const, targetType: 'UUID', keepLegacyAs: null }
+                                      : c
+                                  ),
+                                };
+                              }));
+                              setDirty(true);
+                            }}
+                            className="shrink-0 px-2 py-1 text-[11px] font-semibold rounded bg-amber-500 hover:bg-amber-600 text-white transition-colors">
+                            Fix All →UUID
+                          </button>
+                        </div>
+                      )}
                       <table className="w-full text-sm border-collapse" style={{ minWidth: 580 }}>
                         <thead>
                           <tr className="bg-gray-50 dark:bg-slate-800/60 sticky top-0 z-10">
@@ -2423,7 +2651,7 @@ export default function Migration() {
                               { label: 'Mapping', tip: 'Mapping Type', desc: 'Whether the target column is new (does not exist yet) or existing (already present in the target table).\n• new — column will be created\n• existing — column already exists and will be populated' },
                               { label: 'Tgt Type', tip: 'Target Type', desc: 'Data type inferred for the target column. Auto-set when you pick a Tgt Col or change Conv.\nExample: BIGINT, TEXT, TIMESTAMPTZ' },
                               { label: 'Conv', tip: 'Conversion', desc: 'Datatype cast or transformation applied during migration.\n• keep — copy value as-is\n• →UUID — serial int → UUID v4\n• →TEXT, →INT, →BIGINT, →NUMERIC, →BOOL, →TIMESTAMPTZ, →DATE, →JSONB — cast to that PG type' },
-                              { label: 'Keep Orig', tip: 'Keep Original ID', desc: 'Only for →UUID conversion. Stores the original MySQL serial integer in a separate BIGINT column.\nSet a column name (e.g. legacy_id) to enable.\nUseful when other tables still reference the old serial integer as a FK.' },
+                              { label: 'Keep / Default', tip: 'Keep Orig / Default Value', desc: '→UUID columns: stores the original serial integer in a separate BIGINT column (e.g. legacy_id).\nTarget-only columns (no source): type a literal default value inserted for every row.\n• Leave empty to insert NULL — will fail if the column is NOT NULL.\n• Examples: true, 0, 2024-01-01' },
                               { label: 'FK Ref', tip: 'Foreign Key Reference', desc: 'If this column is a UUID FK, enter the target table it references so the migrator can resolve IDs correctly.\nExample: public.users' },
                               { label: '', tip: null, desc: null },
                             ] as { label: string; tip: string | null; desc: string | null }[]).map((h, i) => (
@@ -2453,8 +2681,9 @@ export default function Migration() {
                             const srcMeta = col.sourceCol
                               ? srcColsForSelected.find(c => c.name === col.sourceCol)
                               : undefined;
+                            const hasIntUuidMismatch = intUuidMismatchIndices.has(idx);
                             return (
-                            <tr key={idx} className={`${col.include ? '' : 'opacity-40'} hover:bg-gray-50 dark:hover:bg-slate-800/30`}>
+                            <tr key={idx} className={`${col.include ? '' : 'opacity-40'} ${hasIntUuidMismatch ? 'bg-amber-50/60 dark:bg-amber-950/20' : ''} hover:bg-gray-50 dark:hover:bg-slate-800/30`}>
                                   <td className="px-2 py-1.5 text-center">
                                     <input type="checkbox" checked={col.include}
                                       onChange={e => updateColumn(selectedMap.id, idx, { include: e.target.checked })}
@@ -2556,6 +2785,18 @@ export default function Migration() {
                                   </td>
                                   {/* CONV */}
                                   <td className="px-2 py-1">
+                                    <div className="flex items-center gap-1">
+                                    {hasIntUuidMismatch && (
+                                      <Tooltip side="top" content={
+                                        <div>
+                                          <p className="font-semibold text-amber-300 mb-1">int → UUID mismatch</p>
+                                          <p className="text-gray-300">Source is integer tapi target column adalah UUID. <span className="font-mono text-white">keep</span> akan fail semasa runtime.</p>
+                                          <p className="text-gray-300 mt-1">Tukar ke <span className="font-mono text-white">→UUID</span> dan set <span className="font-mono text-white">FK Ref</span> ke table yang dirujuk.</p>
+                                        </div>
+                                      }>
+                                        <AlertTriangle size={12} className="text-amber-500 shrink-0 cursor-help" />
+                                      </Tooltip>
+                                    )}
                                     <select value={col.conversion}
                                       onChange={e => {
                                         const conv = e.target.value as IdConversion;
@@ -2591,8 +2832,9 @@ export default function Migration() {
                                         <option value="to_jsonb">→JSONB</option>
                                       </optgroup>
                                     </select>
+                                    </div>
                                   </td>
-                                  {/* KEEP ORIG — only active for serial_to_uuid */}
+                                  {/* KEEP ORIG (serial_to_uuid) / DEFAULT VALUE (target-only) */}
                                   <td className="px-2 py-1">
                                     {col.conversion === 'serial_to_uuid' ? (
                                       col.keepLegacyAs ? (
@@ -2629,32 +2871,50 @@ export default function Migration() {
                                           + keep
                                         </button>
                                       )
+                                    ) : col.sourceCol === null ? (
+                                      <Tooltip
+                                        side="top"
+                                        content={
+                                          <div>
+                                            <p className="font-semibold text-white mb-1">Default Value</p>
+                                            <p className="text-gray-300">Value inserted for every row since this column has no source.</p>
+                                            <p className="text-gray-300 mt-1">Leave empty to insert <span className="font-mono text-white">NULL</span> (will fail if the column is NOT NULL).</p>
+                                            <p className="text-gray-300 mt-1">Examples: <span className="font-mono text-white">true</span>, <span className="font-mono text-white">0</span>, <span className="font-mono text-white">2024-01-01</span></p>
+                                          </div>
+                                        }>
+                                        <input
+                                          type="text"
+                                          placeholder="default…"
+                                          value={col.defaultValue ?? ''}
+                                          onChange={e => updateColumn(selectedMap.id, idx, { defaultValue: e.target.value || null })}
+                                          className={`w-20 px-1.5 py-0.5 text-[12px] rounded border font-mono focus:outline-none focus:border-violet-400 dark:focus:border-violet-600 bg-white dark:bg-slate-800
+                                            ${col.defaultValue
+                                              ? 'border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300'
+                                              : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500'}`}
+                                        />
+                                      </Tooltip>
                                     ) : (
                                       <span className="text-[12px] text-gray-200 dark:text-slate-700">—</span>
                                     )}
                                   </td>
                                   <td className="px-2 py-1">
-                                    {col.conversion === 'serial_to_uuid' ? (
-                                      <span className="text-[12px] text-gray-200 dark:text-slate-700 font-mono">—</span>
-                                    ) : (
-                                      <button
-                                        onClick={e => {
-                                          const rect = e.currentTarget.getBoundingClientRect();
-                                          if (fkPickerIdx === idx) {
-                                            setFkPickerIdx(null); setFkPickerPos(null);
-                                          } else {
-                                            setFkPickerIdx(idx);
-                                            setFkPickerPos({ top: rect.bottom + 4, left: rect.left });
-                                          }
-                                          setFkManualInput('');
-                                        }}
-                                        className={`w-24 px-1.5 py-0.5 text-[12px] rounded border font-mono text-left truncate block
-                                          ${col.fkRef
-                                            ? 'border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50/30 dark:bg-blue-950/20'
-                                            : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 bg-white dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700'}`}>
-                                        {col.fkRef || 'pick…'}
-                                      </button>
-                                    )}
+                                    <button
+                                      onClick={e => {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        if (fkPickerIdx === idx) {
+                                          setFkPickerIdx(null); setFkPickerPos(null);
+                                        } else {
+                                          setFkPickerIdx(idx);
+                                          setFkPickerPos({ top: rect.bottom + 4, left: rect.left });
+                                        }
+                                        setFkManualInput('');
+                                      }}
+                                      className={`w-24 px-1.5 py-0.5 text-[12px] rounded border font-mono text-left truncate block
+                                        ${col.fkRef
+                                          ? 'border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50/30 dark:bg-blue-950/20'
+                                          : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 bg-white dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700'}`}>
+                                      {col.fkRef || 'pick…'}
+                                    </button>
                                   </td>
                                   <td className="px-1 py-1.5">
                                     {col.sourceCol === null && (
@@ -2667,6 +2927,60 @@ export default function Migration() {
                                 </tr>
                                 );
                               })}
+                              {/* ── Unmatched target columns ── */}
+                              {unmatchedTgtCols.length > 0 && (
+                                <>
+                                  <tr>
+                                    <td colSpan={11} className="px-3 py-1 bg-slate-50 dark:bg-slate-800/40 border-t-2 border-dashed border-gray-200 dark:border-slate-700">
+                                      <span className="text-[11px] text-gray-400 dark:text-slate-500 uppercase tracking-wider font-semibold">
+                                        Unmatched target columns — {unmatchedTgtCols.length} not in mapping
+                                      </span>
+                                    </td>
+                                  </tr>
+                                  {unmatchedTgtCols.map(col => (
+                                    <tr key={`unmatched-${col.name}`}
+                                      className="opacity-50 hover:opacity-80 transition-opacity bg-slate-50/50 dark:bg-slate-800/20">
+                                      <td className="px-2 py-1.5 text-center">
+                                        <input type="checkbox" checked={false}
+                                          onChange={() => addUnmatchedTgtCol(selectedMap.id, col)}
+                                          className="accent-violet-500 cursor-pointer" />
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        <span className="text-[12px] text-gray-300 dark:text-slate-600 font-mono italic">—</span>
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        <span className="text-[12px] text-gray-300 dark:text-slate-600">—</span>
+                                      </td>
+                                      <td className="px-1 py-1 text-gray-300 dark:text-slate-700 text-center">→</td>
+                                      <td className="px-2 py-1.5">
+                                        <div className="flex items-center gap-1 flex-wrap">
+                                          <span className="text-[13px] font-mono text-gray-500 dark:text-slate-400">{col.name}</span>
+                                          {col.isPk && <span className="text-[10px] px-1 py-px rounded bg-blue-100 dark:bg-blue-950/40 text-blue-500 dark:text-blue-400 font-semibold">PK</span>}
+                                          {!col.nullable && <span className="text-[10px] px-1 py-px rounded bg-rose-100 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400 font-semibold">NN</span>}
+                                        </div>
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        <span className="text-[11px] px-1.5 py-0.5 rounded font-medium bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">EXISTING</span>
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        <span className="text-[12px] text-gray-400 dark:text-slate-500 font-mono">{col.rawType.toUpperCase()}</span>
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        <span className="text-[12px] text-gray-300 dark:text-slate-700">—</span>
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        <span className="text-[12px] text-gray-300 dark:text-slate-700 font-mono">
+                                          {col.defaultValue ?? '—'}
+                                        </span>
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        <span className="text-[12px] text-gray-300 dark:text-slate-700">—</span>
+                                      </td>
+                                      <td className="px-1 py-1.5" />
+                                    </tr>
+                                  ))}
+                                </>
+                              )}
                             </tbody>
                           </table>
                           <div className="px-3 py-2 border-t border-gray-100 dark:border-slate-800 flex justify-end">
@@ -2768,7 +3082,13 @@ export default function Migration() {
                   </div>
                 )}
                 {currentRun.logs.map((line, i) => (
-                  <div key={i} className={`leading-5 ${line.includes('ERROR') ? 'text-rose-400' : line.includes('completed') ? 'text-emerald-400' : line.includes('ROLLBACK') ? 'text-amber-400' : line.includes('skipped') ? 'text-amber-400' : ''}`}>
+                  <div key={i} className={`leading-5 ${
+                    line.includes('ERROR') || /\d+ errors/.test(line) ? 'text-rose-400'
+                    : (line.includes('completed') || line.includes('Total:')) && (line.includes('(0 rows)') || line.includes('Total: 0 rows')) ? 'text-amber-400'
+                    : line.includes('completed') || line.includes('Total:') ? 'text-emerald-400'
+                    : line.includes('ROLLBACK') || line.includes('skipped') ? 'text-amber-400'
+                    : ''
+                  }`}>
                     {line}
                   </div>
                 ))}
@@ -3006,21 +3326,53 @@ export default function Migration() {
                         const isSelected = selectedMigratedKeys.has(ts.sourceKey);
                         const isRollingBackThis = rollingBackTableId === ts.id;
                         const canRollback = currentRun && (currentRun.status === 'completed' || currentRun.status === 'failed');
+                        // accumulatedTableMaps has the authoritative snapshot from the actual run
+                        const savedMap = accumulatedTableMaps.get(ts.sourceKey);
+                        const isNavigated = !!savedMap && selectedMapId === savedMap.id;
+                        const handleNavigate = () => {
+                          if (!savedMap) return;
+                          const alreadyInSession = tableMaps.some(m => m.id === savedMap.id);
+                          if (!alreadyInSession) {
+                            // Inject the run snapshot into the session so it can be displayed.
+                            // Remove any stale entry for the same source table first.
+                            setTableMaps(prev => [
+                              ...prev.filter(m => `${m.source.schema}.${m.source.table}` !== ts.sourceKey),
+                              savedMap,
+                            ]);
+                          }
+                          setSelectedMapId(savedMap.id);
+                        };
                         return (
                           <div
                             key={ts.id}
-                            onClick={() => setSelectedMigratedKeys(prev => {
-                              const next = new Set(prev);
-                              if (next.has(ts.sourceKey)) next.delete(ts.sourceKey); else next.add(ts.sourceKey);
-                              return next;
-                            })}
-                            className={`flex items-center gap-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900' : 'border border-transparent hover:bg-gray-50 dark:hover:bg-slate-800/50'}`}
+                            onClick={() => {
+                              setSelectedMigratedKeys(prev => {
+                                const next = new Set(prev);
+                                if (next.has(ts.sourceKey)) next.delete(ts.sourceKey); else next.add(ts.sourceKey);
+                                return next;
+                              });
+                              handleNavigate();
+                            }}
+                            className={`flex items-center gap-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors ${isNavigated ? 'bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800' : isSelected ? 'bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900' : 'border border-transparent hover:bg-gray-50 dark:hover:bg-slate-800/50'}`}
                           >
                             <div className={`w-3 h-3 rounded border shrink-0 flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-300 dark:border-slate-600'}`}>
                               {isSelected && <Check size={10} className="text-white" />}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-[12px] text-gray-700 dark:text-slate-300 truncate font-mono">{ts.sourceKey}</p>
+                              <Tooltip side="left" content={
+                                <div>
+                                  <p className="font-mono text-white text-[12px]">{ts.sourceKey}</p>
+                                  <p className="text-gray-400 text-[11px] my-0.5">→</p>
+                                  <p className="font-mono text-white text-[12px]">{ts.targetKey}</p>
+                                  {!savedMap && <p className="text-amber-400 text-[11px] mt-1">Mapping snapshot not available — click will not navigate.</p>}
+                                </div>
+                              }>
+                              <div className="flex items-center gap-1 min-w-0">
+                                <p className="text-[12px] text-gray-700 dark:text-slate-300 truncate font-mono">{ts.sourceKey}</p>
+                                <span className="text-[11px] text-gray-300 dark:text-slate-600 shrink-0">→</span>
+                                <p className="text-[12px] text-gray-500 dark:text-slate-400 truncate font-mono">{ts.targetKey}</p>
+                              </div>
+                              </Tooltip>
                               <p className="text-[11px] text-gray-400 dark:text-slate-500">
                                 {ts.rowsMigrated.toLocaleString()} written
                                 {(ts.rowsSkipped ?? 0) > 0 && <span className="ml-1 text-amber-500 dark:text-amber-400">{ts.rowsSkipped.toLocaleString()} skipped</span>}

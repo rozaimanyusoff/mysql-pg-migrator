@@ -193,6 +193,16 @@ function resolveTargetTable(tableMap: TableMap): string {
   return tableMap.targetAlias?.trim() || tableMap.target.table;
 }
 
+// Disable or re-enable all triggers on a PG table (FK checks, etc.)
+// Only relevant for PostgreSQL — MySQL handles FK checks differently.
+async function setTriggers(conn: MigConn, schema: string, table: string, enable: boolean): Promise<void> {
+  if (conn.type !== 'postgresql') return;
+  const action = enable ? 'ENABLE' : 'DISABLE';
+  await withPg(conn, async c => {
+    await c.query(`ALTER TABLE "${schema}"."${table}" ${action} TRIGGER ALL`);
+  });
+}
+
 export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mysql'): string {
   const schema = tableMap.target.schema;
   const table = resolveTargetTable(tableMap);
@@ -566,6 +576,13 @@ export async function advanceRun(
         log(`[${ts.sourceKey}] source rows: ${ts.rowsSource}${filterDesc ? ` (${filterDesc})` : ''}`);
       }
 
+      // Ensure target table exists (first chunk only) — must run before TRUNCATE
+      // so that auto-created tables exist before we try to truncate them.
+      if (ts.offset === 0) {
+        await ensureTargetTable(target, tableMap);
+        log(`[${ts.targetKey}] table ready`);
+      }
+
       // Truncate target if requested (first chunk only)
       if (ts.offset === 0 && tableMap.truncateBeforeMigrate) {
         const schema = tableMap.target.schema;
@@ -578,10 +595,10 @@ export async function advanceRun(
         log(`[${ts.targetKey}] truncated`);
       }
 
-      // Ensure target table exists (first chunk only)
-      if (ts.offset === 0) {
-        await ensureTargetTable(target, tableMap);
-        log(`[${ts.targetKey}] table ready`);
+      // Disable constraints after table is guaranteed to exist
+      if (ts.offset === 0 && tableMap.skipConstraints) {
+        await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), false);
+        log(`[${ts.targetKey}] constraints disabled`);
       }
 
       // Determine which source columns to SELECT
@@ -610,6 +627,10 @@ export async function advanceRun(
       if (!chunk.length) {
         ts.hasMore = false;
         ts.status = 'completed';
+        if (tableMap.skipConstraints) {
+          await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
+          log(`[${ts.targetKey}] constraints re-enabled`);
+        }
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
         // Record watermark even when no new rows (source max may have advanced)
@@ -657,6 +678,10 @@ export async function advanceRun(
       if (chunk.length < CHUNK_SIZE) {
         ts.hasMore = false;
         ts.status = 'completed';
+        if (tableMap.skipConstraints) {
+          await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
+          log(`[${ts.targetKey}] constraints re-enabled`);
+        }
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         // Record new high-water mark for incremental sync
         if (isIncremental && tableMap.incrementalCol) {
@@ -673,6 +698,13 @@ export async function advanceRun(
       ts.error = err instanceof Error ? err.message : String(err);
       run.errors.push(`${ts.sourceKey}: ${ts.error}`);
       log(`[${ts.sourceKey}] ERROR: ${ts.error}`);
+      // Best-effort re-enable constraints so the table is not left in a broken state
+      if (tableMap.skipConstraints) {
+        try {
+          await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
+          log(`[${ts.targetKey}] constraints re-enabled (after error)`);
+        } catch { /* ignore — table may not exist */ }
+      }
     }
   }
 

@@ -50,6 +50,7 @@ export interface TableMap {
   target: { schema: string; table: string };
   columns: ColumnMap[];
   truncateBeforeMigrate: boolean;
+  skipConstraints?: boolean;     // DISABLE TRIGGER ALL on target before insert, re-enable after
   targetAlias?: string | null;               // overrides target.table as the physical table name in SQL
   isSet?: boolean;             // user confirmed mapping is ready to run
   // Incremental sync
