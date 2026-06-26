@@ -3198,7 +3198,7 @@ export default function Migration() {
           </div>{/* end main workspace wrapper */}
 
           {/* ── JOBS PANEL (collapsible) ────────────────────────────────── */}
-          <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${jobsOpen ? 'w-80' : 'w-9'}`}>
+          <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${jobsOpen ? 'w-96' : 'w-9'}`}>
             <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
               {jobsOpen && <Save size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />}
               {jobsOpen && (
@@ -3306,16 +3306,20 @@ export default function Migration() {
                               Restore
                             </button>
                           </div>
-                        ) : job.tables.map((t: MigJobTableSummary) => (
+                        ) : job.tables.map((t: MigJobTableSummary) => {
+                          const fullName = `${t.source.schema}.${t.source.table} → ${t.target.schema}.${t.targetAlias?.trim() || t.target.table}`;
+                          return (
                           <div key={t.id} className={`flex items-center gap-1 px-2 py-1 border-b border-gray-50 dark:border-slate-800 last:border-0 ${!t.include ? 'opacity-40' : ''}`}>
-                            <span className="text-[12px] text-gray-600 dark:text-slate-300 flex-1 truncate min-w-0">
-                              <span className="text-gray-400">{t.source.schema}.</span>{t.source.table}
-                              <span className="text-gray-400 dark:text-slate-400 mx-1">→</span>
-                              <span className="text-gray-400">{t.target.schema}.</span>{t.targetAlias?.trim() || t.target.table}
-                              {t.targetAlias?.trim() && t.targetAlias.trim() !== t.target.table && (
-                                <span className="text-violet-400 ml-0.5 italic text-[11px]"> ✎</span>
-                              )}
-                            </span>
+                            <Tooltip side="left" content={<span className="font-mono text-[12px]">{fullName}</span>}>
+                              <span className="text-[12px] text-gray-600 dark:text-slate-300 flex-1 truncate min-w-0 cursor-default">
+                                <span className="text-gray-400">{t.source.schema}.</span>{t.source.table}
+                                <span className="text-gray-400 dark:text-slate-400 mx-1">→</span>
+                                <span className="text-gray-400">{t.target.schema}.</span>{t.targetAlias?.trim() || t.target.table}
+                                {t.targetAlias?.trim() && t.targetAlias.trim() !== t.target.table && (
+                                  <span className="text-violet-400 ml-0.5 italic text-[11px]"> ✎</span>
+                                )}
+                              </span>
+                            </Tooltip>
                             {t.sourceDatabase && (
                               <span className="shrink-0 px-1 py-0.5 rounded text-[11px] font-mono bg-blue-50 dark:bg-blue-950/30 text-blue-400 dark:text-blue-500 border border-blue-100 dark:border-blue-900">{t.sourceDatabase}</span>
                             )}
@@ -3327,7 +3331,8 @@ export default function Migration() {
                               <X size={12} />
                             </button>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                     <div className="flex items-center justify-between gap-1 mt-0.5">
