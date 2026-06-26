@@ -1965,7 +1965,15 @@ export default function Migration() {
                           const isMigrated = migratedTableKeys.has(`${t.schema}.${t.name}`);
                           return (
                             <div key={`${t.database}.${t.schema}.${t.name}`}
-                              className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-100 dark:border-slate-800/60 ${isSelected ? 'bg-blue-100 dark:bg-blue-950/40' : mapEntry ? 'bg-blue-50/60 dark:bg-blue-950/10 hover:bg-blue-50 dark:hover:bg-blue-950/20' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
+                              className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-100 dark:border-slate-800/60 ${
+                                isSelected
+                                  ? 'bg-blue-100 dark:bg-blue-950/40'
+                                  : isMigrated
+                                  ? 'bg-emerald-50/50 dark:bg-emerald-950/10 hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                                  : mapEntry
+                                  ? 'bg-blue-50/60 dark:bg-blue-950/10 hover:bg-blue-50 dark:hover:bg-blue-950/20'
+                                  : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'
+                              }`}
                               onClick={() => {
                                 if (mapEntry) {
                                   setSelectedMapId(mapEntry.id);
@@ -1978,8 +1986,8 @@ export default function Migration() {
                                 onChange={e => { e.stopPropagation(); void toggleTable(t); }}
                                 onClick={e => e.stopPropagation()}
                                 className="shrink-0 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed" />
-                              <Table2 size={12} className={`shrink-0 ${isMigrated ? 'text-emerald-400 dark:text-emerald-600' : 'text-slate-500 dark:text-slate-400'}`} />
-                              <span className={`text-[13px] font-mono truncate ${mapEntry ? 'flex-none max-w-[45%]' : 'flex-1'} ${isMigrated ? 'line-through text-gray-400 dark:text-slate-600' : isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-slate-300'}`}>
+                              <Table2 size={12} className={`shrink-0 ${isMigrated ? 'text-emerald-400 dark:text-emerald-600' : mapEntry ? 'text-blue-400 dark:text-blue-500' : 'text-slate-500 dark:text-slate-400'}`} />
+                              <span className={`text-[13px] font-mono truncate ${mapEntry ? 'flex-none max-w-[45%]' : 'flex-1'} ${isMigrated ? 'line-through text-gray-400 dark:text-slate-500' : isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : mapEntry ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>
                                 <span className="text-[11px] font-normal">{t.schema}.</span>{t.name}
                               </span>
                               {mapEntry && (() => {

@@ -3,6 +3,13 @@
 ---
 
 ## 2026-06-27
+- **fix** — Source table list: migrated rows conflict with mapped blue highlight on job load
+  - When a job is loaded, `migratedTableKeys` is restored from previous runs. Tables that are both mapped (have a `TableMap`) AND migrated (in `migratedTableKeys`) showed a confusing mix of blue background + strikethrough text simultaneously.
+  - Fix: `isMigrated` now takes visual priority over `mapEntry`. Migrated rows get a light emerald background (`bg-emerald-50/50`) instead of blue, keeping the strikethrough + ✓ checkmark intact. Blue highlight is reserved for mapped-but-not-yet-migrated rows only.
+  - Table icon also follows: emerald when migrated, blue when mapped-only.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
 - **update** — Migration UI: mapped table blue highlight + column mapping table borders
   - Source table list: rows with an active mapping now show a blue background (`bg-blue-50/60`); selected mapped row deepens to `bg-blue-100`. Unmapped rows stay neutral.
   - Target table list: mapped rows now blue (was violet). Table icon, table name text, checkbox accent, and "mapped" badge all changed from violet → blue to match source side. Selected/highlighted target rows also use blue scale.
