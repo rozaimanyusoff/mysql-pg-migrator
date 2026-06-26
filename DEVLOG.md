@@ -3,6 +3,12 @@
 ---
 
 ## 2026-06-27
+- **fix** — Load job: ad-hoc migrated tables not marked as migrated (no strikethrough)
+  - Root cause: `handleLoadJob` scanned only runs with `run.jobId === id`. Tables migrated ad-hoc (without a saved job, `jobId: null`) and later saved to a job via pending-save flow were never found, so `migratedTableKeys` was empty for them — no strikethrough/✓ shown despite successful migration.
+  - Fix: two-pass scan. Pass 1: runs directly tied to this job (existing). Pass 2: runs with `jobId: null` — cross-match by `sourceKey` against the job's table list. A source key only gets the ad-hoc status if pass 1 didn't already record a status for it, preserving rollback semantics.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
 - **fix** — Source table list: migrated rows conflict with mapped blue highlight on job load
   - When a job is loaded, `migratedTableKeys` is restored from previous runs. Tables that are both mapped (have a `TableMap`) AND migrated (in `migratedTableKeys`) showed a confusing mix of blue background + strikethrough text simultaneously.
   - Fix: `isMigrated` now takes visual priority over `mapEntry`. Migrated rows get a light emerald background (`bg-emerald-50/50`) instead of blue, keeping the strikethrough + ✓ checkmark intact. Blue highlight is reserved for mapped-but-not-yet-migrated rows only.

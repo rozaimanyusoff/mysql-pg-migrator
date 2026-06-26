@@ -1069,10 +1069,18 @@ export default function Migration() {
       // Restore migrated table keys + most recent run for this job.
       // Runs are sorted latest-first — use the latest status per table so a
       // table rolled back in run N is not re-added by an older completed run.
+      //
+      // Two-pass scan:
+      // 1. Runs with matching jobId (direct association)
+      // 2. All other runs — cross-match by sourceKey against job's tables
+      //    (covers ad-hoc runs saved to job via pending-save, which have jobId: null)
       void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status')
         .then(({ data: runData }) => {
+          const jobSourceKeys = new Set(job.tables.map(t => `${t.source.schema}.${t.source.table}`));
           const tableLatestStatus = new Map<string, string>();
           let latestJobRun: MigRun | null = null;
+
+          // Pass 1: runs directly associated with this job
           for (const run of runData.runs) {
             if (run.jobId !== id) continue;
             if (!latestJobRun) latestJobRun = run;
@@ -1082,6 +1090,17 @@ export default function Migration() {
               }
             }
           }
+
+          // Pass 2: runs with no jobId (ad-hoc) — match by sourceKey
+          for (const run of runData.runs) {
+            if (run.jobId !== null && run.jobId !== undefined) continue;
+            for (const ts of run.tableStates) {
+              if (jobSourceKeys.has(ts.sourceKey) && !tableLatestStatus.has(ts.sourceKey)) {
+                tableLatestStatus.set(ts.sourceKey, ts.status);
+              }
+            }
+          }
+
           const keys = new Set<string>();
           for (const [sourceKey, status] of tableLatestStatus) {
             if (status === 'completed') keys.add(sourceKey);
