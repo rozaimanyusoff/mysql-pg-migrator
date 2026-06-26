@@ -1147,6 +1147,21 @@ export default function Migration() {
 
   const handleExportJobMd = async (jobId: string) => {
     try {
+      const res = await fetch(`/api/migv2/jobs/export-md?id=${jobId}`);
+      if (!res.ok) { showError('Failed to export job MD'); return; }
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match?.[1] ?? `job-${jobId.slice(0, 8)}.md`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch { showError('Failed to export job MD'); }
+  };
+
+  const _handleExportJobMdLegacy = async (jobId: string) => {
+    try {
       const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${jobId}`);
       const job = data.job;
       const lines: string[] = [

@@ -3,6 +3,19 @@
 ---
 
 ## 2026-06-27
+- **update** — Job markdown export: server-side with live target schema check
+  - Previous: client-side blob generation; no live DB check; MAPPING showed "mapped"/"target-only" instead of "existing"/"new"; Source/Target sections listed only connection info; no explanation for included/excluded table count.
+  - New: moved to server-side `/api/migv2/jobs/export-md`. Connects to target DB (resolves password from `dbt_connections` by host/port/username) and queries `information_schema.tables` + `.columns`.
+  - Per table: **target table status** — "existing target table" or "auto-created on first run" based on live schema check.
+  - Per column: **MAPPING** now shows "existing" (column found in target) / "new" (not found) / "target-only" or "mapped" as fallback when schema unavailable.
+  - Source & Target sections now list all included tables with their schema-qualified names; target list shows existence status inline.
+  - `## Table Mappings` header explains count: lists how many are included vs excluded and names the excluded tables.
+  - `skipConstraints` flag included alongside Truncate in per-table flags.
+  - Excluded columns collapsed in `<details>`. Footer includes Job ID and version.
+  - Client `handleExportJobMd` now calls the server endpoint (same pattern as export-sql/export-script).
+  - Files: `src/pages/api/migv2/jobs/export-md.ts` (new), `src/pages/migration.tsx`
+  - Status: done
+
 - **update** — Job markdown export: full column-level mapping detail
   - Previous export only had 5 columns (Src Col, Tgt Col, Tgt Type, Conv, Include) — not enough for post-migration validation.
   - New format per table: numbered column table with Src Col → Tgt Col, Mapping (mapped/target-only), Tgt Type, Conv (human-readable: keep / →UUID / →TEXT etc.), Keep/Default (shows `legacy: col` for keepLegacyAs, `default: val` for target-only defaults), FK Ref.
