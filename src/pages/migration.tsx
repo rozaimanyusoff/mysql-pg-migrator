@@ -1154,42 +1154,96 @@ export default function Migration() {
         job.description ? `\n${job.description}` : '',
         `\n_Generated: ${new Date().toISOString()}_`,
         '',
-        '## Source',
-        `- **Type**: ${job.sourceMeta.type}`,
-        `- **Host**: ${job.sourceMeta.host}:${job.sourceMeta.port}`,
-        `- **Database**: ${job.sourceMeta.database}`,
-        `- **Username**: ${job.sourceMeta.username}`,
-        '',
-        '## Target',
-        `- **Type**: ${job.targetMeta.type}`,
-        `- **Host**: ${job.targetMeta.host}:${job.targetMeta.port}`,
-        `- **Database**: ${job.targetMeta.database}`,
-        `- **Username**: ${job.targetMeta.username}`,
-        '',
-        `## Table Mappings (${job.tables.filter(m => m.include).length} of ${job.tables.length} included)`,
-        '',
       ];
+
+      if (job.sourceMeta) {
+        lines.push(
+          '## Source',
+          `- **Type**: ${job.sourceMeta.type}`,
+          `- **Host**: ${job.sourceMeta.host}:${job.sourceMeta.port}`,
+          `- **Database**: ${job.sourceMeta.database}`,
+          `- **Username**: ${job.sourceMeta.username}`,
+          '',
+        );
+      }
+      if (job.targetMeta) {
+        lines.push(
+          '## Target',
+          `- **Type**: ${job.targetMeta.type}`,
+          `- **Host**: ${job.targetMeta.host}:${job.targetMeta.port}`,
+          `- **Database**: ${job.targetMeta.database}`,
+          `- **Username**: ${job.targetMeta.username}`,
+          '',
+        );
+      }
+
+      if (job.filterCol) {
+        lines.push(
+          '## Row Filter',
+          `- **Column**: \`${job.filterCol}\``,
+          `- **From**: ${job.filterFrom ?? '—'}`,
+          `- **To**: ${job.filterTo ?? '—'}`,
+          '',
+        );
+      }
+
+      const includedTables = job.tables.filter(m => m.include);
+      lines.push(`## Table Mappings (${includedTables.length} of ${job.tables.length} included)`, '');
+
       job.tables.forEach((map, i) => {
         const status = map.include ? '✓' : '✗';
         const resolvedTable = map.targetAlias?.trim() || map.target.table;
         const tgtTable = resolvedTable ? `${map.target.schema}.${resolvedTable}` : '(unassigned)';
         lines.push(`### ${i + 1}. \`${map.source.schema}.${map.source.table}\` → \`${tgtTable}\` [${status}]`);
-        if (map.truncateBeforeMigrate) lines.push('> ⚠ Truncate target before migrate');
+
+        const flags: string[] = [];
+        if (map.truncateBeforeMigrate) flags.push('Truncate before migrate');
+        if (map.skipConstraints)       flags.push('Skip constraints (DISABLE TRIGGER ALL)');
+        if (flags.length) lines.push(`> ⚠ ${flags.join(' · ')}`);
+
         if (map.syncMode === 'incremental') {
-          lines.push(`> ⟳ Incremental — ${map.incrementalStrategy ?? 'id'} by \`${map.incrementalCol ?? '—'}\`${map.lastSyncedValue ? ` · last synced: ${map.lastSyncedValue}` : ''}`);
+          lines.push(`> ⟳ Incremental — ${map.incrementalStrategy ?? 'id'} on \`${map.incrementalCol ?? '—'}\`${map.lastSyncedValue ? ` · last synced: \`${map.lastSyncedValue}\`` : ''}`);
         }
         lines.push('');
-        if (map.columns.length > 0) {
-          lines.push('| Source Column | Target Column | Target Type | Conversion | Include |');
-          lines.push('|---|---|---|---|:---:|');
-          map.columns.forEach(col => {
-            lines.push(`| ${col.sourceCol ?? '*(new)*'} | ${col.targetCol || '—'} | ${col.targetType} | ${col.conversion} | ${col.include ? '✓' : '✗'} |`);
+
+        const includedCols = map.columns.filter(c => c.include);
+        const excludedCols = map.columns.filter(c => !c.include);
+
+        if (includedCols.length > 0) {
+          lines.push('| # | Source Column | → | Target Column | Mapping | Tgt Type | Conv | Keep / Default | FK Ref |');
+          lines.push('|--:|---|:---:|---|---|---|---|---|---|');
+          includedCols.forEach((col, ci) => {
+            const srcCol   = col.sourceCol ?? '*(new)*';
+            const tgtCol   = (col.targetName ?? col.targetCol) || '—';
+            const renamed  = col.targetName && col.targetName !== col.targetCol ? ` _(was \`${col.targetCol}\`)_` : '';
+            const mapping  = col.sourceCol === null ? 'target-only' : 'mapped';
+            const conv     = col.conversion === 'keep' ? 'keep' : col.conversion.replace('serial_to_uuid', '→UUID').replace('to_', '→');
+            const keepDef  = col.conversion === 'serial_to_uuid' && col.keepLegacyAs
+              ? `legacy: \`${col.keepLegacyAs}\``
+              : col.sourceCol === null && col.defaultValue
+              ? `default: \`${col.defaultValue}\``
+              : '—';
+            const fkRef    = col.fkRef ?? '—';
+            lines.push(`| ${ci + 1} | \`${srcCol}\` | → | \`${tgtCol}\`${renamed} | ${mapping} | ${col.targetType || '—'} | ${conv} | ${keepDef} | ${fkRef} |`);
           });
+          lines.push('');
         } else {
-          lines.push('_No column mapping configured_');
+          lines.push('_No column mapping configured — table will be auto-created on first run._', '');
         }
-        lines.push('');
+
+        if (excludedCols.length > 0) {
+          lines.push(`<details><summary>Excluded columns (${excludedCols.length})</summary>`, '');
+          lines.push('| Source Column | Target Column | Tgt Type |');
+          lines.push('|---|---|---|');
+          excludedCols.forEach(col => {
+            lines.push(`| ${col.sourceCol ?? '*(new)*'} | ${(col.targetName ?? col.targetCol) || '—'} | ${col.targetType || '—'} |`);
+          });
+          lines.push('', '</details>', '');
+        }
       });
+
+      lines.push('---', `_Exported from DB Maintenance Tools · Job ID: \`${job.id}\`_`);
+
       const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

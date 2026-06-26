@@ -2,6 +2,18 @@
 
 ---
 
+## 2026-06-27
+- **update** — Job markdown export: full column-level mapping detail
+  - Previous export only had 5 columns (Src Col, Tgt Col, Tgt Type, Conv, Include) — not enough for post-migration validation.
+  - New format per table: numbered column table with Src Col → Tgt Col, Mapping (mapped/target-only), Tgt Type, Conv (human-readable: keep / →UUID / →TEXT etc.), Keep/Default (shows `legacy: col` for keepLegacyAs, `default: val` for target-only defaults), FK Ref.
+  - Excluded columns collapsed in a `<details>` block so they don't clutter the main view but are still auditable.
+  - Added Row Filter section (filterCol/From/To) when set on the job.
+  - Added `skipConstraints` to the per-table flag line alongside Truncate.
+  - sourceMeta/targetMeta sections now null-safe (omitted when missing, e.g. jobs saved via pending-save flow before fix).
+  - Footer includes Job ID for traceability.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
 ## 2026-06-26
 - **fix** — Column mapping: FK REF always visible regardless of conversion type
   - FK REF picker was hidden (`—`) when `conversion === 'serial_to_uuid'`. This made sense for PK columns (generates a new UUID — no ref), but FK columns also use `serial_to_uuid` + `fkRef` to look up the UUID assigned to an integer value in the referenced table. With no picker visible, FK columns could never have their `fkRef` set.
