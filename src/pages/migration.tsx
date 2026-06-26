@@ -1965,7 +1965,7 @@ export default function Migration() {
                           const isMigrated = migratedTableKeys.has(`${t.schema}.${t.name}`);
                           return (
                             <div key={`${t.database}.${t.schema}.${t.name}`}
-                              className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-50 dark:border-slate-800/40 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
+                              className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-100 dark:border-slate-800/60 ${isSelected ? 'bg-blue-100 dark:bg-blue-950/40' : mapEntry ? 'bg-blue-50/60 dark:bg-blue-950/10 hover:bg-blue-50 dark:hover:bg-blue-950/20' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}
                               onClick={() => {
                                 if (mapEntry) {
                                   setSelectedMapId(mapEntry.id);
@@ -2269,7 +2269,7 @@ export default function Migration() {
                               if (selectedMapId) void selectTargetTable(t.schema, t.name);
                               else if (mapping) setSelectedMapId(mapping.id);
                             }}
-                            className={`group border-b border-gray-50 dark:border-slate-800/40 ${isClickable ? 'cursor-pointer' : 'cursor-default'} transition-colors duration-700 ${isHighlighted ? 'bg-blue-100 dark:bg-blue-900/40' : isTarget ? 'bg-violet-50 dark:bg-violet-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}>
+                            className={`group border-b border-gray-100 dark:border-slate-800/60 ${isClickable ? 'cursor-pointer' : 'cursor-default'} transition-colors duration-700 ${isHighlighted ? 'bg-blue-100 dark:bg-blue-900/40' : isTarget ? 'bg-blue-100 dark:bg-blue-950/40' : mapping ? 'bg-blue-50/60 dark:bg-blue-950/10 hover:bg-blue-50 dark:hover:bg-blue-950/20' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}>
 
                             {/* Row 1: checkbox + icon + name + mapped badge + source table */}
                             <div className="flex items-center gap-1.5 px-3 pt-1.5 pb-0.5">
@@ -2277,17 +2277,17 @@ export default function Migration() {
                                 <input type="checkbox" checked={mapping.include}
                                   onChange={e => { e.stopPropagation(); updateTableMap(mapping.id, { include: e.target.checked }); }}
                                   onClick={e => e.stopPropagation()}
-                                  className="shrink-0 accent-violet-500" />
+                                  className="shrink-0 accent-blue-500" />
                               ) : (
                                 <div className="w-3.5 h-3.5 shrink-0" />
                               )}
-                              <Table2 size={12} className={`shrink-0 ${isTarget || mapping ? 'text-violet-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                              <span className={`text-[13px] font-mono truncate ${isTarget ? 'text-violet-700 dark:text-violet-400 font-medium' : mapping ? 'text-gray-700 dark:text-slate-300' : 'text-slate-500 dark:text-slate-600'}`}>
+                              <Table2 size={12} className={`shrink-0 ${isTarget ? 'text-blue-500' : mapping ? 'text-blue-400 dark:text-blue-500' : 'text-slate-400 dark:text-slate-500'}`} />
+                              <span className={`text-[13px] font-mono truncate ${isTarget ? 'text-blue-700 dark:text-blue-400 font-medium' : mapping ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-600'}`}>
                                 {t.name}
                               </span>
                               {/* mapped badge */}
                               {mapping && (
-                                <span className="text-[11px] px-1 py-0.5 rounded bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 font-semibold shrink-0">mapped</span>
+                                <span className="text-[11px] px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold shrink-0">mapped</span>
                               )}
                               {/* set badge */}
                               {mapping?.isSet && (
@@ -2708,7 +2708,7 @@ export default function Migration() {
                           </button>
                         </div>
                       )}
-                      <table className="w-full text-sm border-collapse" style={{ minWidth: 580 }}>
+                      <table className="w-full text-sm border-collapse border border-gray-200 dark:border-slate-700 [&_td]:border [&_td]:border-gray-100 dark:[&_td]:border-slate-800" style={{ minWidth: 580 }}>
                         <thead>
                           <tr className="bg-gray-50 dark:bg-slate-800/60 sticky top-0 z-10">
                             {([
@@ -2724,7 +2724,7 @@ export default function Migration() {
                               { label: 'FK Ref', tip: 'Foreign Key Reference', desc: 'If this column is a UUID FK, enter the target table it references so the migrator can resolve IDs correctly.\nExample: public.users' },
                               { label: '', tip: null, desc: null },
                             ] as { label: string; tip: string | null; desc: string | null }[]).map((h, i) => (
-                              <th key={i} className="text-left px-2 py-1.5 text-[12px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider border-b border-gray-200 dark:border-slate-700 whitespace-nowrap">
+                              <th key={i} className="text-left px-2 py-1.5 text-[12px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider border border-gray-200 dark:border-slate-700 whitespace-nowrap">
                                 {h.tip ? (
                                   <Tooltip
                                     side="bottom"

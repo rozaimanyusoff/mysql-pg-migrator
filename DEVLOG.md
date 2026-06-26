@@ -3,6 +3,13 @@
 ---
 
 ## 2026-06-27
+- **update** — Migration UI: mapped table blue highlight + column mapping table borders
+  - Source table list: rows with an active mapping now show a blue background (`bg-blue-50/60`); selected mapped row deepens to `bg-blue-100`. Unmapped rows stay neutral.
+  - Target table list: mapped rows now blue (was violet). Table icon, table name text, checkbox accent, and "mapped" badge all changed from violet → blue to match source side. Selected/highlighted target rows also use blue scale.
+  - Column mapping table: added `border` on `<table>`, `<th>`, and all `<td>` cells via `[&_td]` Tailwind arbitrary selector for consistent grid lines.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
 - **update** — Job markdown export: server-side with live target schema check
   - Previous: client-side blob generation; no live DB check; MAPPING showed "mapped"/"target-only" instead of "existing"/"new"; Source/Target sections listed only connection info; no explanation for included/excluded table count.
   - New: moved to server-side `/api/migv2/jobs/export-md`. Connects to target DB (resolves password from `dbt_connections` by host/port/username) and queries `information_schema.tables` + `.columns`.
