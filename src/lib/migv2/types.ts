@@ -51,6 +51,7 @@ export interface TableMap {
   columns: ColumnMap[];
   truncateBeforeMigrate: boolean;
   skipConstraints?: boolean;     // DISABLE TRIGGER ALL on target before insert, re-enable after
+  skipNullViolations?: boolean;  // DROP NOT NULL on target columns before insert, restore after
   targetAlias?: string | null;               // overrides target.table as the physical table name in SQL
   isSet?: boolean;             // user confirmed mapping is ready to run
   // Incremental sync

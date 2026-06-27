@@ -3,6 +3,32 @@
 ---
 
 ## 2026-06-27
+- **revision** — Source/target highlight color → amber; target button visibility by selection state
+  - Source `isSelected` row: blue-100 → amber-100; Table2 icon and table name text → amber; checkbox accent → amber-500
+  - Target `isTarget`/`isHighlighted` row: both → amber-100; icon and text → amber
+  - Target Row 2 buttons: `isTarget` → full set (play/pause/stop, restart, rollback, sync, error); non-highlighted non-completed → play + sync; non-highlighted completed → sync only
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+- **implement** — Skip NULL Violations: DROP NOT NULL before insert, restore SET NOT NULL after
+  - Mirrors `skipConstraints` pattern. New `skipNullViolations?: boolean` field in `TableMap`.
+  - `setNullable()` helper in `runner.ts`: queries `information_schema.columns` for NOT NULL non-serial columns, `ALTER COLUMN … DROP NOT NULL` before first chunk, `ALTER COLUMN … SET NOT NULL` on completion (all paths: normal done, empty-chunk done, error). Restore is best-effort — warns per column but doesn't abort.
+  - `nullDroppedCols` Map inside `advanceRun` tracks which columns were dropped per table state so the restore is applied only to those same columns.
+  - UI: "Skip NULL" checkbox with violet accent added next to "Skip Constraints" in column mapping header.
+  - MD export and local md-builder both include the flag in the table flags section.
+  - Files: `src/lib/migv2/types.ts`, `src/lib/migv2/runner.ts`, `src/pages/migration.tsx`, `src/pages/api/migv2/jobs/export-md.ts`
+  - Status: done
+- **fix** — Target table rows: show progress bar and status for previously migrated tables (not just active run)
+  - Root cause: `pct`, bar color, row count, and status badge all read from `runState` (from `currentRun` only). If no run is active, `runState` is `null` and the entire progress row collapsed to an empty flex spacer even if `accumState` existed.
+  - Fix: introduce `effectiveState = runState ?? accumState`. All display-only fields (pct, bar color, row counts, StatusBadge) now use `effectiveState`. Interactive controls (rollback, diagnose, pause/stop) still use `runState` exclusively.
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+- **revision** — Column mapping table: full-width inputs/dropdowns for TGT COL, CONV, KEEP/DEFAULT, FK REF
+  - Changed fixed widths (`w-28`, `w-24`, `w-20`) to `w-full` on TGT COL input, CONV select, keepLegacyAs input, default value input, and FK REF button so they fill their table cells
+  - Added `min-w-[120px]` / `min-w-[110px]` to corresponding `<th>` header cells to guarantee usable column width
+  - Files: `src/pages/migration.tsx`
+  - Status: done
+
+## 2026-06-27
 - **fix** — Load job: ad-hoc migrated tables not marked as migrated (no strikethrough)
   - Root cause: `handleLoadJob` scanned only runs with `run.jobId === id`. Tables migrated ad-hoc (without a saved job, `jobId: null`) and later saved to a job via pending-save flow were never found, so `migratedTableKeys` was empty for them — no strikethrough/✓ shown despite successful migration.
   - Fix: two-pass scan. Pass 1: runs directly tied to this job (existing). Pass 2: runs with `jobId: null` — cross-match by `sourceKey` against the job's table list. A source key only gets the ad-hoc status if pass 1 didn't already record a status for it, preserving rollback semantics.

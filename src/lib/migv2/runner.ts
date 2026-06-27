@@ -203,6 +203,38 @@ async function setTriggers(conn: MigConn, schema: string, table: string, enable:
   });
 }
 
+// Drop or restore NOT NULL constraints on a PG table before/after insert.
+// Returns the list of columns altered so the caller can restore the same set.
+async function setNullable(
+  conn: MigConn, schema: string, table: string, enable: boolean,
+  log: (msg: string) => void, cols?: string[]
+): Promise<string[]> {
+  if (conn.type !== 'postgresql') return [];
+  const altered: string[] = [];
+  await withPg(conn, async c => {
+    const targets = cols ?? await (async () => {
+      const res = await c.query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = $1 AND table_name = $2
+           AND is_nullable = 'NO'
+           AND (column_default IS NULL OR column_default NOT LIKE 'nextval%')`,
+        [schema, table]
+      );
+      return res.rows.map(r => r.column_name);
+    })();
+    for (const col of targets) {
+      try {
+        const action = enable ? 'SET NOT NULL' : 'DROP NOT NULL';
+        await c.query(`ALTER TABLE "${schema}"."${table}" ALTER COLUMN "${col}" ${action}`);
+        altered.push(col);
+      } catch (e) {
+        log(`[${schema}.${table}] warn: cannot ${enable ? 'restore' : 'drop'} NOT NULL on "${col}": ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  });
+  return altered;
+}
+
 export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mysql'): string {
   const schema = tableMap.target.schema;
   const table = resolveTargetTable(tableMap);
@@ -513,6 +545,9 @@ export async function advanceRun(
     if (run.logs.length > 2000) run.logs = run.logs.slice(-2000);
   }
 
+  // Track which columns had NOT NULL dropped per table (for restore after completion)
+  const nullDroppedCols = new Map<string, string[]>(); // tableState.id → column names
+
   for (const ts of run.tableStates) {
     if (ts.status !== 'pending' && ts.status !== 'running') continue;
     if (pausedTableIds.includes(ts.id)) continue;
@@ -601,6 +636,15 @@ export async function advanceRun(
         log(`[${ts.targetKey}] constraints disabled`);
       }
 
+      // Drop NOT NULL on target columns (first chunk only)
+      if (ts.offset === 0 && tableMap.skipNullViolations) {
+        const dropped = await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), false, log);
+        if (dropped.length) {
+          nullDroppedCols.set(ts.id, dropped);
+          log(`[${ts.targetKey}] NOT NULL dropped on: ${dropped.join(', ')}`);
+        }
+      }
+
       // Determine which source columns to SELECT
       const srcCols = tableMap.columns
         .filter(c => c.include && c.sourceCol !== null)
@@ -630,6 +674,10 @@ export async function advanceRun(
         if (tableMap.skipConstraints) {
           await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
           log(`[${ts.targetKey}] constraints re-enabled`);
+        }
+        if (tableMap.skipNullViolations) {
+          await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
+          log(`[${ts.targetKey}] NOT NULL restored`);
         }
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
@@ -682,6 +730,10 @@ export async function advanceRun(
           await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
           log(`[${ts.targetKey}] constraints re-enabled`);
         }
+        if (tableMap.skipNullViolations) {
+          await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
+          log(`[${ts.targetKey}] NOT NULL restored`);
+        }
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         // Record new high-water mark for incremental sync
         if (isIncremental && tableMap.incrementalCol) {
@@ -704,6 +756,12 @@ export async function advanceRun(
           await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
           log(`[${ts.targetKey}] constraints re-enabled (after error)`);
         } catch { /* ignore — table may not exist */ }
+      }
+      if (tableMap.skipNullViolations) {
+        try {
+          await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
+          log(`[${ts.targetKey}] NOT NULL restored (after error)`);
+        } catch { /* ignore */ }
       }
     }
   }

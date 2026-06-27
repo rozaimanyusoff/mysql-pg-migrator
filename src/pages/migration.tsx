@@ -1078,6 +1078,7 @@ export default function Migration() {
         .then(({ data: runData }) => {
           const jobSourceKeys = new Set(job.tables.map(t => `${t.source.schema}.${t.source.table}`));
           const tableLatestStatus = new Map<string, string>();
+          const tableLatestState = new Map<string, MigRunTableState>();
           let latestJobRun: MigRun | null = null;
 
           // Pass 1: runs directly associated with this job
@@ -1087,6 +1088,7 @@ export default function Migration() {
             for (const ts of run.tableStates) {
               if (!tableLatestStatus.has(ts.sourceKey)) {
                 tableLatestStatus.set(ts.sourceKey, ts.status);
+                tableLatestState.set(ts.sourceKey, ts);
               }
             }
           }
@@ -1097,6 +1099,7 @@ export default function Migration() {
             for (const ts of run.tableStates) {
               if (jobSourceKeys.has(ts.sourceKey) && !tableLatestStatus.has(ts.sourceKey)) {
                 tableLatestStatus.set(ts.sourceKey, ts.status);
+                tableLatestState.set(ts.sourceKey, ts);
               }
             }
           }
@@ -1106,6 +1109,8 @@ export default function Migration() {
             if (status === 'completed') keys.add(sourceKey);
           }
           setMigratedTableKeys(keys);
+          // Restore accumulated table states so progress bars render on load
+          setAccumulatedTableStates(Array.from(tableLatestState.values()));
           if (latestJobRun) setCurrentRun(latestJobRun);
         })
         .catch(() => setMigratedTableKeys(new Set()));
@@ -1233,6 +1238,7 @@ export default function Migration() {
         const flags: string[] = [];
         if (map.truncateBeforeMigrate) flags.push('Truncate before migrate');
         if (map.skipConstraints)       flags.push('Skip constraints (DISABLE TRIGGER ALL)');
+        if (map.skipNullViolations)    flags.push('Skip NULL violations (DROP NOT NULL → restore)');
         if (flags.length) lines.push(`> ⚠ ${flags.join(' · ')}`);
 
         if (map.syncMode === 'incremental') {
@@ -1365,6 +1371,7 @@ export default function Migration() {
   const onRunFinished = (run: MigRun) => {
     setPolling(false);
     const completedStates = run.tableStates.filter(ts => ts.status === 'completed');
+    const failedStates    = run.tableStates.filter(ts => ts.status === 'failed');
     const completedKeys = completedStates.map(ts => ts.sourceKey);
     if (completedKeys.length > 0) {
       setMigratedTableKeys(prev => new Set([...prev, ...completedKeys]));
@@ -1387,6 +1394,22 @@ export default function Migration() {
     reloadSrcTables();
     reloadTgtTables();
     void loadTableRefs();
+
+    // Toast on success, alert dialog on error
+    if (completedStates.length > 0) {
+      const totalRows = completedStates.reduce((s, ts) => s + ts.rowsMigrated + ts.rowsSkipped, 0);
+      const msg = completedStates.length === 1
+        ? `${completedStates[0].sourceKey} → ${completedStates[0].targetKey} — ${totalRows.toLocaleString()} rows`
+        : `${completedStates.length} tables migrated — ${totalRows.toLocaleString()} rows total`;
+      toast.success(msg, { duration: 4000 });
+    }
+    if (failedStates.length > 0) {
+      const detail = failedStates.map(ts => `${ts.sourceKey}: ${ts.error ?? 'unknown error'}`).join('\n');
+      showError(
+        failedStates.length === 1 ? `Migration failed — ${failedStates[0].sourceKey}` : `${failedStates.length} tables failed`,
+        detail
+      );
+    }
   };
 
   const startMigration = async (force = false) => {
@@ -1986,7 +2009,7 @@ export default function Migration() {
                             <div key={`${t.database}.${t.schema}.${t.name}`}
                               className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-100 dark:border-slate-800/60 ${
                                 isSelected
-                                  ? 'bg-blue-100 dark:bg-blue-950/40'
+                                  ? 'bg-amber-100 dark:bg-amber-950/40'
                                   : isMigrated
                                   ? 'bg-emerald-50/50 dark:bg-emerald-950/10 hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
                                   : mapEntry
@@ -2005,8 +2028,8 @@ export default function Migration() {
                                 onChange={e => { e.stopPropagation(); void toggleTable(t); }}
                                 onClick={e => e.stopPropagation()}
                                 className="shrink-0 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed" />
-                              <Table2 size={12} className={`shrink-0 ${isMigrated ? 'text-emerald-400 dark:text-emerald-600' : mapEntry ? 'text-blue-400 dark:text-blue-500' : 'text-slate-500 dark:text-slate-400'}`} />
-                              <span className={`text-[13px] font-mono truncate ${mapEntry ? 'flex-none max-w-[45%]' : 'flex-1'} ${isMigrated ? 'line-through text-gray-400 dark:text-slate-500' : isSelected ? 'text-blue-700 dark:text-blue-400 font-medium' : mapEntry ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>
+                              <Table2 size={12} className={`shrink-0 ${isMigrated ? 'text-emerald-400 dark:text-emerald-600' : isSelected ? 'text-amber-500 dark:text-amber-400' : mapEntry ? 'text-blue-400 dark:text-blue-500' : 'text-slate-500 dark:text-slate-400'}`} />
+                              <span className={`text-[13px] font-mono truncate ${mapEntry ? 'flex-none max-w-[45%]' : 'flex-1'} ${isMigrated ? 'line-through text-gray-400 dark:text-slate-500' : isSelected ? 'text-amber-700 dark:text-amber-400 font-medium' : mapEntry ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300'}`}>
                                 <span className="text-[11px] font-normal">{t.schema}.</span>{t.name}
                               </span>
                               {mapEntry && (() => {
@@ -2279,13 +2302,14 @@ export default function Migration() {
                           (mapping && ts.id === mapping.id) || ts.targetKey === `${t.schema}.${t.name}`
                         );
                         const accumState = accumulatedTableStates.find(ts => ts.targetKey === `${t.schema}.${t.name}`);
+                        const effectiveState = runState ?? accumState ?? null;
                         const isRunning = runState?.status === 'running';
                         const isPaused = !!(mapping && pausedTableIds.has(mapping.id));
-                        const totalProcessed = (runState?.rowsMigrated ?? 0) + (runState?.rowsSkipped ?? 0);
-                        const pct = runState && runState.rowsSource > 0
-                          ? Math.min(100, Math.round(totalProcessed / runState.rowsSource * 100))
-                          : runState ? 0 : null;
-                        const errorCount = runState?.rowsErrored ?? accumState?.rowsErrored ?? 0;
+                        const totalProcessed = (effectiveState?.rowsMigrated ?? 0) + (effectiveState?.rowsSkipped ?? 0);
+                        const pct = effectiveState && effectiveState.rowsSource > 0
+                          ? Math.min(100, Math.round(totalProcessed / effectiveState.rowsSource * 100))
+                          : effectiveState ? 0 : null;
+                        const errorCount = effectiveState?.rowsErrored ?? 0;
                         const hasErrors = errorCount > 0;
                         const tgtRowKey = `${t.schema}.${t.name}`;
                         const isHighlighted = highlightTgtKey === tgtRowKey;
@@ -2296,7 +2320,7 @@ export default function Migration() {
                               if (selectedMapId) void selectTargetTable(t.schema, t.name);
                               else if (mapping) setSelectedMapId(mapping.id);
                             }}
-                            className={`group border-b border-gray-100 dark:border-slate-800/60 ${isClickable ? 'cursor-pointer' : 'cursor-default'} transition-colors duration-700 ${isHighlighted ? 'bg-blue-100 dark:bg-blue-900/40' : isTarget ? 'bg-blue-100 dark:bg-blue-950/40' : mapping ? 'bg-blue-50/60 dark:bg-blue-950/10 hover:bg-blue-50 dark:hover:bg-blue-950/20' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}>
+                            className={`group border-b border-gray-100 dark:border-slate-800/60 ${isClickable ? 'cursor-pointer' : 'cursor-default'} transition-colors duration-700 ${isHighlighted || isTarget ? 'bg-amber-100 dark:bg-amber-950/40' : mapping ? 'bg-blue-50/60 dark:bg-blue-950/10 hover:bg-blue-50 dark:hover:bg-blue-950/20' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}>
 
                             {/* Row 1: checkbox + icon + name + mapped badge + source table */}
                             <div className="flex items-center gap-1.5 px-3 pt-1.5 pb-0.5">
@@ -2308,8 +2332,8 @@ export default function Migration() {
                               ) : (
                                 <div className="w-3.5 h-3.5 shrink-0" />
                               )}
-                              <Table2 size={12} className={`shrink-0 ${isTarget ? 'text-blue-500' : mapping ? 'text-blue-400 dark:text-blue-500' : 'text-slate-400 dark:text-slate-500'}`} />
-                              <span className={`text-[13px] font-mono truncate ${isTarget ? 'text-blue-700 dark:text-blue-400 font-medium' : mapping ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-600'}`}>
+                              <Table2 size={12} className={`shrink-0 ${isTarget ? 'text-amber-500 dark:text-amber-400' : mapping ? 'text-blue-400 dark:text-blue-500' : 'text-slate-400 dark:text-slate-500'}`} />
+                              <span className={`text-[13px] font-mono truncate ${isTarget ? 'text-amber-700 dark:text-amber-400 font-medium' : mapping ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-600'}`}>
                                 {t.name}
                               </span>
                               {/* mapped badge */}
@@ -2357,115 +2381,125 @@ export default function Migration() {
                             {/* Row 2: progress + status + play/pause/stop + rollback + sync + error */}
                             {mapping && (
                               <div className="flex items-center gap-1.5 pl-9 pr-3 pb-1.5" onClick={e => e.stopPropagation()}>
-                                {/* progress bar */}
+                                {/* progress bar with % overlay */}
                                 {pct !== null ? (
-                                  <>
-                                    <div className="flex-1 max-w-80 h-1.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden min-w-0">
-                                      <div className={`h-full rounded-full transition-all duration-500 ${
-                                        runState?.status === 'completed' ? 'bg-emerald-500'
-                                        : runState?.status === 'failed' ? 'bg-rose-500'
-                                        : runState?.status === 'aborted' || runState?.status === 'rolled_back' ? 'bg-amber-500'
-                                        : isPaused ? 'bg-amber-400' : 'bg-violet-500'
-                                      }`} style={{ width: `${pct}%` }} />
-                                    </div>
-                                    <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 shrink-0">{pct}%</span>
-                                    {(runState!.rowsMigrated > 0 || runState!.rowsErrored > 0) && (
-                                      <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0">
-                                        {runState!.rowsMigrated.toLocaleString()}w
-                                        {runState!.rowsErrored > 0 && <span className="text-rose-500 dark:text-rose-400 ml-0.5">{runState!.rowsErrored.toLocaleString()}e</span>}
-                                      </span>
-                                    )}
-                                  </>
-                                ) : (
-                                  <div className="flex-1" />
+                                  <div className="relative w-36 shrink-0 h-[18px] bg-gray-100 dark:bg-slate-800 rounded overflow-hidden">
+                                    <div className={`h-full rounded transition-all duration-500 ${
+                                      effectiveState?.status === 'completed' ? 'bg-emerald-500'
+                                      : effectiveState?.status === 'failed' ? 'bg-rose-500'
+                                      : effectiveState?.status === 'aborted' || effectiveState?.status === 'rolled_back' ? 'bg-amber-500'
+                                      : isPaused ? 'bg-amber-400' : 'bg-violet-500'
+                                    }`} style={{ width: `${pct}%` }} />
+                                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-mono font-semibold text-white [text-shadow:0_0_3px_rgba(0,0,0,0.6)]">{pct}%</span>
+                                  </div>
+                                ) : null}
+
+                                {/* row count */}
+                                {(totalProcessed > 0 || (effectiveState?.rowsErrored ?? 0) > 0) && (
+                                  <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0">
+                                    {totalProcessed.toLocaleString()} rows
+                                    {(effectiveState?.rowsErrored ?? 0) > 0 && <span className="text-rose-500 dark:text-rose-400 ml-0.5">{effectiveState!.rowsErrored.toLocaleString()}e</span>}
+                                  </span>
                                 )}
 
-                                {/* status badge */}
-                                {runState && <StatusBadge status={runState.status} />}
+                                {/* right-aligned: status + actions */}
+                                <div className="ml-auto flex items-center gap-0.5 shrink-0">
+                                  {/* status badge */}
+                                  {effectiveState && <StatusBadge status={effectiveState.status} />}
 
-                                {/* play / pause / stop / restart+truncate */}
-                                <div className="flex items-center gap-0.5 shrink-0">
-                                  {isRunning && !isPaused ? (
+                                  {/* highlighted pair: full controls (play/pause/stop/restart/rollback) */}
+                                  {isTarget ? (
                                     <>
-                                      <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.add(mapping.id); return n; })}
-                                        title="Pause" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-amber-500 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
-                                        <Pause size={12} />
-                                      </button>
-                                      <button onClick={() => void stopTableInRun(mapping.id)}
-                                        title="Stop" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-rose-500 hover:border-rose-400 dark:hover:border-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
-                                        <Square size={12} />
-                                      </button>
+                                      {isRunning && !isPaused ? (
+                                        <>
+                                          <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.add(mapping.id); return n; })}
+                                            title="Pause" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-amber-500 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
+                                            <Pause size={12} />
+                                          </button>
+                                          <button onClick={() => void stopTableInRun(mapping.id)}
+                                            title="Stop" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-rose-500 hover:border-rose-400 dark:hover:border-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
+                                            <Square size={12} />
+                                          </button>
+                                        </>
+                                      ) : isPaused ? (
+                                        <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.delete(mapping.id); return n; })}
+                                          title="Resume" className="p-0.5 rounded border border-amber-400 dark:border-amber-500 text-amber-500 dark:text-amber-400 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-400 dark:hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
+                                          <Play size={12} />
+                                        </button>
+                                      ) : (
+                                        <>
+                                          <button onClick={() => void startTableMigration(mapping.id)}
+                                            disabled={polling} title="Re-run this table (keep existing rows, skip conflicts)"
+                                            className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-400 dark:hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors">
+                                            <Play size={12} />
+                                          </button>
+                                          {runState && (runState.status === 'completed' || runState.status === 'failed') && (
+                                            <button
+                                              onClick={() => showConfirm({
+                                                title: `Restart with Truncate — ${mapping.source.schema}.${mapping.source.table}`,
+                                                description: `This will DELETE all existing rows in the target table "${mapping.target.schema}.${mapping.targetAlias?.trim() || mapping.target.table}" before re-running.\n\nUse this when a previous run wrote partial data that must be cleared first.\n\nProceed?`,
+                                                onConfirm: () => void startTableMigration(mapping.id, true, true),
+                                              })}
+                                              disabled={polling}
+                                              title="Restart with Truncate — clear target rows then re-run from scratch"
+                                              className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-400 dark:hover:border-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-30 transition-colors">
+                                              <RotateCcw size={12} />
+                                            </button>
+                                          )}
+                                        </>
+                                      )}
+                                      {/* rollback */}
+                                      {runState && (runState.status === 'completed' || runState.status === 'failed') && !polling && (
+                                        <button onClick={() => openRollbackPrompt(mapping.id)}
+                                          title="Rollback this table"
+                                          className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-amber-500 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
+                                          <Undo2 size={12} />
+                                        </button>
+                                      )}
+                                      {/* error icon + diagnose */}
+                                      {hasErrors && (
+                                        <>
+                                          <Tooltip content={`${errorCount.toLocaleString()} error${errorCount !== 1 ? 's' : ''}`} side="left">
+                                            <span className="shrink-0 text-rose-500 dark:text-rose-400">
+                                              <AlertTriangle size={12} />
+                                            </span>
+                                          </Tooltip>
+                                          {runState?.status === 'failed' && runState.error && (
+                                            <Tooltip content="AI Diagnose — analyse failure cause" side="left">
+                                              <button onClick={() => void openDiagnose(mapping, runState)}
+                                                className="p-0.5 rounded border border-violet-300 dark:border-violet-600 text-violet-500 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
+                                                <Sparkles size={12} />
+                                              </button>
+                                            </Tooltip>
+                                          )}
+                                        </>
+                                      )}
                                     </>
-                                  ) : isPaused ? (
-                                    <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.delete(mapping.id); return n; })}
-                                      title="Resume" className="p-0.5 rounded border border-amber-400 dark:border-amber-500 text-amber-500 dark:text-amber-400 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-400 dark:hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
-                                      <Play size={12} />
-                                    </button>
                                   ) : (
-                                    <>
+                                    /* non-highlighted: play only when not completed */
+                                    effectiveState?.status !== 'completed' && !isRunning && (
                                       <button onClick={() => void startTableMigration(mapping.id)}
-                                        disabled={polling} title="Re-run this table (keep existing rows, skip conflicts)"
+                                        disabled={polling} title="Run this table"
                                         className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-400 dark:hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-30 transition-colors">
                                         <Play size={12} />
                                       </button>
-                                      {runState && (runState.status === 'completed' || runState.status === 'failed') && (
-                                        <button
-                                          onClick={() => showConfirm({
-                                            title: `Restart with Truncate — ${mapping.source.schema}.${mapping.source.table}`,
-                                            description: `This will DELETE all existing rows in the target table "${mapping.target.schema}.${mapping.targetAlias?.trim() || mapping.target.table}" before re-running.\n\nUse this when a previous run wrote partial data that must be cleared first.\n\nProceed?`,
-                                            onConfirm: () => void startTableMigration(mapping.id, true, true),
-                                          })}
-                                          disabled={polling}
-                                          title="Restart with Truncate — clear target rows then re-run from scratch"
-                                          className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-400 dark:hover:border-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-30 transition-colors">
-                                          <RotateCcw size={12} />
-                                        </button>
-                                      )}
-                                    </>
+                                    )
                                   )}
-                                </div>
 
-                                {/* rollback (completed or failed) */}
-                                {runState && (runState.status === 'completed' || runState.status === 'failed') && !polling && (
-                                  <button onClick={() => openRollbackPrompt(mapping.id)}
-                                    title="Rollback this table"
-                                    className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-amber-500 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
-                                    <Undo2 size={12} />
+                                  {/* sync toggle — always visible */}
+                                  <button
+                                    onClick={() => updateTableMap(mapping.id, {
+                                      syncMode: (mapping.syncMode ?? 'full') === 'incremental' ? 'full' : 'incremental',
+                                    })}
+                                    title={`Sync mode: ${(mapping.syncMode ?? 'full') === 'incremental' ? 'Incremental' : 'Full'} — click to toggle`}
+                                    className={`p-0.5 rounded border text-[10px] font-mono transition-colors ${
+                                      (mapping.syncMode ?? 'full') === 'incremental'
+                                        ? 'border-blue-400 dark:border-blue-500 text-blue-500 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30'
+                                        : 'border-slate-300 dark:border-slate-500 text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-700'
+                                    }`}>
+                                    {(mapping.syncMode ?? 'full') === 'incremental' ? '⟳Inc' : '⟳Sync'}
                                   </button>
-                                )}
-
-                                {/* incremental / full sync toggle */}
-                                <button
-                                  onClick={() => updateTableMap(mapping.id, {
-                                    syncMode: (mapping.syncMode ?? 'full') === 'incremental' ? 'full' : 'incremental',
-                                  })}
-                                  title={`Sync mode: ${(mapping.syncMode ?? 'full') === 'incremental' ? 'Incremental' : 'Full'} — click to toggle`}
-                                  className={`p-0.5 rounded border text-[10px] font-mono transition-colors ${
-                                    (mapping.syncMode ?? 'full') === 'incremental'
-                                      ? 'border-blue-400 dark:border-blue-500 text-blue-500 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30'
-                                      : 'border-slate-300 dark:border-slate-500 text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-700'
-                                  }`}>
-                                  {(mapping.syncMode ?? 'full') === 'incremental' ? '⟳Inc' : '⟳Sync'}
-                                </button>
-
-                                {/* error icon + diagnose */}
-                                {hasErrors && (
-                                  <>
-                                    <Tooltip content={`${errorCount.toLocaleString()} error${errorCount !== 1 ? 's' : ''}`} side="left">
-                                      <span className="shrink-0 text-rose-500 dark:text-rose-400">
-                                        <AlertTriangle size={12} />
-                                      </span>
-                                    </Tooltip>
-                                    {runState?.status === 'failed' && runState.error && (
-                                      <Tooltip content="AI Diagnose — analyse failure cause" side="left">
-                                        <button onClick={() => void openDiagnose(mapping, runState)}
-                                          className="p-0.5 rounded border border-violet-300 dark:border-violet-600 text-violet-500 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
-                                          <Sparkles size={12} />
-                                        </button>
-                                      </Tooltip>
-                                    )}
-                                  </>
-                                )}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -2636,6 +2670,21 @@ export default function Migration() {
                           Skip Constraints
                         </label>
                       </Tooltip>
+                      <Tooltip side="top" content={
+                        <div>
+                          <p className="font-semibold text-white mb-1">Skip NULL Violations</p>
+                          <p className="text-gray-300">Runs <span className="font-mono text-white">ALTER COLUMN … DROP NOT NULL</span> on all non-nullable target columns before inserting, then restores <span className="font-mono text-white">SET NOT NULL</span> after.</p>
+                          <p className="text-gray-300 mt-1">Use when source rows have NULL values for columns declared NOT NULL in the target. Rows will be inserted; NULL values are kept as-is.</p>
+                          <p className="text-amber-400 mt-1">Restore may warn if NULL values were written to a NOT NULL column — those columns remain nullable.</p>
+                        </div>
+                      }>
+                        <label className="inline-flex items-center gap-1 text-[12px] text-gray-500 dark:text-slate-400 cursor-help">
+                          <input type="checkbox" checked={selectedMap.skipNullViolations ?? false}
+                            onChange={e => updateTableMap(selectedMap.id, { skipNullViolations: e.target.checked })}
+                            className="accent-violet-500" />
+                          Skip NULL
+                        </label>
+                      </Tooltip>
                       <div className="h-3 w-px bg-gray-200 dark:bg-slate-700" />
                       <button
                         onClick={() => updateTableMap(selectedMap.id, { isSet: !selectedMap.isSet })}
@@ -2739,19 +2788,19 @@ export default function Migration() {
                         <thead>
                           <tr className="bg-gray-50 dark:bg-slate-800/60 sticky top-0 z-10">
                             {([
-                              { label: '✓', tip: 'Include', desc: 'Toggle whether this column is included in the migration. Uncheck to exclude a column from the INSERT.' },
-                              { label: 'Src Col', tip: 'Source Column', desc: 'Column name from the source database table.\nExample: user_id, created_at' },
-                              { label: 'Src Type', tip: 'Source Type', desc: 'Original data type in the source database.\nExample: INT, VARCHAR(255), DATETIME' },
-                              { label: '', tip: null, desc: null },
-                              { label: 'Tgt Col', tip: 'Target Column', desc: 'Column name in the target table. Pick from the dropdown suggestions or type a new name directly.\nTyping a name not in the list creates a new column.' },
-                              { label: 'Mapping', tip: 'Mapping Type', desc: 'Whether the target column is new (does not exist yet) or existing (already present in the target table).\n• new — column will be created\n• existing — column already exists and will be populated' },
-                              { label: 'Tgt Type', tip: 'Target Type', desc: 'Data type inferred for the target column. Auto-set when you pick a Tgt Col or change Conv.\nExample: BIGINT, TEXT, TIMESTAMPTZ' },
-                              { label: 'Conv', tip: 'Conversion', desc: 'Datatype cast or transformation applied during migration.\n• keep — copy value as-is\n• →UUID — serial int → UUID v4\n• →TEXT, →INT, →BIGINT, →NUMERIC, →BOOL, →TIMESTAMPTZ, →DATE, →JSONB — cast to that PG type' },
-                              { label: 'Keep / Default', tip: 'Keep Orig / Default Value', desc: '→UUID columns: stores the original serial integer in a separate BIGINT column (e.g. legacy_id).\nTarget-only columns (no source): type a literal default value inserted for every row.\n• Leave empty to insert NULL — will fail if the column is NOT NULL.\n• Examples: true, 0, 2024-01-01' },
-                              { label: 'FK Ref', tip: 'Foreign Key Reference', desc: 'If this column is a UUID FK, enter the target table it references so the migrator can resolve IDs correctly.\nExample: public.users' },
-                              { label: '', tip: null, desc: null },
-                            ] as { label: string; tip: string | null; desc: string | null }[]).map((h, i) => (
-                              <th key={i} className="text-left px-2 py-1.5 text-[12px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider border border-gray-200 dark:border-slate-700 whitespace-nowrap">
+                              { label: '✓', tip: 'Include', desc: 'Toggle whether this column is included in the migration. Uncheck to exclude a column from the INSERT.', minW: '' },
+                              { label: 'Src Col', tip: 'Source Column', desc: 'Column name from the source database table.\nExample: user_id, created_at', minW: '' },
+                              { label: 'Src Type', tip: 'Source Type', desc: 'Original data type in the source database.\nExample: INT, VARCHAR(255), DATETIME', minW: '' },
+                              { label: '', tip: null, desc: null, minW: '' },
+                              { label: 'Tgt Col', tip: 'Target Column', desc: 'Column name in the target table. Pick from the dropdown suggestions or type a new name directly.\nTyping a name not in the list creates a new column.', minW: 'min-w-[120px]' },
+                              { label: 'Mapping', tip: 'Mapping Type', desc: 'Whether the target column is new (does not exist yet) or existing (already present in the target table).\n• new — column will be created\n• existing — column already exists and will be populated', minW: '' },
+                              { label: 'Tgt Type', tip: 'Target Type', desc: 'Data type inferred for the target column. Auto-set when you pick a Tgt Col or change Conv.\nExample: BIGINT, TEXT, TIMESTAMPTZ', minW: '' },
+                              { label: 'Conv', tip: 'Conversion', desc: 'Datatype cast or transformation applied during migration.\n• keep — copy value as-is\n• →UUID — serial int → UUID v4\n• →TEXT, →INT, →BIGINT, →NUMERIC, →BOOL, →TIMESTAMPTZ, →DATE, →JSONB — cast to that PG type', minW: 'min-w-[110px]' },
+                              { label: 'Keep / Default', tip: 'Keep Orig / Default Value', desc: '→UUID columns: stores the original serial integer in a separate BIGINT column (e.g. legacy_id).\nTarget-only columns (no source): type a literal default value inserted for every row.\n• Leave empty to insert NULL — will fail if the column is NOT NULL.\n• Examples: true, 0, 2024-01-01', minW: 'min-w-[110px]' },
+                              { label: 'FK Ref', tip: 'Foreign Key Reference', desc: 'If this column is a UUID FK, enter the target table it references so the migrator can resolve IDs correctly.\nExample: public.users', minW: 'min-w-[120px]' },
+                              { label: '', tip: null, desc: null, minW: '' },
+                            ] as { label: string; tip: string | null; desc: string | null; minW: string }[]).map((h, i) => (
+                              <th key={i} className={`text-left px-2 py-1.5 text-[12px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider border border-gray-200 dark:border-slate-700 whitespace-nowrap${h.minW ? ` ${h.minW}` : ''}`}>
                                 {h.tip ? (
                                   <Tooltip
                                     side="bottom"
@@ -2849,7 +2898,7 @@ export default function Migration() {
                                             });
                                           }}
                                           onBlur={() => setTimeout(() => { setOpenColPickerIdx(null); setColPickerPos(null); }, 120)}
-                                          className={`w-28 px-1.5 py-0.5 text-[13px] rounded border font-mono focus:outline-none bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 ${
+                                          className={`w-full px-1.5 py-0.5 text-[13px] rounded border font-mono focus:outline-none bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 ${
                                             isOpen
                                               ? 'border-violet-400 dark:border-violet-500'
                                               : isMatched
@@ -2914,7 +2963,7 @@ export default function Migration() {
                                           ...(conv !== 'serial_to_uuid' ? { keepLegacyAs: null } : {}),
                                         });
                                       }}
-                                      className="text-[12px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 py-0.5 px-1">
+                                      className="w-full text-[12px] rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 py-0.5 px-1">
                                       <option value="keep">keep</option>
                                       <option value="serial_to_uuid">→UUID</option>
                                       <optgroup label="Cast to PG type">
@@ -2938,7 +2987,7 @@ export default function Migration() {
                                           <input
                                             value={col.keepLegacyAs}
                                             onChange={e => updateColumn(selectedMap.id, idx, { keepLegacyAs: e.target.value || null })}
-                                            className="w-20 px-1.5 py-0.5 text-[12px] rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 font-mono focus:outline-none focus:border-amber-500" />
+                                            className="w-full px-1.5 py-0.5 text-[12px] rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 font-mono focus:outline-none focus:border-amber-500" />
                                           <Tooltip
                                             side="top"
                                             content={
@@ -2983,7 +3032,7 @@ export default function Migration() {
                                           placeholder="default…"
                                           value={col.defaultValue ?? ''}
                                           onChange={e => updateColumn(selectedMap.id, idx, { defaultValue: e.target.value || null })}
-                                          className={`w-20 px-1.5 py-0.5 text-[12px] rounded border font-mono focus:outline-none focus:border-violet-400 dark:focus:border-violet-600 bg-white dark:bg-slate-800
+                                          className={`w-full px-1.5 py-0.5 text-[12px] rounded border font-mono focus:outline-none focus:border-violet-400 dark:focus:border-violet-600 bg-white dark:bg-slate-800
                                             ${col.defaultValue
                                               ? 'border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300'
                                               : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500'}`}
@@ -3005,7 +3054,7 @@ export default function Migration() {
                                         }
                                         setFkManualInput('');
                                       }}
-                                      className={`w-24 px-1.5 py-0.5 text-[12px] rounded border font-mono text-left truncate block
+                                      className={`w-full px-1.5 py-0.5 text-[12px] rounded border font-mono text-left truncate block
                                         ${col.fkRef
                                           ? 'border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50/30 dark:bg-blue-950/20'
                                           : 'border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 bg-white dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700'}`}>
