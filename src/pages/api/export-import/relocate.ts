@@ -22,6 +22,14 @@ interface Body {
   conflict?: ConflictStrategy;
 }
 
+function quotePgIdent(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function quoteMysqlIdent(value: string) {
+  return `\`${value.replace(/`/g, '``')}\``;
+}
+
 function pgPool(cfg: ConnCfg) {
   return new Pool({
     host: cfg.host, port: cfg.port ?? 5432, user: cfg.user,
@@ -49,6 +57,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'table is required for table scope' });
   if (source.db_type === 'mysql' && scope !== 'db')
     return res.status(400).json({ error: 'Schema / table relocation requires PostgreSQL. MySQL has no schemas.' });
+  const defaultPort = source.db_type === 'postgres' ? 5432 : 3306;
+  if (scope === 'db' && source.host === target.host && (source.port ?? defaultPort) === (target.port ?? defaultPort) && source.database === target.database)
+    return res.status(400).json({ error: 'Target database must have a different name or location.' });
 
   const log: Log[] = [];
 
@@ -75,13 +86,15 @@ async function relocatePg(
   const { source, target, scope, sourceSchema, targetSchema, table, operation, include, conflict } = p;
   const sameDb = source.host === target.host && (source.port ?? 5432) === (target.port ?? 5432) && source.database === target.database;
 
-  // ── Fast path: same database, table or schema scope → ALTER … SET SCHEMA / CREATE LIKE
-  if (sameDb && scope !== 'db') {
+  // ── Fast path: a same-database move can be done atomically. Copies use
+  // export/import below so sequence defaults and constraints are recreated in
+  // the target schema instead of retaining references to the source schema.
+  if (sameDb && scope !== 'db' && operation === 'move') {
     const pool = pgPool(target);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`CREATE SCHEMA IF NOT EXISTS "${targetSchema}"`);
+      await client.query(`CREATE SCHEMA IF NOT EXISTS ${quotePgIdent(targetSchema)}`);
       const tables = scope === 'table'
         ? [table]
         : (await client.query<{ table_name: string }>(
@@ -92,18 +105,11 @@ async function relocatePg(
       if (tables.length === 0) { await client.query('ROLLBACK'); log.push({ step: 'relocate', ok: false, text: `[FAIL] No tables found in schema "${sourceSchema}"` }); return res.status(400).json({ success: false, log }); }
 
       for (const t of tables) {
-        if (operation === 'move') {
-          await client.query(`ALTER TABLE "${sourceSchema}"."${t}" SET SCHEMA "${targetSchema}"`);
-          log.push({ step: 'move', ok: true, text: `[MOVE] "${sourceSchema}"."${t}" → "${targetSchema}"."${t}"` });
-        } else {
-          await client.query(`CREATE TABLE "${targetSchema}"."${t}" (LIKE "${sourceSchema}"."${t}" INCLUDING ALL)`);
-          if (include !== 'schema')
-            await client.query(`INSERT INTO "${targetSchema}"."${t}" SELECT * FROM "${sourceSchema}"."${t}"`);
-          log.push({ step: 'copy', ok: true, text: `[COPY] "${sourceSchema}"."${t}" → "${targetSchema}"."${t}"` });
-        }
+        await client.query(`ALTER TABLE ${quotePgIdent(sourceSchema)}.${quotePgIdent(t)} SET SCHEMA ${quotePgIdent(targetSchema)}`);
+        log.push({ step: 'move', ok: true, text: `[MOVE] "${sourceSchema}"."${t}" → "${targetSchema}"."${t}"` });
       }
-      if (operation === 'move' && scope === 'schema') {
-        await client.query(`DROP SCHEMA IF EXISTS "${sourceSchema}" CASCADE`);
+      if (scope === 'schema') {
+        await client.query(`DROP SCHEMA IF EXISTS ${quotePgIdent(sourceSchema)} CASCADE`);
         log.push({ step: 'drop', ok: true, text: `[DROP] source schema "${sourceSchema}"` });
       }
       await client.query('COMMIT');
@@ -117,10 +123,29 @@ async function relocatePg(
     } finally { client.release(); await pool.end(); }
   }
 
-  // ── General path: export from source schema → import into target db/schema ──
+  // Database clone targets may be new names. Create the target before opening
+  // the import pool; CREATE DATABASE cannot run inside a transaction.
+  if (scope === 'db') {
+    const admin = pgPool({ ...target, database: 'postgres' });
+    try {
+      const exists = await admin.query<{ exists: boolean }>(
+        'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists',
+        [target.database],
+      );
+      if (!exists.rows[0]?.exists) {
+        await admin.query(`CREATE DATABASE ${quotePgIdent(target.database)}`);
+        log.push({ step: 'create', ok: true, text: `[CREATE] target database "${target.database}"` });
+      }
+    } finally { await admin.end(); }
+  }
+
+  // ── General path: export from source schema/db → import into target db/schema ──
   const scopeTables = scope === 'table' ? [table] : 'all';
   log.push({ step: 'export', ok: true, text: `[START] Exporting ${scope} from "${source.database}"."${sourceSchema}"…` });
-  const exported = await exportDatabase(source, scopeTables, include, { schema: sourceSchema, conflictStrategy: conflict });
+  const exported = await exportDatabase(source, scopeTables, include, {
+    schema: scope === 'db' ? '*' : sourceSchema,
+    conflictStrategy: conflict,
+  });
   log.push({ step: 'export', ok: true, text: `[OK] Exported ${exported.tables.length} table(s), ${exported.sql.length} bytes` });
 
   const pool = pgPool(target);
@@ -128,8 +153,8 @@ async function relocatePg(
   try {
     await client.query('BEGIN');
     try { await client.query('SET session_replication_role = replica'); } catch { /* no privilege — rely on FK order */ }
-    await client.query(`CREATE SCHEMA IF NOT EXISTS "${targetSchema}"`);
-    await client.query(`SET search_path TO "${targetSchema}", public`);
+    await client.query(`CREATE SCHEMA IF NOT EXISTS ${quotePgIdent(targetSchema)}`);
+    await client.query(`SET search_path TO ${quotePgIdent(targetSchema)}, public`);
     await client.query(exported.sql);
     await client.query('COMMIT');
     log.push({ step: 'import', ok: true, text: `[OK] Imported into "${target.database}"."${targetSchema}"` });
@@ -142,11 +167,28 @@ async function relocatePg(
 
   // Move: drop source only after a successful copy
   if (operation === 'move') {
+    if (scope === 'db') {
+      const admin = pgPool({ ...source, database: 'postgres' });
+      try {
+        await admin.query(
+          `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`,
+          [source.database],
+        );
+        await admin.query(`DROP DATABASE ${quotePgIdent(source.database)}`);
+        log.push({ step: 'drop', ok: true, text: `[DROP] source database "${source.database}"` });
+      } catch (err: unknown) {
+        log.push({ step: 'drop', ok: false, text: `[WARN] Copy succeeded but dropping source failed: ${err instanceof Error ? err.message : String(err)}` });
+      } finally { await admin.end(); }
+
+      log.push({ step: 'relocate', ok: true, text: `[DONE] Moved ${exported.tables.length} table(s).` });
+      return res.status(200).json({ success: true, log, tables: exported.tables });
+    }
+
     const sp = pgPool(source);
     const sc = await sp.connect();
     try {
-      if (scope === 'schema') { await sc.query(`DROP SCHEMA IF EXISTS "${sourceSchema}" CASCADE`); log.push({ step: 'drop', ok: true, text: `[DROP] source schema "${sourceSchema}"` }); }
-      else for (const t of exported.tables) { await sc.query(`DROP TABLE IF EXISTS "${sourceSchema}"."${t}" CASCADE`); log.push({ step: 'drop', ok: true, text: `[DROP] "${sourceSchema}"."${t}"` }); }
+      if (scope === 'schema') { await sc.query(`DROP SCHEMA IF EXISTS ${quotePgIdent(sourceSchema)} CASCADE`); log.push({ step: 'drop', ok: true, text: `[DROP] source schema "${sourceSchema}"` }); }
+      else for (const t of exported.tables) { await sc.query(`DROP TABLE IF EXISTS ${quotePgIdent(sourceSchema)}.${quotePgIdent(t)} CASCADE`); log.push({ step: 'drop', ok: true, text: `[DROP] "${sourceSchema}"."${t}"` }); }
     } catch (err: unknown) {
       log.push({ step: 'drop', ok: false, text: `[WARN] Copy succeeded but dropping source failed: ${err instanceof Error ? err.message : String(err)}` });
     } finally { sc.release(); await sp.end(); }
@@ -167,6 +209,15 @@ async function relocateMysqlDb(
   const exported = await exportDatabase(source, 'all', include, { conflictStrategy: conflict });
   log.push({ step: 'export', ok: true, text: `[OK] Exported ${exported.tables.length} table(s)` });
 
+  const admin = await mysql.createConnection({
+    host: target.host, port: target.port ?? 3306, user: target.user,
+    password: target.password,
+  });
+  try {
+    await admin.query(`CREATE DATABASE IF NOT EXISTS ${quoteMysqlIdent(target.database)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    log.push({ step: 'create', ok: true, text: `[CREATE] target database "${target.database}" (if absent)` });
+  } finally { await admin.end(); }
+
   const conn = await mysql.createConnection({
     host: target.host, port: target.port ?? 3306, user: target.user,
     password: target.password, database: target.database, multipleStatements: true,
@@ -186,7 +237,7 @@ async function relocateMysqlDb(
 
   if (operation === 'move') {
     const admin = await mysql.createConnection({ host: source.host, port: source.port ?? 3306, user: source.user, password: source.password });
-    try { await admin.execute(`DROP DATABASE IF EXISTS \`${source.database}\``); log.push({ step: 'drop', ok: true, text: `[DROP] source database "${source.database}"` }); }
+    try { await admin.execute(`DROP DATABASE IF EXISTS ${quoteMysqlIdent(source.database)}`); log.push({ step: 'drop', ok: true, text: `[DROP] source database "${source.database}"` }); }
     finally { await admin.end(); }
   }
 

@@ -435,10 +435,12 @@ function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm,
             <select value={connId} onChange={e => setConnId(e.target.value ? Number(e.target.value) : '')} className={sel}>
               {candidates.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
-            <select value={database} onChange={e => setDatabase(e.target.value)} className={sel}>
-              {dbs.length === 0 && <option value="">— no databases —</option>}
-              {dbs.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
+            <input list="relocate-databases" value={database} onChange={e => setDatabase(e.target.value)}
+              placeholder="target database (existing or new)" className={`${sel} font-mono`} />
+            <datalist id="relocate-databases">{dbs.map(d => <option key={d} value={d} />)}</datalist>
+            {info.scope === 'db' && (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">Enter a new name to clone the database. It will be created automatically.</p>
+            )}
             {needsSchema && (
               <>
                 <input list="relocate-schemas" value={schema} onChange={e => setSchema(e.target.value)}
@@ -2448,4 +2450,3 @@ export default function ExportImportPage() {
     </>
   );
 }
-
