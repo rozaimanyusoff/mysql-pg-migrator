@@ -10,6 +10,7 @@ import {
   AlertCircle, Table2, Copy, Check, ChevronLeft, ChevronUp, ChevronDown,
   Info, Filter, Clock, Trash2, Save,
   Eye, ShieldAlert, Plus, HelpCircle, BookOpen, X, Replace,
+  Settings, Pencil, Eraser,
 } from 'lucide-react';
 import { useAlert } from '../lib/alert-context';
 import type { ConnectionRow } from './api/connections/index';
@@ -24,10 +25,14 @@ import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'reac
 type Tab = 'export' | 'import' | 'sync';
 type ExportFormat = 'sql' | 'csv';
 type ImportStrategy = 'import_rows' | 'replace_schema' | 'replace_db' | 'replace_table';
-type ImportMode = 'new' | 'replace' | 'insert';
 // Target of a per-row import/export action. `database` is the db to act on
 // (the clicked db row, or the currently selected db for schema/table scope).
 interface ScopeInfo { scope: 'db' | 'schema' | 'table'; name: string; database: string; schema?: string }
+type MaintainAction = 'export' | 'copy' | 'rename' | 'truncate' | 'drop';
+interface DestructiveInfo extends ScopeInfo { action: 'truncate' | 'drop' }
+// Info for the header-level "create new object from file" dialog — scope of the
+// object being created, plus enough parent context to know where it belongs.
+interface CreateScopeInfo { scope: 'db' | 'schema' | 'table'; database?: string; schema?: string }
 interface LogLine { step: string; ok: boolean; text: string; ts?: string }
 interface DryRunSummary {
   total: number; creates: number; inserts: number;
@@ -259,99 +264,6 @@ function ExportDialogModal({ info, busy, onConfirm, onCancel }: {
   );
 }
 
-// ── Per-row Import dialog ──────────────────────────────────────────────────────
-
-function ImportDialogModal({ info, busy, onConfirm, onCancel }: {
-  info: ScopeInfo;
-  busy: boolean;
-  onConfirm: (sql: string, mode: ImportMode) => void;
-  onCancel: () => void;
-}) {
-  const [file, setFile] = useState<File | null>(null);
-  const [sql, setSql] = useState('');
-  const [mode, setMode] = useState<ImportMode>('new');
-  const [showPreview, setShowPreview] = useState(false);
-  const noun = scopeNoun(info);
-  const modes: { v: ImportMode; label: string; desc: string }[] = [
-    { v: 'new', label: 'Create new', desc: `Run the dump as-is — creates objects in ${noun} “${info.name}”.` },
-    { v: 'replace', label: 'Replace', desc: `Drop & recreate the ${noun} “${info.name}” first, then import.` },
-    { v: 'insert', label: 'Insert rows', desc: `Append rows only — no structural changes.` },
-  ];
-  const s = sql ? parseDryRun(sql) : null;
-  return (
-    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
-          <UploadCloud size={17} className="text-emerald-500" />
-          <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">Import into {noun} “{info.name}”</p>
-        </div>
-        <div className="p-5 space-y-4">
-          <div className="h-28">
-            <SqlFileDropZone file={file}
-              onFile={(f, content) => { setFile(f); setSql(content); }}
-              onClear={() => { setFile(null); setSql(''); setShowPreview(false); }} />
-          </div>
-          <div className="space-y-1.5">
-            {modes.map(m => {
-              const active = mode === m.v;
-              const danger = m.v === 'replace';
-              return (
-                <button key={m.v} type="button" onClick={() => setMode(m.v)}
-                  className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-xl border-2 text-left transition-colors ${
-                    active
-                      ? danger
-                        ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/20'
-                        : 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20'
-                      : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
-                  }`}>
-                  <div className={`w-3.5 h-3.5 mt-0.5 rounded-full border-2 flex items-center justify-center shrink-0 ${active ? (danger ? 'border-rose-500' : 'border-emerald-500') : 'border-gray-300 dark:border-slate-600'}`}>
-                    {active && <div className={`w-1.5 h-1.5 rounded-full ${danger ? 'bg-rose-500' : 'bg-emerald-500'}`} />}
-                  </div>
-                  <div>
-                    <p className="text-[13px] font-medium text-gray-800 dark:text-slate-200">{m.label}</p>
-                    <p className="text-[12px] text-gray-400 dark:text-slate-500">{m.desc}</p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          {mode === 'replace' && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[12px] text-rose-700 dark:text-rose-400">
-              <AlertCircle size={14} className="mt-0.5 shrink-0" />
-              This drops the existing {noun} “{info.name}” and all its data before importing.
-            </div>
-          )}
-          {s && (
-            <div>
-              <button type="button" onClick={() => setShowPreview(v => !v)}
-                className="inline-flex items-center gap-1 text-[12px] text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200">
-                <Eye size={12} /> {showPreview ? 'Hide' : 'Preview'} statements ({s.total})
-              </button>
-              {showPreview && (
-                <div className="grid grid-cols-3 gap-1.5 mt-2 text-[11px]">
-                  {([['CREATE', s.creates], ['INSERT', s.inserts], ['ALTER', s.alters], ['DROP', s.drops], ['TRUNCATE', s.truncates], ['UPDATE', s.updates]] as [string, number][]).map(([l, c]) => (
-                    <div key={l} className={`flex items-center justify-between px-2 py-1 rounded ${(l === 'DROP' || l === 'TRUNCATE') && c > 0 ? 'bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400' : 'bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-slate-400'}`}>
-                      <span>{l}</span><span className="font-mono font-semibold">{c}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
-          <button type="button" onClick={onCancel}
-            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
-          <button type="button" disabled={busy || !sql.trim()} onClick={() => onConfirm(sql, mode)}
-            className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white disabled:opacity-50 ${mode === 'replace' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
-            {busy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Import
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Per-row Copy / Move (relocate) dialog ──────────────────────────────────────
 
 function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm, onCancel }: {
@@ -486,6 +398,273 @@ function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm,
             onClick={() => operation && onConfirm({ connId, database, schema }, operation, include, conflict)}
             className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white disabled:opacity-50 ${operation === 'move' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-violet-600 hover:bg-violet-700'}`}>
             {busy ? <Loader2 size={15} className="animate-spin" /> : <ArrowRightLeft size={15} />} {operation === 'move' ? 'Move' : 'Copy'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Rename dialog ────────────────────────────────────────────────────────────────
+
+function RenameDialogModal({ info, busy, onConfirm, onCancel }: {
+  info: ScopeInfo; busy: boolean; onConfirm: (newName: string) => void; onCancel: () => void;
+}) {
+  const [value, setValue] = useState(info.name);
+  const noun = scopeNoun(info);
+  const validFormat = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value);
+  const valid = validFormat && value !== info.name;
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl">
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+          <Pencil size={17} className="text-blue-500" />
+          <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">Rename {noun} “{info.name}”</p>
+        </div>
+        <div className="p-5 space-y-2">
+          <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400">New name</p>
+          <input autoFocus value={value} onChange={e => setValue(e.target.value)}
+            className="w-full px-2.5 py-1.5 text-[13px] font-mono rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          {value && !validFormat && (
+            <p className="text-[11px] text-rose-500">Letters, digits, and underscores only — must not start with a digit.</p>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button type="button" onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" disabled={busy || !valid} onClick={() => onConfirm(value.trim())}
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50">
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />} Rename
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Truncate / Drop confirm dialog (type-to-confirm) ──────────────────────────────
+
+function ConfirmDestructiveModal({ info, action, busy, onConfirm, onCancel }: {
+  info: ScopeInfo; action: 'truncate' | 'drop'; busy: boolean; onConfirm: () => void; onCancel: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const noun = scopeNoun(info);
+  const verb = action === 'drop' ? 'Drop' : 'Truncate';
+  const consequence = action === 'drop'
+    ? `This permanently deletes the ${noun} “${info.name}” and everything in it. This cannot be undone.`
+    : `This permanently deletes all rows from ${noun === 'table' ? `table "${info.name}"` : `every table in ${noun} "${info.name}"`}. Structure is kept. This cannot be undone.`;
+  const canConfirm = !busy && typed === info.name;
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 rounded-2xl shadow-2xl">
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-rose-100 dark:border-rose-900">
+          <AlertCircle size={17} className="text-rose-500 shrink-0" />
+          <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">{verb} {noun} “{info.name}”</p>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-[13px] text-rose-600 dark:text-rose-400">{consequence}</p>
+          <div>
+            <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1">
+              Type <span className="font-mono font-semibold text-gray-700 dark:text-slate-200">{info.name}</span> to confirm
+            </p>
+            <input autoFocus value={typed} onChange={e => setTyped(e.target.value)}
+              className="w-full px-2.5 py-1.5 text-[13px] font-mono rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button type="button" onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" disabled={!canConfirm} onClick={onConfirm}
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50">
+            {busy ? <Loader2 size={15} className="animate-spin" /> : (action === 'drop' ? <Trash2 size={15} /> : <Eraser size={15} />)} {verb}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Per-row maintenance gear menu ──────────────────────────────────────────────────
+
+function MaintenanceMenu({ scope, name, onAction }: {
+  scope: 'db' | 'schema' | 'table'; name: string; onAction: (action: MaintainAction) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node) || btnRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - 176) });
+    }
+    setOpen(v => !v);
+  };
+
+  const item = (action: MaintainAction, label: string, Icon: typeof Download, danger = false) => (
+    <button type="button" key={action}
+      onClick={() => { setOpen(false); onAction(action); }}
+      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left transition-colors ${
+        danger ? 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+      }`}>
+      <Icon size={12} className="shrink-0" /> {label}
+    </button>
+  );
+
+  return (
+    <>
+      <button type="button" ref={btnRef} title={`Maintain ${scope} "${name}"`}
+        onClick={e => { e.stopPropagation(); toggle(); }}
+        className="p-1 rounded text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800">
+        <Settings size={12} />
+      </button>
+      {open && pos && (
+        <div ref={menuRef} style={{ position: 'fixed', top: pos.top, left: pos.left }}
+          className="z-[70] w-44 py-1 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl">
+          {item('export', 'Export…', Download)}
+          {item('copy', 'Copy / Move…', ArrowRightLeft)}
+          {item('rename', 'Rename…', Pencil)}
+          <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+          {item('truncate', 'Truncate…', Eraser, true)}
+          {item('drop', 'Drop…', Trash2, true)}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Header-level "create new db/schema/table from file" dialog ───────────────────
+
+function detectObjectName(sql: string, scope: 'db' | 'schema' | 'table'): string {
+  const kind = scope === 'db' ? 'DATABASE' : scope === 'schema' ? 'SCHEMA' : 'TABLE';
+  const m = sql.match(new RegExp(`CREATE\\s+${kind}\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?"?([A-Za-z_][A-Za-z0-9_]*)"?`, 'i'));
+  return m ? m[1] : '';
+}
+
+interface CreateImportPayload { format: 'sql' | 'dump'; file: File; targetName: string; originalName: string }
+
+function CreateImportDialogModal({ scope, conn, database, schema, busy, onConfirm, onCancel }: {
+  scope: 'db' | 'schema' | 'table';
+  conn: ConnectionRow;
+  database?: string;
+  schema?: string;
+  busy: boolean;
+  onConfirm: (payload: CreateImportPayload) => void;
+  onCancel: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [detectedName, setDetectedName] = useState('');
+  const [targetName, setTargetName] = useState('');
+  const [exists, setExists] = useState<boolean | null>(null);
+  const [checking, setChecking] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  const noun = scope === 'db' ? 'database' : scope === 'schema' ? 'schema' : 'table';
+  const format: 'sql' | 'dump' = file?.name.toLowerCase().endsWith('.dump') ? 'dump' : 'sql';
+  const dumpUnsupported = format === 'dump' && conn.db_type !== 'postgres';
+  const validName = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(targetName);
+
+  useEffect(() => {
+    if (!targetName || !validName) { setExists(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setChecking(true);
+      try {
+        let found = false;
+        if (scope === 'db') {
+          const ep = conn.db_type === 'postgres' ? '/api/pg-databases' : '/api/list-databases';
+          const { data } = await axios.post(ep, { host: conn.host, port: conn.port, user: conn.username, password: conn.password_enc ?? '', ssl: conn.ssl_enabled });
+          found = (data as { databases: string[] }).databases.includes(targetName);
+        } else if (scope === 'schema' && database) {
+          const { data } = await axios.post('/api/schema-explorer/schemas', connToExplorerConn(conn, database));
+          found = (data as { schemas: { schema: string }[] }).schemas.some(s => s.schema === targetName);
+        } else if (scope === 'table' && database) {
+          const { data } = await axios.post('/api/schema-explorer/tables', { conn: connToExplorerConn(conn, database), schemas: schema ? [schema] : undefined });
+          found = (data as { tables: { name: string }[] }).tables.some(t => t.name === targetName);
+        }
+        if (!cancelled) setExists(found);
+      } catch { if (!cancelled) setExists(null); }
+      finally { if (!cancelled) setChecking(false); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [targetName, validName, scope, database, schema, conn]);
+
+  const handleFile = (f: File, content: string) => {
+    setFile(f);
+    const isSql = !f.name.toLowerCase().endsWith('.dump');
+    const detected = isSql ? detectObjectName(content, scope) : '';
+    setDetectedName(detected);
+    if (detected) setTargetName(detected);
+  };
+
+  const canSubmit = !busy && !!file && !!targetName && validName && exists === false && !checking && !dumpUnsupported;
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+          <UploadCloud size={17} className="text-emerald-500" />
+          <p className="font-semibold text-gray-900 dark:text-slate-100 text-base">
+            Import new {noun}{database ? <> into “{database}{schema ? `.${schema}` : ''}”</> : null}
+          </p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="h-28">
+            <SqlFileDropZone file={file} onFile={handleFile}
+              onClear={() => { setFile(null); setDetectedName(''); setTargetName(''); setExists(null); }} />
+          </div>
+          {dumpUnsupported && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[12px] text-rose-700 dark:text-rose-400">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" /> .dump import is only supported for PostgreSQL connections.
+            </div>
+          )}
+          {file && !dumpUnsupported && (
+            <div>
+              <p className="text-[12px] font-medium text-gray-500 dark:text-slate-400 mb-1.5">New {noun} name</p>
+              <input ref={nameRef} value={targetName} onChange={e => setTargetName(e.target.value)}
+                placeholder={`${noun}_name`}
+                className="w-full px-2.5 py-1.5 text-[13px] font-mono rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
+              {targetName && !validName && (
+                <p className="text-[11px] text-rose-500 mt-1">Letters, digits, and underscores only — must not start with a digit.</p>
+              )}
+              {checking && <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Checking availability…</p>}
+              {exists === true && (
+                <div className="flex items-center justify-between gap-2 mt-1.5 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-[12px] text-amber-700 dark:text-amber-400">
+                  <span><AlertCircle size={12} className="inline mr-1 -mt-0.5" />“{targetName}” already exists.</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    <button type="button" onClick={() => nameRef.current?.focus()}
+                      className="px-2 py-0.5 rounded border border-amber-400 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/30">Rename</button>
+                    <button type="button" onClick={onCancel}
+                      className="px-2 py-0.5 rounded border border-amber-400 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/30">Cancel</button>
+                  </span>
+                </div>
+              )}
+              {scope === 'table' && format === 'dump' && detectedName && targetName !== detectedName && (
+                <p className="text-[11px] text-rose-500 mt-1">Renaming isn't supported for .dump table imports — keep the name “{detectedName}” or use a .sql file.</p>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
+          <button type="button" onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" disabled={!canSubmit}
+            onClick={() => file && onConfirm({ format, file, targetName, originalName: detectedName || targetName })}
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />} Import
           </button>
         </div>
       </div>
@@ -671,12 +850,12 @@ function GuidePopover() {
             <div>
               <p className={h3}><Info size={14} className="text-blue-500" /> Navigation</p>
               <div className={sec}>
-                <p>Use the <strong>5-panel flow</strong> left to right: pick a connection → database → schema → tables. In the Import/Export view, hover any database, schema or table row for its import / export icons. Sync uses the toolbar action button.</p>
+                <p>Use the <strong>5-panel flow</strong> left to right: pick a connection → database → schema → tables. In the Import/Export view, each panel header has an {pill('⤒')} <strong>Import</strong> button for creating a brand-new object, and every row has a {pill('⚙')} <strong>maintenance</strong> gear. Sync uses the toolbar action button.</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
                   <li><strong>Panel 1</strong> — saved connections. Click to select one.</li>
-                  <li><strong>Panel 2</strong> — databases. Hover a row for its import / export icons.</li>
-                  <li><strong>Panel 3</strong> — schemas (PostgreSQL only). Hover a row for its import / export icons.</li>
-                  <li><strong>Panel 4</strong> — tables. Hover a row for per-table import / export; result / log appear below.</li>
+                  <li><strong>Panel 2</strong> — databases. Header Import creates a new database; hover a row for its maintenance gear.</li>
+                  <li><strong>Panel 3</strong> — schemas (PostgreSQL only). Header Import creates a new schema; hover a row for its maintenance gear.</li>
+                  <li><strong>Panel 4</strong> — tables. Header Import creates a new table; hover a row for its maintenance gear. Result / log appear below.</li>
                   <li><strong>Saved Jobs</strong> (right, collapsible) — history of past operations.</li>
                 </ul>
               </div>
@@ -685,29 +864,29 @@ function GuidePopover() {
             <div className={sep} />
 
             <div>
-              <p className={h3}><Download size={14} className="text-blue-500" /> Export</p>
+              <p className={h3}><UploadCloud size={14} className="text-emerald-500" /> Import (new object)</p>
               <div className={sec}>
-                <p>In the <strong>Import/Export</strong> view, hover a <strong>database</strong>, <strong>schema</strong> or <strong>table</strong> row and click its {pill('⤓')} export icon. A dialog captures the options:</p>
+                <p>Click the {pill('⤒')} <strong>Import</strong> button in a panel header to create a brand-new database, schema, or table from a <strong>.sql</strong> / <strong>.dump</strong> file — no existing row needs to be selected first.</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
-                  <li><strong>Include</strong> — Schema + data (DDL + rows) or Schema only (DDL).</li>
-                  <li><strong>Format</strong> — SQL (.sql file) or CSV (.zip, one file per table).</li>
+                  <li>Drop or browse the file, then type a name for the new object.</li>
+                  <li>If that name already exists, you're offered <strong>Rename</strong> (edit the field) or <strong>Cancel</strong>.</li>
+                  <li>.dump import requires PostgreSQL and the <code>pg_restore</code> binary on the server.</li>
                 </ul>
-                <p>The export is scoped to the row you clicked — whole database, one schema, or a single table.</p>
               </div>
             </div>
 
             <div className={sep} />
 
             <div>
-              <p className={h3}><UploadCloud size={14} className="text-emerald-500" /> Import</p>
+              <p className={h3}><Settings size={14} className="text-gray-500 dark:text-slate-400" /> Maintenance gear</p>
               <div className={sec}>
-                <p>Hover a <strong>database</strong>, <strong>schema</strong> or <strong>table</strong> row and click its {pill('⤒')} import icon, then drop or browse a <strong>.sql</strong> / <strong>.dump</strong> file. Pick a mode:</p>
+                <p>Hover a <strong>database</strong>, <strong>schema</strong>, or <strong>table</strong> row and click its {pill('⚙')} gear icon for:</p>
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
-                  <li>{pill('Create new')} — run the dump as-is; creates objects in the target.</li>
-                  <li>{pill('Replace')} — drop & recreate the target db / schema / table first, then import.</li>
-                  <li>{pill('Insert rows')} — append row data only, no structural changes.</li>
+                  <li>{pill('Export')} — dump the row's schema and/or data to SQL or CSV.</li>
+                  <li>{pill('Copy / Move')} — clone under a new name on the same server, or to a different server/schema.</li>
+                  <li>{pill('Rename')} — rename in place.</li>
+                  <li>{pill('Truncate')} / {pill('Drop')} — destructive; you must type the exact name to confirm.</li>
                 </ul>
-                <p className="text-[12px] text-gray-400 dark:text-slate-500">Import targets the row you clicked. The dialog shows a statement preview (CREATE/INSERT/DROP counts) before you run.</p>
               </div>
             </div>
 
@@ -828,7 +1007,7 @@ function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgt
 
 // ── Panel 2: Databases ─────────────────────────────────────────────────────────
 
-function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtConn, tgtValue, onTgtChange, onItemContextMenu, onRowExport, onRowImport, onRowRelocate }: {
+function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtConn, tgtValue, onTgtChange, onItemContextMenu, onRowMaintain, onHeaderImport, refreshKey }: {
   conn: ConnectionRow | null;
   value: string;
   onChange: (db: string) => void;
@@ -838,9 +1017,9 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
   tgtValue?: string;
   onTgtChange?: (db: string) => void;
   onItemContextMenu?: (e: React.MouseEvent, dbName: string) => void;
-  onRowExport?: (db: string) => void;     // per-row export icon (maintain view)
-  onRowImport?: (db: string) => void;     // per-row import icon (maintain view)
-  onRowRelocate?: (db: string) => void;   // per-row copy/move icon (maintain view)
+  onRowMaintain?: (action: MaintainAction, db: string) => void;   // per-row gear menu (maintain view)
+  onHeaderImport?: () => void;                                    // header "import new database" button
+  refreshKey?: number;                                            // bump to force-reload the list after a maintain action
 }) {
   const [dbs, setDbs]           = useState<string[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -870,7 +1049,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
   useEffect(() => {
     if (conn) void load(conn); else { setDbs([]); onChange(''); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn?.id]);
+  }, [conn?.id, refreshKey]);
 
   useEffect(() => {
     if (dbs.length > 0 && !value) onChange(dbs[0]);
@@ -925,9 +1104,15 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
       <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 dark:border-slate-800">
         <Database size={14} className="text-purple-500 shrink-0" />
         <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-200">Database</span>
+        {conn && onHeaderImport && (
+          <button type="button" onClick={onHeaderImport} title="Import a new database from a file"
+            className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
+            <UploadCloud size={12} /> Import
+          </button>
+        )}
         {conn && (
           <button type="button" onClick={() => void load(conn)} title="Refresh"
-            className="ml-auto p-0.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
+            className={`${onHeaderImport ? '' : 'ml-auto'} p-0.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300`}>
             {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
           </button>
         )}
@@ -943,7 +1128,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
                 <div key={db} className="group relative">
                   <button type="button" onClick={() => onChange(db)}
                     onContextMenu={onItemContextMenu ? e => { e.preventDefault(); e.stopPropagation(); onItemContextMenu(e, db); } : undefined}
-                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${(onRowExport || onRowImport || onRowRelocate) ? 'pr-[68px]' : ''} ${
+                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${onRowMaintain ? 'pr-8' : ''} ${
                       active
                         ? 'bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300'
                         : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
@@ -954,29 +1139,9 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
                       <span className="text-[11px] font-mono text-violet-500 dark:text-violet-400 shrink-0">{pct}%</span>
                     )}
                   </button>
-                  {(onRowExport || onRowImport || onRowRelocate) && (
-                    <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                      {onRowExport && (
-                        <button type="button" title={`Export database "${db}"`}
-                          onClick={e => { e.stopPropagation(); onRowExport(db); }}
-                          className="p-1 rounded text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/40">
-                          <Download size={12} />
-                        </button>
-                      )}
-                      {onRowImport && (
-                        <button type="button" title={`Import into database "${db}"`}
-                          onClick={e => { e.stopPropagation(); onRowImport(db); }}
-                          className="p-1 rounded text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/40">
-                          <UploadCloud size={12} />
-                        </button>
-                      )}
-                      {onRowRelocate && (
-                        <button type="button" title={`Copy / move database "${db}" to another location`}
-                          onClick={e => { e.stopPropagation(); onRowRelocate(db); }}
-                          className="p-1 rounded text-violet-500 hover:bg-violet-100 dark:hover:bg-violet-900/40">
-                          <ArrowRightLeft size={12} />
-                        </button>
-                      )}
+                  {onRowMaintain && (
+                    <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+                      <MaintenanceMenu scope="db" name={db} onAction={action => onRowMaintain(action, db)} />
                     </div>
                   )}
                   {active && pct !== null && (
@@ -1062,7 +1227,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
 
 // ── Panel 3: Schemas ───────────────────────────────────────────────────────────
 
-function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tgtValue, onTgtChange, onItemContextMenu, onRowExport, onRowImport, onRowRelocate }: {
+function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tgtValue, onTgtChange, onItemContextMenu, onRowMaintain, onHeaderImport, refreshKey }: {
   conn: ConnectionRow | null;
   database: string;
   value: string;
@@ -1072,9 +1237,9 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
   tgtValue?: string;
   onTgtChange?: (s: string) => void;
   onItemContextMenu?: (e: React.MouseEvent, schemaName: string) => void;
-  onRowExport?: (schema: string) => void;     // per-row export icon (maintain view)
-  onRowImport?: (schema: string) => void;     // per-row import icon (maintain view)
-  onRowRelocate?: (schema: string) => void;   // per-row copy/move icon (maintain view)
+  onRowMaintain?: (action: MaintainAction, schema: string) => void;  // per-row gear menu (maintain view)
+  onHeaderImport?: () => void;                                       // header "import new schema" button
+  refreshKey?: number;                                               // bump to force-reload after a maintain action
 }) {
   const [schemas,    setSchemas]    = useState<{ schema: string; tableCount: number }[]>([]);
   const [loading,    setLoading]    = useState(false);
@@ -1103,7 +1268,7 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
     if (conn && database) void load(conn, database);
     else { setSchemas([]); onChange(''); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn?.id, database]);
+  }, [conn?.id, database, refreshKey]);
 
   useEffect(() => {
     if (tgtConn && tgtDatabase) void loadTgt(tgtConn, tgtDatabase);
@@ -1139,7 +1304,7 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
               <div key={s.schema} className="group relative">
                 <button type="button" onClick={() => onSelect(s.schema)}
                   onContextMenu={onCtx ? e => { e.preventDefault(); e.stopPropagation(); onCtx(e, s.schema); } : undefined}
-                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${(onRowExport || onRowImport || onRowRelocate) ? 'pr-[68px]' : ''} ${
+                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${onRowMaintain ? 'pr-8' : ''} ${
                     active ? cls : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
                   }`}>
                   <div className="flex-1 min-w-0">
@@ -1147,29 +1312,9 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
                     <p className="text-[11px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</p>
                   </div>
                 </button>
-                {(onRowExport || onRowImport || onRowRelocate) && (
-                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                    {onRowExport && (
-                      <button type="button" title={`Export schema "${s.schema}"`}
-                        onClick={e => { e.stopPropagation(); onRowExport(s.schema); }}
-                        className="p-1 rounded text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/40">
-                        <Download size={12} />
-                      </button>
-                    )}
-                    {onRowImport && (
-                      <button type="button" title={`Import into schema "${s.schema}"`}
-                        onClick={e => { e.stopPropagation(); onRowImport(s.schema); }}
-                        className="p-1 rounded text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/40">
-                        <UploadCloud size={12} />
-                      </button>
-                    )}
-                    {onRowRelocate && (
-                      <button type="button" title={`Copy / move schema "${s.schema}" to another database`}
-                        onClick={e => { e.stopPropagation(); onRowRelocate(s.schema); }}
-                        className="p-1 rounded text-violet-500 hover:bg-violet-100 dark:hover:bg-violet-900/40">
-                        <ArrowRightLeft size={12} />
-                      </button>
-                    )}
+                {onRowMaintain && (
+                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+                    <MaintenanceMenu scope="schema" name={s.schema} onAction={action => onRowMaintain(action, s.schema)} />
                   </div>
                 )}
               </div>
@@ -1188,7 +1333,13 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
         <span className={`text-[13px] font-semibold ${isPg ? 'text-gray-700 dark:text-slate-200' : 'text-gray-400 dark:text-slate-600'}`}>
           {isDual ? 'Source Schema' : 'Schema'}
         </span>
-        {loading && <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400 ml-auto" />}
+        {isPg && conn && database && onHeaderImport && (
+          <button type="button" onClick={onHeaderImport} title="Import a new schema from a file"
+            className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
+            <UploadCloud size={12} /> Import
+          </button>
+        )}
+        {loading && <Loader2 size={12} className={`animate-spin text-slate-500 dark:text-slate-400 ${onHeaderImport ? '' : 'ml-auto'}`} />}
       </div>
 
       {!isPg ? (
@@ -1467,19 +1618,20 @@ export default function ExportImportPage() {
   }, []);
 
   // Load table list when conn/db/schema changes
-  useEffect(() => {
+  const reloadTables = useCallback(async () => {
     if (!conn || !database) { setTableList([]); return; }
-    void (async () => {
-      setTablesLoading(true);
-      try {
-        const explorerConn = connToExplorerConn(conn, database);
-        const { data } = await axios.post('/api/schema-explorer/tables',
-          { conn: explorerConn, schemas: schema ? [schema] : undefined });
-        setTableList((data as { tables: TableEntry[] }).tables);
-      } catch { setTableList([]); }
-      finally { setTablesLoading(false); }
-    })();
+    setTablesLoading(true);
+    try {
+      const explorerConn = connToExplorerConn(conn, database);
+      const { data } = await axios.post('/api/schema-explorer/tables',
+        { conn: explorerConn, schemas: schema ? [schema] : undefined });
+      setTableList((data as { tables: TableEntry[] }).tables);
+    } catch { setTableList([]); }
+    finally { setTablesLoading(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conn?.id, database, schema]);
+
+  useEffect(() => { void reloadTables(); }, [reloadTables]);
 
   // Auto-switch import strategy when schema selection changes
   useEffect(() => {
@@ -1559,9 +1711,21 @@ export default function ExportImportPage() {
     } finally { setRunning(false); }
   };
 
-  // ── Per-row import/export dialogs (Import/Export view) ───────────────────────
+  // ── Per-row maintenance dialogs (Import/Export view) ──────────────────────────
   const [exportDialog, setExportDialog] = useState<ScopeInfo | null>(null);
-  const [importDialog, setImportDialog] = useState<ScopeInfo | null>(null);
+  const [renameDialog, setRenameDialog] = useState<ScopeInfo | null>(null);
+  const [destructiveDialog, setDestructiveDialog] = useState<DestructiveInfo | null>(null);
+  const [createImportDialog, setCreateImportDialog] = useState<CreateScopeInfo | null>(null);
+  const [dbRefreshKey, setDbRefreshKey] = useState(0);
+  const [schemaRefreshKey, setSchemaRefreshKey] = useState(0);
+
+  // Dispatch a gear-menu action for a db/schema/table row to the right dialog
+  const handleTableMaintain = (action: MaintainAction, info: ScopeInfo) => {
+    if (action === 'export') setExportDialog(info);
+    else if (action === 'copy') setRelocateDialog(info);
+    else if (action === 'rename') setRenameDialog(info);
+    else setDestructiveDialog({ ...info, action });
+  };
 
   const runScopedExport = async (info: ScopeInfo, include: ExportInclude, fmt: ExportFormat) => {
     if (!conn) return;
@@ -1604,22 +1768,81 @@ export default function ExportImportPage() {
     } finally { setRunning(false); }
   };
 
-  const runScopedImport = async (info: ScopeInfo, mode: ImportMode, sql: string) => {
-    if (!conn || !sql.trim()) return;
-    setImportDialog(null);
+  // ── Rename / Truncate / Drop (per-row maintenance) ────────────────────────────
+  const runRename = async (info: ScopeInfo, newName: string) => {
+    if (!conn) return;
+    setRenameDialog(null);
     setRunning(true); setLog([]); setRunStatus(null); setError(null);
     setPendingJobEntry(null); setJobSaved(false);
-    let strategy: ImportStrategy = 'import_rows';
-    if (mode === 'replace') strategy = info.scope === 'db' ? 'replace_db' : info.scope === 'schema' ? 'replace_schema' : 'replace_table';
-    const schemaParam = info.scope === 'db' ? undefined : info.schema;
-    const tableParam = info.scope === 'table' ? info.name : undefined;
     try {
-      const { data } = await axios.post('/api/export-import/import',
-        { cfg: connToCfg(conn, info.database), sql, strategy, schema: schemaParam, table: tableParam });
+      const { data } = await axios.post('/api/export-import/maintain', {
+        cfg: connToCfg(conn, info.database), scope: info.scope, schema: info.schema, name: info.name, action: 'rename', newName,
+      });
+      const d = data as { success: boolean; log?: string[] };
+      setLog((d.log ?? []).map(t => ({ step: 'rename', ok: d.success, text: t })));
+      setRunStatus(d.success ? 'success' : 'failed');
+      if (d.success) {
+        if (info.scope === 'db') { setDbRefreshKey(k => k + 1); if (database === info.name) setDatabase(newName); }
+        else if (info.scope === 'schema') { setSchemaRefreshKey(k => k + 1); if (schema === info.name) setSchema(newName); }
+        else { /* table rename — refresh the table list */ void reloadTables(); }
+      }
+    } catch (err: unknown) {
+      const d = axios.isAxiosError(err) ? err.response?.data as { log?: string[]; error?: string } | undefined : undefined;
+      setLog((d?.log ?? [`[ERROR] ${d?.error ?? String(err)}`]).map(t => ({ step: 'rename', ok: false, text: t })));
+      setRunStatus('failed');
+    } finally { setRunning(false); }
+  };
+
+  const runDestructive = async (info: DestructiveInfo) => {
+    if (!conn) return;
+    setDestructiveDialog(null);
+    setRunning(true); setLog([]); setRunStatus(null); setError(null);
+    setPendingJobEntry(null); setJobSaved(false);
+    try {
+      const { data } = await axios.post('/api/export-import/maintain', {
+        cfg: connToCfg(conn, info.database), scope: info.scope, schema: info.schema, name: info.name, action: info.action,
+      });
+      const d = data as { success: boolean; log?: string[] };
+      setLog((d.log ?? []).map(t => ({ step: info.action, ok: d.success, text: t })));
+      setRunStatus(d.success ? 'success' : 'failed');
+      if (d.success && info.action === 'drop') {
+        if (info.scope === 'db') { setDbRefreshKey(k => k + 1); if (database === info.name) setDatabase(''); }
+        else if (info.scope === 'schema') { setSchemaRefreshKey(k => k + 1); if (schema === info.name) setSchema(''); }
+        else void reloadTables();
+      } else if (d.success && info.action === 'truncate' && info.scope === 'table') {
+        void reloadTables();
+      }
+    } catch (err: unknown) {
+      const d = axios.isAxiosError(err) ? err.response?.data as { log?: string[]; error?: string } | undefined : undefined;
+      setLog((d?.log ?? [`[ERROR] ${d?.error ?? String(err)}`]).map(t => ({ step: info.action, ok: false, text: t })));
+      setRunStatus('failed');
+    } finally { setRunning(false); }
+  };
+
+  // ── Header-level "create new db/schema/table from file" ──────────────────────
+  const runCreateImport = async (scopeInfo: CreateScopeInfo, payload: CreateImportPayload) => {
+    if (!conn) return;
+    setCreateImportDialog(null);
+    setRunning(true); setLog([]); setRunStatus(null); setError(null);
+    setPendingJobEntry(null); setJobSaved(false);
+    const fd = new FormData();
+    fd.append('cfg', JSON.stringify(connToCfg(conn, scopeInfo.database ?? conn.database_name)));
+    fd.append('scope', scopeInfo.scope);
+    if (scopeInfo.schema) fd.append('parentSchema', scopeInfo.schema);
+    fd.append('targetName', payload.targetName);
+    fd.append('originalName', payload.originalName);
+    fd.append('format', payload.format);
+    fd.append('file', payload.file);
+    try {
+      const { data } = await axios.post('/api/export-import/import-object', fd);
       const d = data as { success: boolean; log?: string[] };
       setLog((d.log ?? []).map(t => ({ step: 'import', ok: d.success, text: t })));
       setRunStatus(d.success ? 'success' : 'failed');
-      if (d.success) setPendingJobEntry({ operation: 'import', target_label: conn.label, target_db: info.database, status: 'success' });
+      if (d.success) {
+        if (scopeInfo.scope === 'db') setDbRefreshKey(k => k + 1);
+        else if (scopeInfo.scope === 'schema') setSchemaRefreshKey(k => k + 1);
+        else void reloadTables();
+      }
     } catch (err: unknown) {
       const d = axios.isAxiosError(err) ? err.response?.data as { log?: string[]; error?: string } | undefined : undefined;
       setLog((d?.log ?? [`[ERROR] ${d?.error ?? String(err)}`]).map(t => ({ step: 'import', ok: false, text: t })));
@@ -1656,11 +1879,18 @@ export default function ExportImportPage() {
       const d = data as { success: boolean; log?: LogLine[] };
       setLog((d.log ?? []).map(l => ({ step: l.step, ok: l.ok, text: l.text })));
       setRunStatus(d.success ? 'success' : 'failed');
-      if (d.success) setPendingJobEntry({
-        operation: operation === 'move' ? 'replace' : 'sync',
-        source_label: conn.label, source_db: info.database,
-        target_label: targetConn.label, target_db: target.database, status: 'success',
-      });
+      if (d.success) {
+        setPendingJobEntry({
+          operation: operation === 'move' ? 'replace' : 'sync',
+          source_label: conn.label, source_db: info.database,
+          target_label: targetConn.label, target_db: target.database, status: 'success',
+        });
+        // A copy/move can create or drop db/schema objects on this same connection
+        // (new name on the same server, or move-drops-source) — refresh the lists.
+        if (info.scope === 'db') setDbRefreshKey(k => k + 1);
+        else if (info.scope === 'schema') setSchemaRefreshKey(k => k + 1);
+        else void reloadTables();
+      }
     } catch (err: unknown) {
       const d = axios.isAxiosError(err) ? err.response?.data as { log?: LogLine[]; error?: string } | undefined : undefined;
       setLog((d?.log ?? [{ step: 'relocate', ok: false, text: `[ERROR] ${d?.error ?? String(err)}` }]));
@@ -1992,9 +2222,9 @@ export default function ExportImportPage() {
                       tgtValue={tab === 'sync' ? tgtDatabase : undefined}
                       onTgtChange={tab === 'sync' ? setTgtDatabase : undefined}
                       onItemContextMenu={tab === 'sync' ? (e, dbName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'db', name: dbName }) : undefined}
-                      onRowExport={tab === 'export' ? (db) => setExportDialog({ scope: 'db', name: db, database: db }) : undefined}
-                      onRowImport={tab === 'export' ? (db) => setImportDialog({ scope: 'db', name: db, database: db }) : undefined}
-                      onRowRelocate={tab === 'export' ? (db) => setRelocateDialog({ scope: 'db', name: db, database: db }) : undefined}
+                      onRowMaintain={tab === 'export' ? (action, db) => handleTableMaintain(action, { scope: 'db', name: db, database: db }) : undefined}
+                      onHeaderImport={tab === 'export' && conn ? () => setCreateImportDialog({ scope: 'db' }) : undefined}
+                      refreshKey={dbRefreshKey}
                     />
                   </div>
                 </Panel>
@@ -2011,9 +2241,9 @@ export default function ExportImportPage() {
                       tgtValue={tab === 'sync' ? tgtSchema : undefined}
                       onTgtChange={tab === 'sync' ? (s) => { setTgtSchema(s); setAnalyseResult(null); } : undefined}
                       onItemContextMenu={tab === 'sync' ? (e, schemaName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'schema', name: schemaName }) : undefined}
-                      onRowExport={tab === 'export' ? (s) => setExportDialog({ scope: 'schema', name: s, database, schema: s }) : undefined}
-                      onRowImport={tab === 'export' ? (s) => setImportDialog({ scope: 'schema', name: s, database, schema: s }) : undefined}
-                      onRowRelocate={tab === 'export' ? (s) => setRelocateDialog({ scope: 'schema', name: s, database, schema: s }) : undefined}
+                      onRowMaintain={tab === 'export' ? (action, s) => handleTableMaintain(action, { scope: 'schema', name: s, database, schema: s }) : undefined}
+                      onHeaderImport={tab === 'export' && conn?.db_type === 'postgres' && database ? () => setCreateImportDialog({ scope: 'schema', database }) : undefined}
+                      refreshKey={schemaRefreshKey}
                     />
                   </div>
                 </Panel>
@@ -2033,8 +2263,15 @@ export default function ExportImportPage() {
                   <span className="text-[12px] text-gray-400 dark:text-slate-500">{tableList.length} tables</span>
                 )}
                 {tablesLoading && <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400 ml-1" />}
+                {tab === 'export' && conn && database && (
+                  <button type="button" onClick={() => setCreateImportDialog({ scope: 'table', database, schema: schema || 'public' })}
+                    title="Import a new table from a file"
+                    className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
+                    <UploadCloud size={12} /> Import
+                  </button>
+                )}
                 {tab !== 'import' && tableList.length > 0 && !tablesLoading && (
-                  <div className="ml-auto flex items-center gap-1">
+                  <div className={`${tab === 'export' && conn && database ? '' : 'ml-auto'} flex items-center gap-1`}>
                     {tab === 'sync' && analyseResult && (
                       <button type="button"
                         onClick={() => {
@@ -2156,26 +2393,11 @@ export default function ExportImportPage() {
                                 </button>
                               )}
 
-                              {/* Per-table import/export (maintain view) */}
+                              {/* Per-table maintenance gear */}
                               {tab === 'export' && (
-                                <span className="flex items-center gap-0.5 shrink-0">
-                                  <button type="button" title={`Export table "${t.name}"`}
-                                    onClick={e => { e.preventDefault(); setExportDialog({ scope: 'table', name: t.name, database, schema: t.schema }); }}
-                                    className="ml-0.5 p-0.5 rounded text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20">
-                                    <Download size={11} />
-                                  </button>
-                                  <button type="button" title={`Import into table "${t.name}"`}
-                                    onClick={e => { e.preventDefault(); setImportDialog({ scope: 'table', name: t.name, database, schema: t.schema }); }}
-                                    className="p-0.5 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
-                                    <UploadCloud size={11} />
-                                  </button>
-                                  <button type="button"
-                                    disabled={conn?.db_type !== 'postgres'}
-                                    title={conn?.db_type === 'postgres' ? `Copy / move table "${t.name}" to another schema` : 'Table relocation requires PostgreSQL'}
-                                    onClick={e => { e.preventDefault(); setRelocateDialog({ scope: 'table', name: t.name, database, schema: t.schema }); }}
-                                    className="p-0.5 rounded text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/20 disabled:opacity-30 disabled:cursor-not-allowed">
-                                    <ArrowRightLeft size={11} />
-                                  </button>
+                                <span className="ml-0.5 shrink-0" onClick={e => e.preventDefault()}>
+                                  <MaintenanceMenu scope="table" name={t.name}
+                                    onAction={action => handleTableMaintain(action, { scope: 'table', name: t.name, database, schema: t.schema })} />
                                 </span>
                               )}
                             </label>
@@ -2284,21 +2506,32 @@ export default function ExportImportPage() {
             onCancel={() => setShowDryRun(false)} />
         )}
 
-        {/* Per-row export / import dialogs (Import/Export view) */}
+        {/* Per-row maintenance dialogs (Import/Export view) */}
         {exportDialog && (
           <ExportDialogModal info={exportDialog} busy={running}
             onCancel={() => setExportDialog(null)}
             onConfirm={(include, fmt) => void runScopedExport(exportDialog, include, fmt)} />
         )}
-        {importDialog && (
-          <ImportDialogModal info={importDialog} busy={running}
-            onCancel={() => setImportDialog(null)}
-            onConfirm={(sql, mode) => void runScopedImport(importDialog, mode, sql)} />
-        )}
         {relocateDialog && (
           <RelocateDialogModal info={relocateDialog} connections={connections} sourceConnId={connId} busy={running}
             onCancel={() => setRelocateDialog(null)}
             onConfirm={(target, op, include, conflictStrategy) => void runRelocate(relocateDialog, target, op, include, conflictStrategy)} />
+        )}
+        {renameDialog && (
+          <RenameDialogModal info={renameDialog} busy={running}
+            onCancel={() => setRenameDialog(null)}
+            onConfirm={(newName) => void runRename(renameDialog, newName)} />
+        )}
+        {destructiveDialog && (
+          <ConfirmDestructiveModal info={destructiveDialog} action={destructiveDialog.action} busy={running}
+            onCancel={() => setDestructiveDialog(null)}
+            onConfirm={() => void runDestructive(destructiveDialog)} />
+        )}
+        {createImportDialog && conn && (
+          <CreateImportDialogModal scope={createImportDialog.scope} conn={conn}
+            database={createImportDialog.database} schema={createImportDialog.schema} busy={running}
+            onCancel={() => setCreateImportDialog(null)}
+            onConfirm={(payload) => void runCreateImport(createImportDialog, payload)} />
         )}
 
 

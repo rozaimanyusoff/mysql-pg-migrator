@@ -135,6 +135,66 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
+// ── Shared exec core, reused by import-object.ts for "create new db/schema/table" ──
+// Runs preprocessed SQL against cfg under the given schema's search_path, inside a
+// transaction. Returns the same { success, log } / rollback shape as the HTTP handlers.
+export async function execSqlImport(cfg: ConnCfg, rawSql: string, opts: ImportScopeOpts = {}): Promise<{ success: boolean; log: string[] }> {
+  if (cfg.db_type === 'postgres') return execPgImport(cfg, rawSql, opts);
+  return execMysqlImport(cfg, rawSql, opts);
+}
+
+async function execPgImport(cfg: ConnCfg, rawSql: string, scope: ImportScopeOpts): Promise<{ success: boolean; log: string[] }> {
+  const log: string[] = [];
+  const targetSchema = scope.schema || 'public';
+  const { sql, converted } = preprocessSql(rawSql);
+  if (converted > 0)
+    log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
+
+  const pool = new Pool({
+    host: cfg.host, port: cfg.port ?? 5432, user: cfg.user,
+    password: cfg.password, database: cfg.database,
+    ssl: cfg.ssl ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 15000, statement_timeout: 0,
+  });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (targetSchema !== 'public') await client.query(`CREATE SCHEMA IF NOT EXISTS "${targetSchema}"`);
+    await client.query(`SET search_path TO "${targetSchema}", public`);
+    await client.query(sql);
+    await client.query('COMMIT');
+    log.push(`[OK] SQL imported and committed to "${cfg.database}"${targetSchema !== 'public' ? ` (schema "${targetSchema}")` : ''}`);
+    return { success: true, log };
+  } catch (err: unknown) {
+    await client.query('ROLLBACK').catch(() => {});
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, log: [...log, `[FAIL] Import failed on "${cfg.database}"`, '[ROLLBACK] Transaction rolled back — database state is unchanged.', `[ERROR] ${message}`] };
+  } finally { client.release(); await pool.end(); }
+}
+
+async function execMysqlImport(cfg: ConnCfg, rawSql: string, _scope: ImportScopeOpts): Promise<{ success: boolean; log: string[] }> {
+  const log: string[] = [];
+  const { sql, converted } = preprocessSql(rawSql);
+  if (converted > 0)
+    log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
+
+  const conn = await mysql.createConnection({
+    host: cfg.host, port: cfg.port ?? 3306, user: cfg.user,
+    password: cfg.password, database: cfg.database, multipleStatements: true,
+  });
+  try {
+    await conn.beginTransaction();
+    await conn.execute(sql);
+    await conn.commit();
+    log.push(`[OK] SQL imported and committed to "${cfg.database}"`);
+    return { success: true, log };
+  } catch (err: unknown) {
+    await conn.rollback().catch(() => {});
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, log: [...log, `[FAIL] Import failed on "${cfg.database}"`, '[ROLLBACK] Transaction rolled back — database state is unchanged.', `[ERROR] ${message}`] };
+  } finally { await conn.end(); }
+}
+
 async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse, scope: ImportScopeOpts = {}) {
   const log: string[] = [];
   const targetSchema = scope.schema || 'public';

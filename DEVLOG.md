@@ -2,6 +2,18 @@
 
 ---
 
+## 2026-07-02
+- **implement** — Data Maintenance (`/export-import`): header-level "import new object" + per-row maintenance gear
+  - Added an **Import** button to the header of the Database, Schema, and Table panels (visible in the Import/Export view) that creates a brand-new database/schema/table from a `.sql` or `.dump` file — no existing row needs to be selected. New `CreateImportDialogModal` auto-detects the object name from `CREATE DATABASE/SCHEMA/TABLE` in `.sql` text, live-checks name availability against the target connection, and offers Rename (keep editing) or Cancel on conflict.
+  - New API `src/pages/api/export-import/import-object.ts` (multipart via `formidable`, `bodyParser: false`): `.sql` path reuses a new exported `execSqlImport()` helper extracted from `import.ts`; `.dump` path shells out to `pg_restore` (PostgreSQL only) via `child_process.execFile`, using `PGOPTIONS=-c search_path=...` to target a schema and `-t` to filter a single table. Best-effort regex rename of a conflicting table identifier is applied for `.sql` uploads; not supported for `.dump`.
+  - Removed the per-row **Import** icon (`UploadCloud`) from Database/Schema/Table rows — deleted `ImportDialogModal`, `importDialog` state, and `runScopedImport` (importing into an already-existing row didn't make sense; superseded by the header-level flow above).
+  - Replaced the remaining per-row Export (`Download`) and Copy/Move (`ArrowRightLeft`) icons with a single gear icon (new `MaintenanceMenu` dropdown: Export, Copy / Move, Rename, Truncate, Drop). Export and Copy/Move re-open the existing `ExportDialogModal`/`RelocateDialogModal` unchanged; new `RenameDialogModal` and `ConfirmDestructiveModal` (type-the-exact-name-to-confirm) back Rename/Truncate/Drop.
+  - New API `src/pages/api/export-import/maintain.ts`: handles rename/truncate/drop for db/schema/table scope on both PostgreSQL and MySQL (MySQL has no schema concept or database rename — returns a clear 400 for the latter).
+  - `DatabasePanel`/`SchemaPanel` gained a `refreshKey` prop (bumped after a successful maintain/import action) so their table lists reload without touching the parent's already-selected connection; the inline table list's fetch was extracted into a `reloadTables()` callback reused the same way.
+  - Files: `src/pages/export-import.tsx`, `src/pages/api/export-import/import.ts` (exported `execSqlImport`), `src/pages/api/export-import/import-object.ts` (new), `src/pages/api/export-import/maintain.ts` (new). Added `formidable` + `@types/formidable` dependencies.
+  - Verified against a live local PostgreSQL instance via direct API calls: db/schema/table creation from `.sql`, `.dump` restore via `pg_restore`, 409 on name conflict, and rename/truncate/drop for all three scopes. Could not drive the actual browser UI in this environment (no Playwright/chromium-cli installed) — recommend a manual click-through of the gear dropdown and dialogs before relying on it.
+  - Status: done
+
 ## 2026-06-27
 - **revision** — Source/target highlight color → amber; target button visibility by selection state
   - Source `isSelected` row: blue-100 → amber-100; Table2 icon and table name text → amber; checkbox accent → amber-500
