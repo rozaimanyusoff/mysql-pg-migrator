@@ -8,6 +8,7 @@ type ImportStrategy = 'import_rows' | 'replace_schema' | 'replace_db' | 'replace
 interface ImportScopeOpts {
   schema?: string;   // PostgreSQL target schema (default 'public')
   table?: string;    // required for replace_table
+  skipConstraints?: boolean; // disable FK/trigger checks during load, restore after
 }
 
 // ── pg_dump preprocessor ─────────────────────────────────────────────────────
@@ -85,6 +86,34 @@ function preprocessSql(rawSql: string): { sql: string; converted: number; copyTa
   return { sql: output.join('\n'), converted, copyTables };
 }
 
+// ── FK deferral (skip-constraints backstop) ──────────────────────────────────
+// session_replication_role = replica should suppress FK trigger firing, but some
+// dumps define FOREIGN KEY constraints inline (not deferred to a post-data section
+// the way pg_dump/our own exporter do), and in practice that ordering — not just
+// the GUC — is what avoids the violation. Structurally relocate every FK-adding
+// statement (bare ALTER TABLE, or this app's own DO $$ ... $$ best-effort wrapper)
+// to the very end of the script so the constraint physically can't exist yet when
+// earlier data statements run, regardless of trigger/GUC behavior on the target server.
+//
+// Relocating alone isn't enough: ADD CONSTRAINT re-validates against the now-loaded
+// data, so a genuinely orphaned row (no matching parent) still fails — and since this
+// is a single transaction, that failure rolls back everything, defeating the point of
+// "skip constraints". So bare statements get wrapped in the same best-effort
+// DO $$ ... EXCEPTION WHEN OTHERS THEN NULL; END $$; pattern already used elsewhere in
+// this codebase for FK creation: a constraint that can't validate is skipped, not fatal.
+function deferForeignKeys(sql: string): { sql: string; deferred: number } {
+  const blockRe = /DO \$\$\s*BEGIN[\s\S]*?FOREIGN KEY[\s\S]*?END \$\$;/gi;
+  const bareRe = /ALTER TABLE(?:\s+ONLY)?\s+\S+\s+ADD CONSTRAINT\s+\S+\s+FOREIGN KEY[\s\S]*?;/gi;
+  const deferred: string[] = [];
+  let out = sql.replace(blockRe, m => { deferred.push(m.trim()); return ''; });
+  out = out.replace(bareRe, m => {
+    deferred.push(`DO $$ BEGIN\n  ${m.trim()}\nEXCEPTION WHEN OTHERS THEN NULL;\nEND $$;`);
+    return '';
+  });
+  if (deferred.length === 0) return { sql, deferred: 0 };
+  return { sql: `${out}\n\n-- [skip-constraints] Deferred FOREIGN KEY constraints, added after data load (best-effort)\n${deferred.join('\n')}\n`, deferred: deferred.length };
+}
+
 // Parse one line of COPY text format (tab-separated, \N = NULL, \\ = backslash …)
 function parseCopyRow(line: string): (string | null)[] {
   return line.split('\t').map(field => {
@@ -116,8 +145,8 @@ export const config = {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { cfg, sql, strategy = 'import_rows', schema, table } = req.body as {
-    cfg?: ConnCfg; sql?: string; strategy?: ImportStrategy; schema?: string; table?: string;
+  const { cfg, sql, strategy = 'import_rows', schema, table, skipConstraints } = req.body as {
+    cfg?: ConnCfg; sql?: string; strategy?: ImportStrategy; schema?: string; table?: string; skipConstraints?: boolean;
   };
   if (!cfg?.host || !cfg?.user || !cfg?.database || !cfg?.db_type)
     return res.status(400).json({ error: 'cfg (db_type, host, user, database) required' });
@@ -128,8 +157,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const scope: ImportScopeOpts = { schema: schema?.trim() || undefined, table: table?.trim() || undefined };
 
   try {
-    if (cfg.db_type === 'postgres') return await pgImport(cfg, sql, strategy, res, scope);
-    return await mysqlImport(cfg, sql, strategy, res, scope);
+    if (cfg.db_type === 'postgres') return await pgImport(cfg, sql, strategy, res, scope, !!skipConstraints);
+    return await mysqlImport(cfg, sql, strategy, res, scope, !!skipConstraints);
   } catch (err: unknown) {
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
@@ -146,9 +175,14 @@ export async function execSqlImport(cfg: ConnCfg, rawSql: string, opts: ImportSc
 async function execPgImport(cfg: ConnCfg, rawSql: string, scope: ImportScopeOpts): Promise<{ success: boolean; log: string[] }> {
   const log: string[] = [];
   const targetSchema = scope.schema || 'public';
-  const { sql, converted } = preprocessSql(rawSql);
+  let { sql, converted } = preprocessSql(rawSql);
   if (converted > 0)
     log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
+  if (scope.skipConstraints) {
+    const { sql: deferredSql, deferred } = deferForeignKeys(sql);
+    sql = deferredSql;
+    if (deferred > 0) log.push(`[INFO] Deferred ${deferred} FOREIGN KEY constraint${deferred > 1 ? 's' : ''} to run after data load (best-effort — any that fail to validate are silently skipped, not restored)`);
+  }
 
   const pool = new Pool({
     host: cfg.host, port: cfg.port ?? 5432, user: cfg.user,
@@ -159,9 +193,21 @@ async function execPgImport(cfg: ConnCfg, rawSql: string, scope: ImportScopeOpts
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (scope.skipConstraints) {
+      try {
+        await client.query('SET session_replication_role = replica');
+        log.push('[INFO] Constraints skipped: SET session_replication_role = replica (FK/trigger checks disabled for this transaction)');
+      } catch (e: unknown) {
+        log.push(`[WARN] Could not disable constraints (requires superuser/REPLICATION privilege): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     if (targetSchema !== 'public') await client.query(`CREATE SCHEMA IF NOT EXISTS "${targetSchema}"`);
     await client.query(`SET search_path TO "${targetSchema}", public`);
     await client.query(sql);
+    if (scope.skipConstraints) {
+      await client.query('SET session_replication_role = origin').catch(() => {});
+      log.push('[INFO] Constraints restored: SET session_replication_role = origin');
+    }
     await client.query('COMMIT');
     log.push(`[OK] SQL imported and committed to "${cfg.database}"${targetSchema !== 'public' ? ` (schema "${targetSchema}")` : ''}`);
     return { success: true, log };
@@ -172,7 +218,7 @@ async function execPgImport(cfg: ConnCfg, rawSql: string, scope: ImportScopeOpts
   } finally { client.release(); await pool.end(); }
 }
 
-async function execMysqlImport(cfg: ConnCfg, rawSql: string, _scope: ImportScopeOpts): Promise<{ success: boolean; log: string[] }> {
+async function execMysqlImport(cfg: ConnCfg, rawSql: string, scope: ImportScopeOpts): Promise<{ success: boolean; log: string[] }> {
   const log: string[] = [];
   const { sql, converted } = preprocessSql(rawSql);
   if (converted > 0)
@@ -184,7 +230,15 @@ async function execMysqlImport(cfg: ConnCfg, rawSql: string, _scope: ImportScope
   });
   try {
     await conn.beginTransaction();
+    if (scope.skipConstraints) {
+      await conn.execute('SET FOREIGN_KEY_CHECKS = 0');
+      log.push('[INFO] Constraints skipped: SET FOREIGN_KEY_CHECKS = 0');
+    }
     await conn.execute(sql);
+    if (scope.skipConstraints) {
+      await conn.execute('SET FOREIGN_KEY_CHECKS = 1');
+      log.push('[INFO] Constraints restored: SET FOREIGN_KEY_CHECKS = 1');
+    }
     await conn.commit();
     log.push(`[OK] SQL imported and committed to "${cfg.database}"`);
     return { success: true, log };
@@ -195,14 +249,19 @@ async function execMysqlImport(cfg: ConnCfg, rawSql: string, _scope: ImportScope
   } finally { await conn.end(); }
 }
 
-async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse, scope: ImportScopeOpts = {}) {
+async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse, scope: ImportScopeOpts = {}, skipConstraints = false) {
   const log: string[] = [];
   const targetSchema = scope.schema || 'public';
 
   // Preprocess: convert COPY blocks → INSERT, strip psql meta-commands
-  const { sql, converted, copyTables } = preprocessSql(rawSql);
+  let { sql, converted, copyTables } = preprocessSql(rawSql);
   if (converted > 0)
     log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
+  if (skipConstraints) {
+    const { sql: deferredSql, deferred } = deferForeignKeys(sql);
+    sql = deferredSql;
+    if (deferred > 0) log.push(`[INFO] Deferred ${deferred} FOREIGN KEY constraint${deferred > 1 ? 's' : ''} to run after data load (best-effort — any that fail to validate are silently skipped, not restored)`);
+  }
 
   if (strategy === 'replace_db') {
     const adminClient = new Client({
@@ -234,6 +293,15 @@ async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, 
   try {
     await client.query('BEGIN');
 
+    if (skipConstraints) {
+      try {
+        await client.query('SET session_replication_role = replica');
+        log.push('[INFO] Constraints skipped: SET session_replication_role = replica (FK/trigger checks disabled for this transaction)');
+      } catch (e: unknown) {
+        log.push(`[WARN] Could not disable constraints (requires superuser/REPLICATION privilege): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     if (strategy === 'replace_schema') {
       if (copyTables.length > 0) {
         // Data-only dump: truncate only the tables referenced in the dump so the
@@ -262,6 +330,12 @@ async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, 
     await client.query(`SET search_path TO "${targetSchema}", public`);
 
     await client.query(sql);
+
+    if (skipConstraints) {
+      await client.query('SET session_replication_role = origin').catch(() => {});
+      log.push('[INFO] Constraints restored: SET session_replication_role = origin');
+    }
+
     await client.query('COMMIT');
     log.push(`[OK] SQL imported and committed to "${cfg.database}"${targetSchema !== 'public' ? ` (schema "${targetSchema}")` : ''}`);
     return res.status(200).json({ success: true, log });
@@ -280,7 +354,7 @@ async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, 
   } finally { client.release(); await pool.end(); }
 }
 
-async function mysqlImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse, scope: ImportScopeOpts = {}) {
+async function mysqlImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, res: NextApiResponse, scope: ImportScopeOpts = {}, skipConstraints = false) {
   const log: string[] = [];
 
   // Preprocess handles psql dumps gracefully even if targeting MySQL
@@ -335,7 +409,15 @@ async function mysqlImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrateg
   });
   try {
     await conn.beginTransaction();
+    if (skipConstraints) {
+      await conn.execute('SET FOREIGN_KEY_CHECKS = 0');
+      log.push('[INFO] Constraints skipped: SET FOREIGN_KEY_CHECKS = 0');
+    }
     await conn.execute(sql);
+    if (skipConstraints) {
+      await conn.execute('SET FOREIGN_KEY_CHECKS = 1');
+      log.push('[INFO] Constraints restored: SET FOREIGN_KEY_CHECKS = 1');
+    }
     await conn.commit();
     log.push(`[OK] SQL imported and committed to "${cfg.database}"`);
     return res.status(200).json({ success: true, log });

@@ -2,6 +2,7 @@
 import Head from 'next/head';
 import Link from 'next/link';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import JSZip from 'jszip';
 import {
@@ -13,6 +14,7 @@ import {
   Settings, Pencil, Eraser,
 } from 'lucide-react';
 import { useAlert } from '../lib/alert-context';
+import { Tooltip } from '../components/Tooltip';
 import type { ConnectionRow } from './api/connections/index';
 import type { ConnCfg, ExportInclude, ConflictStrategy } from '../lib/sql-exporter';
 import type { HistoryEntry } from './api/export-import/history';
@@ -531,7 +533,7 @@ function MaintenanceMenu({ scope, name, onAction }: {
         className="p-1 rounded text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800">
         <Settings size={12} />
       </button>
-      {open && pos && (
+      {open && pos && createPortal(
         <div ref={menuRef} style={{ position: 'fixed', top: pos.top, left: pos.left }}
           className="z-[70] w-44 py-1 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl">
           {item('export', 'Export…', Download)}
@@ -540,7 +542,8 @@ function MaintenanceMenu({ scope, name, onAction }: {
           <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
           {item('truncate', 'Truncate…', Eraser, true)}
           {item('drop', 'Drop…', Trash2, true)}
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
@@ -554,7 +557,7 @@ function detectObjectName(sql: string, scope: 'db' | 'schema' | 'table'): string
   return m ? m[1] : '';
 }
 
-interface CreateImportPayload { format: 'sql' | 'dump'; file: File; targetName: string; originalName: string }
+interface CreateImportPayload { format: 'sql' | 'dump'; file: File; targetName: string; originalName: string; skipConstraints: boolean }
 
 function CreateImportDialogModal({ scope, conn, database, schema, busy, onConfirm, onCancel }: {
   scope: 'db' | 'schema' | 'table';
@@ -570,6 +573,7 @@ function CreateImportDialogModal({ scope, conn, database, schema, busy, onConfir
   const [targetName, setTargetName] = useState('');
   const [exists, setExists] = useState<boolean | null>(null);
   const [checking, setChecking] = useState(false);
+  const [skipConstraints, setSkipConstraints] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
 
   const noun = scope === 'db' ? 'database' : scope === 'schema' ? 'schema' : 'table';
@@ -657,12 +661,27 @@ function CreateImportDialogModal({ scope, conn, database, schema, busy, onConfir
               )}
             </div>
           )}
+          {file && !dumpUnsupported && format === 'sql' && (
+            <Tooltip side="top" content={<div>
+              <p className="font-semibold text-white mb-1">Skip Constraints</p>
+              <p className="text-gray-300">Disables foreign key / trigger checks for the duration of the import, then restores them once the import succeeds.</p>
+              <p className="text-gray-300 mt-1">Use when rows fail to load because the dump inserts tables in an order that violates FK constraints.</p>
+              <p className="text-amber-400 mt-1">PostgreSQL: SET session_replication_role = replica. MySQL: SET FOREIGN_KEY_CHECKS = 0.</p>
+            </div>}>
+              <label className="inline-flex items-center gap-1.5 text-[12px] text-gray-600 dark:text-slate-400 cursor-help">
+                <input type="checkbox" checked={skipConstraints}
+                  onChange={e => setSkipConstraints(e.target.checked)}
+                  className="accent-amber-500" />
+                Skip constraints during import, restore on success
+              </label>
+            </Tooltip>
+          )}
         </div>
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800">
           <button type="button" onClick={onCancel}
             className="px-4 py-2 rounded-lg text-base text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800">Cancel</button>
           <button type="button" disabled={!canSubmit}
-            onClick={() => file && onConfirm({ format, file, targetName, originalName: detectedName || targetName })}
+            onClick={() => file && onConfirm({ format, file, targetName, originalName: detectedName || targetName, skipConstraints })}
             className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-base font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
             {busy ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />} Import
           </button>
@@ -1551,6 +1570,7 @@ export default function ExportImportPage() {
   const [importSql, setImportSql]           = useState('');
   const [importFile, setImportFile]         = useState<File | null>(null);
   const [importStrategy, setImportStrategy] = useState<ImportStrategy>('import_rows');
+  const [skipConstraints, setSkipConstraints] = useState(false);
   const [showDryRun, setShowDryRun]         = useState(false);
 
   // Sync
@@ -1699,7 +1719,7 @@ export default function ExportImportPage() {
     setPendingJobEntry(null); setJobSaved(false);
     try {
       const { data } = await axios.post('/api/export-import/import',
-        { cfg: connToCfg(conn, database), sql: importSql, strategy: importStrategy });
+        { cfg: connToCfg(conn, database), sql: importSql, strategy: importStrategy, skipConstraints });
       const d = data as { success: boolean; log?: string[] };
       setLog((d.log ?? []).map(t => ({ step: 'import', ok: d.success, text: t })));
       setRunStatus(d.success ? 'success' : 'failed');
@@ -1832,6 +1852,7 @@ export default function ExportImportPage() {
     fd.append('targetName', payload.targetName);
     fd.append('originalName', payload.originalName);
     fd.append('format', payload.format);
+    fd.append('skipConstraints', String(payload.skipConstraints));
     fd.append('file', payload.file);
     try {
       const { data } = await axios.post('/api/export-import/import-object', fd);
@@ -2459,6 +2480,22 @@ export default function ExportImportPage() {
                           );
                         })}
                       </div>
+                    </div>
+                    {/* Skip constraints toggle */}
+                    <div className="shrink-0">
+                      <Tooltip side="top" content={<div>
+                        <p className="font-semibold text-white mb-1">Skip Constraints</p>
+                        <p className="text-gray-300">Disables foreign key / trigger checks for the duration of the import, then restores them once the import succeeds.</p>
+                        <p className="text-gray-300 mt-1">Use when rows fail to load due to FK ordering or check constraints.</p>
+                        <p className="text-amber-400 mt-1">PostgreSQL: SET session_replication_role = replica. MySQL: SET FOREIGN_KEY_CHECKS = 0.</p>
+                      </div>}>
+                        <label className="inline-flex items-center gap-1.5 text-[12px] text-gray-600 dark:text-slate-400 cursor-help">
+                          <input type="checkbox" checked={skipConstraints}
+                            onChange={e => setSkipConstraints(e.target.checked)}
+                            className="accent-amber-500" />
+                          Skip constraints during import, restore on success
+                        </label>
+                      </Tooltip>
                     </div>
                   </div>
                 );

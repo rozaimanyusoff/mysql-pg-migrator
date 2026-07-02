@@ -3,6 +3,34 @@
 ---
 
 ## 2026-07-02
+- **fix** — "Skip constraints" still 500'd after FK deferral: wrap relocated statements as best-effort
+  - After the previous fix, the log confirmed all 130 FK constraints were correctly deferred to the end of the script — but the import still failed with the same FK violation. Root cause: `ALTER TABLE ADD CONSTRAINT` re-validates against the now-fully-loaded data, and the source dump genuinely has at least one orphaned row (`asset_brand_categories.brand_id` with no matching `asset_brands.id`). Since the whole script runs in one transaction, that validation failure rolled back everything — defeating the purpose of "skip constraints" (the user explicitly wants to tolerate this, not have it abort the import).
+  - `deferForeignKeys()` now wraps each relocated *bare* `ALTER TABLE ADD CONSTRAINT` statement in `DO $$ BEGIN ... EXCEPTION WHEN OTHERS THEN NULL; END $$;` — the same best-effort pattern this app's own exporter already uses unconditionally for FK creation (see `sql-exporter.ts` `fkSql`) — so a constraint that can't validate is skipped, not fatal. Statements already wrapped in that pattern by the source dump are left as-is (no double-wrapping).
+  - Log message updated to make the best-effort/silent-skip behavior explicit: `Deferred N FOREIGN KEY constraint(s) to run after data load (best-effort — any that fail to validate are silently skipped, not restored)`.
+  - Files: `src/pages/api/export-import/import.ts`.
+  - Status: done
+- **fix** — "Skip constraints" still hit FK violations: defer FK-adding statements to end of script
+  - Even with `SET session_replication_role = replica` applied successfully (confirmed via log, no permission error), a real-world dump (71 COPY blocks) still threw `insert or update on table "asset_brand_categories" violates foreign key constraint "..."` — the constraint was defined inline (not deferred to a post-data section the way `pg_dump`/this app's own exporter normally structure a dump), so its physical position in the script mattered independent of the GUC.
+  - New `deferForeignKeys()` in `import.ts`: regex-extracts every `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY ...;` statement — bare, or wrapped in this app's own `DO $$ BEGIN ... EXCEPTION WHEN OTHERS THEN NULL; END $$;` best-effort block (matched as one unit so it isn't corrupted) — and appends all of them at the very end of the script, after all data-loading statements. Applied only when `skipConstraints` is checked, on the PostgreSQL paths only (`execPgImport`, `pgImport`); MySQL's `FOREIGN_KEY_CHECKS = 0` doesn't have this trigger-ordering ambiguity.
+  - Verified via a standalone regex test against both a bare `ALTER TABLE` FK statement and the DO-$$-wrapped form — both extracted and relocated correctly, non-FK statements untouched.
+  - Files: `src/pages/api/export-import/import.ts`.
+  - Status: done
+- **fix** — Extend "Skip constraints" to the header-level "Import new object" flow
+  - The initial `skipConstraints` implementation only covered the main Import tab (`import.ts`'s `pgImport`/`mysqlImport`). The header-level "Import new db/schema/table from file" flow (`CreateImportDialogModal` → `import-object.ts` → `execSqlImport`) uses a separate code path and didn't have it, so a fresh multi-table SQL dump could still 500 with an FK violation (`asset_brand_categories_brand_id_asset_brands_id_fk`) if INSERTs land in an order that violates FKs, even on a brand-new empty database.
+  - `ImportScopeOpts` (`import.ts`) gained `skipConstraints?: boolean`; `execPgImport`/`execMysqlImport` now toggle `session_replication_role`/`FOREIGN_KEY_CHECKS` around the load, same as the main flow.
+  - `import-object.ts` reads a new `skipConstraints` form field (`.sql` path only — `.dump`/`pg_restore` path unchanged, since `pg_restore`'s TOC already orders constraint creation after data).
+  - `CreateImportDialogModal` gained the same "Skip constraints during import, restore on success" checkbox (shown only for `.sql` uploads), threaded through `CreateImportPayload` → `runCreateImport`'s `FormData`.
+  - Files: `src/pages/api/export-import/import.ts`, `src/pages/api/export-import/import-object.ts`, `src/pages/export-import.tsx`.
+  - Status: done
+- **implement** — Data Maintenance (`/export-import`): "Skip constraints" import option
+  - New checkbox in the Import tab ("Skip constraints during import, restore on success"), wrapped in a `Tooltip` explaining the mechanism per DB type.
+  - `POST /api/export-import/import` accepts new `skipConstraints?: boolean` body field, threaded into `pgImport`/`mysqlImport`.
+  - PostgreSQL: `SET session_replication_role = replica` right after `BEGIN` (disables FK/trigger checks for the session), explicitly reset to `origin` before `COMMIT` — mirrors the pattern already used unconditionally in `sync.ts`/`replace.ts`/`relocate.ts`, but here it's opt-in and explicitly restored (pooled connections get reused, so leaving it set would leak into later imports).
+  - MySQL: `SET FOREIGN_KEY_CHECKS = 0` before `conn.execute(sql)`, `= 1` after, before `commit()`.
+  - Both paths log `[INFO]` lines noting when constraints were disabled/restored; PG failure to set the GUC (e.g. non-superuser without REPLICATION privilege) logs a `[WARN]` and proceeds rather than aborting the import.
+  - Scoped to the main "Import Rows"/replace_* flow (`import.ts`) only — not added to `import-object.ts` (create-new-object flow), since that always targets a fresh/empty object.
+  - Files: `src/pages/api/export-import/import.ts`, `src/pages/export-import.tsx`.
+  - Status: done
 - **implement** — Data Maintenance (`/export-import`): header-level "import new object" + per-row maintenance gear
   - Added an **Import** button to the header of the Database, Schema, and Table panels (visible in the Import/Export view) that creates a brand-new database/schema/table from a `.sql` or `.dump` file — no existing row needs to be selected. New `CreateImportDialogModal` auto-detects the object name from `CREATE DATABASE/SCHEMA/TABLE` in `.sql` text, live-checks name availability against the target connection, and offers Rename (keep editing) or Cancel on conflict.
   - New API `src/pages/api/export-import/import-object.ts` (multipart via `formidable`, `bodyParser: false`): `.sql` path reuses a new exported `execSqlImport()` helper extracted from `import.ts`; `.dump` path shells out to `pg_restore` (PostgreSQL only) via `child_process.execFile`, using `PGOPTIONS=-c search_path=...` to target a schema and `-t` to filter a single table. Best-effort regex rename of a conflicting table identifier is applied for `.sql` uploads; not supported for `.dump`.

@@ -101,6 +101,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const parentSchema = field(fields.parentSchema) || 'public';
   const targetName = field(fields.targetName);
   const originalName = field(fields.originalName) || targetName;
+  const skipConstraints = field(fields.skipConstraints) === 'true';
   const fileEntry = Array.isArray(files.file) ? files.file[0] : files.file;
 
   if (!cfg?.host || !cfg?.user || !cfg?.db_type) return res.status(400).json({ error: 'cfg (db_type, host, user) required' });
@@ -126,14 +127,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (cfg.db_type === 'postgres') await createPgDatabase(cfg, targetName);
         else await createMysqlDatabase(cfg, targetName);
         log.push(`[OK] Created database "${targetName}"`);
-        const result = await execSqlImport({ ...cfg, database: targetName }, sqlText, {});
+        const result = await execSqlImport({ ...cfg, database: targetName }, sqlText, { skipConstraints });
         return res.status(result.success ? 200 : 500).json({ success: result.success, log: [...log, ...result.log] });
       }
       if (scope === 'schema') {
-        const result = await execSqlImport(cfg, sqlText, { schema: targetName });
+        const result = await execSqlImport(cfg, sqlText, { schema: targetName, skipConstraints });
         return res.status(result.success ? 200 : 500).json({ success: result.success, log: [...log, ...result.log] });
       }
-      const result = await execSqlImport(cfg, sqlText, { schema: parentSchema });
+      const result = await execSqlImport(cfg, sqlText, { schema: parentSchema, skipConstraints });
       return res.status(result.success ? 200 : 500).json({ success: result.success, log: [...log, ...result.log] });
     }
 
