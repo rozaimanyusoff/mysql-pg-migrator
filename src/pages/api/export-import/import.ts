@@ -16,7 +16,7 @@ interface ImportScopeOpts {
 // COPY … FROM stdin blocks into batched INSERT statements so the pg driver can
 // execute the SQL directly without the psql client.
 
-function preprocessSql(rawSql: string): { sql: string; converted: number; copyTables: string[] } {
+function preprocessSql(rawSql: string): { sql: string; converted: number; copyTables: string[]; strippedOwnership: number } {
   // PG doesn't support ADD CONSTRAINT IF NOT EXISTS — strip it from any old dumps.
   rawSql = rawSql.replace(/ADD CONSTRAINT IF NOT EXISTS\b/gi, 'ADD CONSTRAINT');
   // CREATE SCHEMA has no IF NOT EXISTS guard in pg_dump output; add it so re-imports don't error.
@@ -24,6 +24,17 @@ function preprocessSql(rawSql: string): { sql: string; converted: number; copyTa
   // Old exports used WHEN duplicate_object which doesn't catch cross-schema FK errors.
   // Upgrade to WHEN OTHERS so FK blocks are fully best-effort on import.
   rawSql = rawSql.replace(/EXCEPTION WHEN duplicate_object THEN NULL;/gi, 'EXCEPTION WHEN OTHERS THEN NULL;');
+
+  // Plain-format pg_dump embeds the source server's role names in ALTER ... OWNER TO
+  // and GRANT/REVOKE statements. The .dump import path already drops these via
+  // `pg_restore --no-owner`; do the same for plain .sql dumps, since the target
+  // environment's roles (e.g. its connecting user) rarely match the source's and
+  // there's no way to remap them — left in, they abort the whole import with
+  // "role ... does not exist".
+  let strippedOwnership = 0;
+  rawSql = rawSql.replace(/^\s*ALTER\s+.*?\bOWNER\s+TO\s+[^;]+;\s*$/gim, () => { strippedOwnership++; return ''; });
+  rawSql = rawSql.replace(/^\s*(?:GRANT|REVOKE)\s+.*;\s*$/gim, () => { strippedOwnership++; return ''; });
+  rawSql = rawSql.replace(/^\s*(?:SET|RESET)\s+SESSION\s+AUTHORIZATION\b.*;\s*$/gim, () => { strippedOwnership++; return ''; });
 
   const lines = rawSql.split('\n');
   const output: string[] = [];
@@ -83,7 +94,7 @@ function preprocessSql(rawSql: string): { sql: string; converted: number; copyTa
     output.push(line);
   }
 
-  return { sql: output.join('\n'), converted, copyTables };
+  return { sql: output.join('\n'), converted, copyTables, strippedOwnership };
 }
 
 // ── FK deferral (skip-constraints backstop) ──────────────────────────────────
@@ -175,9 +186,11 @@ export async function execSqlImport(cfg: ConnCfg, rawSql: string, opts: ImportSc
 async function execPgImport(cfg: ConnCfg, rawSql: string, scope: ImportScopeOpts): Promise<{ success: boolean; log: string[] }> {
   const log: string[] = [];
   const targetSchema = scope.schema || 'public';
-  let { sql, converted } = preprocessSql(rawSql);
+  let { sql, converted, strippedOwnership } = preprocessSql(rawSql);
   if (converted > 0)
     log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
+  if (strippedOwnership > 0)
+    log.push(`[INFO] Stripped ${strippedOwnership} ownership/privilege statement${strippedOwnership > 1 ? 's' : ''} (ALTER...OWNER TO, GRANT/REVOKE) referencing source-only roles`);
   if (scope.skipConstraints) {
     const { sql: deferredSql, deferred } = deferForeignKeys(sql);
     sql = deferredSql;
@@ -220,9 +233,11 @@ async function execPgImport(cfg: ConnCfg, rawSql: string, scope: ImportScopeOpts
 
 async function execMysqlImport(cfg: ConnCfg, rawSql: string, scope: ImportScopeOpts): Promise<{ success: boolean; log: string[] }> {
   const log: string[] = [];
-  const { sql, converted } = preprocessSql(rawSql);
+  const { sql, converted, strippedOwnership } = preprocessSql(rawSql);
   if (converted > 0)
     log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
+  if (strippedOwnership > 0)
+    log.push(`[INFO] Stripped ${strippedOwnership} ownership/privilege statement${strippedOwnership > 1 ? 's' : ''} (ALTER...OWNER TO, GRANT/REVOKE) referencing source-only roles`);
 
   const conn = await mysql.createConnection({
     host: cfg.host, port: cfg.port ?? 3306, user: cfg.user,
@@ -254,9 +269,11 @@ async function pgImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrategy, 
   const targetSchema = scope.schema || 'public';
 
   // Preprocess: convert COPY blocks → INSERT, strip psql meta-commands
-  let { sql, converted, copyTables } = preprocessSql(rawSql);
+  let { sql, converted, copyTables, strippedOwnership } = preprocessSql(rawSql);
   if (converted > 0)
     log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
+  if (strippedOwnership > 0)
+    log.push(`[INFO] Stripped ${strippedOwnership} ownership/privilege statement${strippedOwnership > 1 ? 's' : ''} (ALTER...OWNER TO, GRANT/REVOKE) referencing source-only roles`);
   if (skipConstraints) {
     const { sql: deferredSql, deferred } = deferForeignKeys(sql);
     sql = deferredSql;
@@ -358,9 +375,11 @@ async function mysqlImport(cfg: ConnCfg, rawSql: string, strategy: ImportStrateg
   const log: string[] = [];
 
   // Preprocess handles psql dumps gracefully even if targeting MySQL
-  const { sql, converted } = preprocessSql(rawSql);
+  const { sql, converted, strippedOwnership } = preprocessSql(rawSql);
   if (converted > 0)
     log.push(`[INFO] Preprocessed dump: converted ${converted} COPY block${converted > 1 ? 's' : ''} to INSERT statements`);
+  if (strippedOwnership > 0)
+    log.push(`[INFO] Stripped ${strippedOwnership} ownership/privilege statement${strippedOwnership > 1 ? 's' : ''} (ALTER...OWNER TO, GRANT/REVOKE) referencing source-only roles`);
 
   if (strategy === 'replace_table') {
     // MySQL has no separate schema; drop the single named table before import.

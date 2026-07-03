@@ -2331,3 +2331,10 @@
   - `handleSaveClick`: removed import-mode schema-assign check
   - Files: `src/pages/schema-studio.tsx`
   - Status: done
+
+## 2026-07-03
+- **fix** — Import (.sql): strip source-only ownership/privilege statements to prevent 500 on foreign dumps
+  - `ALTER ... OWNER TO`, `GRANT`/`REVOKE`, and `SET/RESET SESSION AUTHORIZATION` statements from externally-produced pg_dump plain-SQL files reference the source server's role (e.g. the exporting user), which usually does not exist on the target — previously caused the whole import transaction to roll back with `role "X" does not exist`
+  - `preprocessSql()` in `src/pages/api/export-import/import.ts` now strips these statements before execution, mirroring the `.dump` (pg_restore `--no-owner`) path's behavior; the app's own exporter (`sql-exporter.ts`) never emits them, so this only affects imports of externally-produced dumps
+  - Adds a `strippedOwnership` count to `preprocessSql()`'s return value; logged as `[INFO] Stripped N ownership/privilege statement(s)...` across all four callers (`execPgImport`, `execMysqlImport`, `pgImport`, `mysqlImport`)
+  - Status: done
