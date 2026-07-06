@@ -43,6 +43,10 @@ async function withMysql<T>(conn: MigConn, fn: (c: mysql.Connection) => Promise<
     database: conn.database || undefined,
     user: conn.username, password: conn.password,
     connectTimeout: 10_000, multipleStatements: false,
+    // Preserve malformed/zero MySQL temporal values as raw text.  Let the
+    // migration transform decide how to handle them instead of mysql2 creating
+    // an Invalid Date which later throws in Date#toISOString().
+    dateStrings: true,
   });
   try { return await fn(c); } finally { await c.end(); }
 }
@@ -284,6 +288,50 @@ export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql'
 
 // ── Value transformation ──────────────────────────────────────────────────────
 
+function validDateParts(year: number, month: number, day: number): boolean {
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** Convert common MySQL/CSV temporal strings to an unambiguous PG value. */
+function normalizeTemporal(val: unknown, kind: 'date' | 'time' | 'timestamp'): string | null {
+  if (val instanceof Date) {
+    if (Number.isNaN(val.getTime())) return null;
+    const iso = val.toISOString();
+    if (kind === 'date') return iso.slice(0, 10);
+    if (kind === 'time') return iso.slice(11, 19);
+    return iso.replace('T', ' ').slice(0, 19);
+  }
+
+  const raw = String(val).trim();
+  if (!raw || /^0{4}-0{2}-0{2}/.test(raw) || /^\/?date(?:time)?\/?$/i.test(raw)) return null;
+
+  if (kind === 'time') {
+    const m = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?$/);
+    if (!m) return null;
+    const h = Number(m[1]), min = Number(m[2]), sec = Number(m[3] ?? 0);
+    if (h > 23 || min > 59 || sec > 59) return null;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  }
+
+  // ISO/MySQL (Y-M-D) and legacy CSV (D/M/Y), with an optional time part.
+  let m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})?$/);
+  let year: number, month: number, day: number, hour = 0, minute = 0, second = 0;
+  if (m) {
+    year = Number(m[1]); month = Number(m[2]); day = Number(m[3]);
+    hour = Number(m[4] ?? 0); minute = Number(m[5] ?? 0); second = Number(m[6] ?? 0);
+  } else {
+    m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (!m) return null;
+    day = Number(m[1]); month = Number(m[2]); year = Number(m[3]);
+    hour = Number(m[4] ?? 0); minute = Number(m[5] ?? 0); second = Number(m[6] ?? 0);
+  }
+  if (!validDateParts(year, month, day) || hour > 23 || minute > 59 || second > 59) return null;
+  const date = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  if (kind === 'date') return date;
+  return `${date} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+}
+
 function coerceValue(
   val: unknown, col: ColumnMap, tableMap: TableMap
 ): unknown {
@@ -313,8 +361,20 @@ function coerceValue(
     return val;
   }
 
+  // Sanitize temporal targets even when conversion is "keep". This handles
+  // legacy VARCHAR dates as well as MySQL zero dates without touching source.
+  if (col.conversion === 'to_date' || t === 'date') return normalizeTemporal(val, 'date');
+  if (t === 'time' || t.startsWith('time(') || t.startsWith('time without') || t.startsWith('time with')) {
+    return normalizeTemporal(val, 'time');
+  }
+  if (col.conversion === 'to_timestamptz' || t.includes('timestamp') || t === 'datetime') {
+    return normalizeTemporal(val, 'timestamp');
+  }
+
   // Date objects → ISO string for mysql
-  if (val instanceof Date) return val.toISOString().replace('T', ' ').slice(0, 19);
+  if (val instanceof Date) {
+    return Number.isNaN(val.getTime()) ? null : val.toISOString().replace('T', ' ').slice(0, 19);
+  }
 
   return val;
 }
@@ -337,6 +397,22 @@ function transformRow(
     }
   }
   return out;
+}
+
+// Some legacy tables were populated from CSV with the CSV header stored as the
+// first data row. Require at least two matching labels to avoid dropping a
+// legitimate row that merely contains the word "date" or a column name.
+function isEmbeddedHeaderRow(row: Record<string, unknown>, tableMap: TableMap): boolean {
+  let matches = 0;
+  for (const col of tableMap.columns.filter(c => c.include && c.sourceCol !== null)) {
+    const raw = row[col.sourceCol as string];
+    if (typeof raw !== 'string') continue;
+    const value = raw.trim().replace(/^\/+|\/+$/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const source = (col.sourceCol as string).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (value === source || (value === 'datetime' && /date|time/.test(source))) matches++;
+    if (matches >= 2) return true;
+  }
+  return false;
 }
 
 // ── Row insertion ─────────────────────────────────────────────────────────────
@@ -690,8 +766,11 @@ export async function advanceRun(
         continue;
       }
 
-      // Transform rows
-      const transformed = chunk.map(row => transformRow(row, tableMap));
+      // Remove accidental CSV header rows before transforming typed values.
+      const dataRows = chunk.filter(row => !isEmbeddedHeaderRow(row, tableMap));
+      const embeddedHeaders = chunk.length - dataRows.length;
+      if (embeddedHeaders > 0) log(`[${ts.sourceKey}] skipped ${embeddedHeaders} embedded CSV header row(s)`);
+      const transformed = dataRows.map(row => transformRow(row, tableMap));
 
       // Insert into target (upsert when incremental by timestamp)
       const insertResult = await insertRows(
@@ -712,7 +791,7 @@ export async function advanceRun(
 
       ts.offset += chunk.length;
       ts.rowsMigrated += insertResult.inserted;
-      ts.rowsSkipped  += insertResult.conflictSkipped;
+      ts.rowsSkipped  += insertResult.conflictSkipped + embeddedHeaders;
       ts.rowsErrored  += insertResult.errored;
       run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
 

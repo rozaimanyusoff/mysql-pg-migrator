@@ -187,8 +187,45 @@ function coerceValue(val, col, table) {
     if (typeof val === 'boolean') return val ? 1 : 0;
     return val;
   }
-  if (val instanceof Date) return val.toISOString().replace('T', ' ').slice(0, 19);
+  if (col.conversion === 'to_date' || t === 'date') return normalizeTemporal(val, 'date');
+  if (t === 'time' || t.startsWith('time(') || t.startsWith('time without') || t.startsWith('time with')) return normalizeTemporal(val, 'time');
+  if (col.conversion === 'to_timestamptz' || t.includes('timestamp') || t === 'datetime') return normalizeTemporal(val, 'timestamp');
+  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val.toISOString().replace('T', ' ').slice(0, 19);
   return val;
+}
+
+function validDateParts(year, month, day) {
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function normalizeTemporal(val, kind) {
+  if (val instanceof Date) {
+    if (Number.isNaN(val.getTime())) return null;
+    const iso = val.toISOString();
+    return kind === 'date' ? iso.slice(0, 10) : kind === 'time' ? iso.slice(11, 19) : iso.replace('T', ' ').slice(0, 19);
+  }
+  const raw = String(val).trim();
+  if (!raw || /^0{4}-0{2}-0{2}/.test(raw) || /^\/?date(?:time)?\/?$/i.test(raw)) return null;
+  if (kind === 'time') {
+    const tm = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?$/);
+    if (!tm) return null;
+    const h = Number(tm[1]), min = Number(tm[2]), sec = Number(tm[3] || 0);
+    if (h > 23 || min > 59 || sec > 59) return null;
+    return String(h).padStart(2, '0') + ':' + String(min).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+  }
+  let m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})?$/);
+  let year, month, day, hour = 0, minute = 0, second = 0;
+  if (m) {
+    year = Number(m[1]); month = Number(m[2]); day = Number(m[3]); hour = Number(m[4] || 0); minute = Number(m[5] || 0); second = Number(m[6] || 0);
+  } else {
+    m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (!m) return null;
+    day = Number(m[1]); month = Number(m[2]); year = Number(m[3]); hour = Number(m[4] || 0); minute = Number(m[5] || 0); second = Number(m[6] || 0);
+  }
+  if (!validDateParts(year, month, day) || hour > 23 || minute > 59 || second > 59) return null;
+  const date = String(year).padStart(4, '0') + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+  return kind === 'date' ? date : date + ' ' + String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0') + ':' + String(second).padStart(2, '0');
 }
 
 function transformRow(row, table) {
@@ -205,6 +242,18 @@ function transformRow(row, table) {
     }
   }
   return out;
+}
+
+function isEmbeddedHeaderRow(row, table) {
+  let matches = 0;
+  for (const col of table.columns) {
+    if (col.sourceCol === null || typeof row[col.sourceCol] !== 'string') continue;
+    const value = row[col.sourceCol].trim().replace(/^\/+|\/+$/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const source = col.sourceCol.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (value === source || (value === 'datetime' && /date|time/.test(source))) matches++;
+    if (matches >= 2) return true;
+  }
+  return false;
 }
 
 // ── WHERE builder (mirrors runner.ts buildWhere) ──────────────────────────────
@@ -227,7 +276,7 @@ async function srcQuery(dbName, sql, params) {
     await c.connect();
     try { const r = await c.query(sql, params); return r.rows; } finally { await c.end(); }
   } else {
-    const c = await mysql.createConnection({ host: SOURCE.host, port: SOURCE.port, database: dbName || SOURCE.database, user: SOURCE.user, password: SOURCE.password, multipleStatements: false });
+    const c = await mysql.createConnection({ host: SOURCE.host, port: SOURCE.port, database: dbName || SOURCE.database, user: SOURCE.user, password: SOURCE.password, multipleStatements: false, dateStrings: true });
     try { const [rows] = await c.query(sql, params); return rows; } finally { await c.end(); }
   }
 }
@@ -458,7 +507,10 @@ async function main() {
       while (true) {
         const rows = await readChunk(table, offset, args.chunk, inc, rangeFilter);
         if (!rows.length) break;
-        const transformed = rows.map(r => transformRow(r, table));
+        const dataRows = rows.filter(r => !isEmbeddedHeaderRow(r, table));
+        const embeddedHeaders = rows.length - dataRows.length;
+        if (embeddedHeaders > 0) console.log('  skipped ' + embeddedHeaders + ' embedded CSV header row(s)');
+        const transformed = dataRows.map(r => transformRow(r, table));
         const r = await insertRows(table, transformed, useUpsert);
         offset += rows.length;
         migrated += r.inserted;
