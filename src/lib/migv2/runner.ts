@@ -197,8 +197,9 @@ function resolveTargetTable(tableMap: TableMap): string {
   return tableMap.targetAlias?.trim() || tableMap.target.table;
 }
 
-// Disable or re-enable all triggers on a PG table (FK checks, etc.)
-// Only relevant for PostgreSQL — MySQL handles FK checks differently.
+// Legacy recovery for runs created before constraint bypass became transaction-scoped.
+// New runs never leave triggers disabled because SET LOCAL is rolled back with the
+// transaction if the process or connection stops unexpectedly.
 async function setTriggers(conn: MigConn, schema: string, table: string, enable: boolean): Promise<void> {
   if (conn.type !== 'postgresql') return;
   const action = enable ? 'ENABLE' : 'DISABLE';
@@ -428,7 +429,8 @@ interface InsertResult {
 async function insertRows(
   conn: MigConn, schema: string, table: string,
   rows: Record<string, unknown>[], targetPkCol: string | null,
-  upsert = false
+  upsert = false,
+  bypassConstraints = false,
 ): Promise<InsertResult> {
   if (!rows.length) return { pks: [], inserted: 0, conflictSkipped: 0, errored: 0, firstError: null };
   const cols = Object.keys(rows[0]);
@@ -442,31 +444,53 @@ async function insertRows(
   if (conn.type === 'postgresql') {
     await withPg(conn, async c => {
       const colList = cols.map(c => `"${c}"`).join(', ');
-      for (const row of rows) {
-        const values = cols.map(k => row[k]);
-        const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
-        let sql: string;
-        if (upsert && targetPkCol && updateCols.length > 0) {
-          const setClauses = updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
-          sql = `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT ("${targetPkCol}") DO UPDATE SET ${setClauses}`;
-        } else {
-          sql = `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`;
-        }
-        try {
-          const result = await c.query(sql, values);
-          const written = result.rowCount ?? 0;
-          if (written > 0) {
-            actualInserted += written;
-            if (targetPkCol && row[targetPkCol] != null) {
-              insertedPks.push(String(row[targetPkCol]));
-            }
+      if (bypassConstraints) {
+        await c.query('BEGIN');
+        // Transaction-local and connection-local: a crash/disconnect rolls this
+        // back automatically instead of leaving table triggers disabled.
+        await c.query("SET LOCAL session_replication_role = 'replica'");
+      }
+      try {
+        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+          const row = rows[rowIndex];
+          const values = cols.map(k => row[k]);
+          const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+          let sql: string;
+          if (upsert && targetPkCol && updateCols.length > 0) {
+            const setClauses = updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+            sql = `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT ("${targetPkCol}") DO UPDATE SET ${setClauses}`;
           } else {
-            conflictSkipped++;
+            sql = `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`;
           }
-        } catch (err) {
-          errored++;
-          if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+          const savepoint = `migration_row_${rowIndex}`;
+          if (bypassConstraints) await c.query(`SAVEPOINT ${savepoint}`);
+          try {
+            const result = await c.query(sql, values);
+            const written = result.rowCount ?? 0;
+            if (written > 0) {
+              actualInserted += written;
+              if (targetPkCol && row[targetPkCol] != null) {
+                insertedPks.push(String(row[targetPkCol]));
+              }
+            } else {
+              conflictSkipped++;
+            }
+            if (bypassConstraints) await c.query(`RELEASE SAVEPOINT ${savepoint}`);
+          } catch (err) {
+            if (bypassConstraints) {
+              await c.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+              await c.query(`RELEASE SAVEPOINT ${savepoint}`);
+            }
+            errored++;
+            if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+          }
         }
+        if (bypassConstraints) await c.query('COMMIT');
+      } catch (err) {
+        if (bypassConstraints) {
+          try { await c.query('ROLLBACK'); } catch { /* connection may already be gone */ }
+        }
+        throw err;
       }
     });
   } else {
@@ -706,10 +730,10 @@ export async function advanceRun(
         log(`[${ts.targetKey}] truncated`);
       }
 
-      // Disable constraints after table is guaranteed to exist
+      // Constraint bypass is transaction-scoped inside insertRows. It cannot
+      // remain active after a crash or disconnected database session.
       if (ts.offset === 0 && tableMap.skipConstraints) {
-        await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), false);
-        log(`[${ts.targetKey}] constraints disabled`);
+        log(`[${ts.targetKey}] constraint bypass enabled (transaction-scoped)`);
       }
 
       // Drop NOT NULL on target columns (first chunk only)
@@ -747,10 +771,6 @@ export async function advanceRun(
       if (!chunk.length) {
         ts.hasMore = false;
         ts.status = 'completed';
-        if (tableMap.skipConstraints) {
-          await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
-          log(`[${ts.targetKey}] constraints re-enabled`);
-        }
         if (tableMap.skipNullViolations) {
           await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
           log(`[${ts.targetKey}] NOT NULL restored`);
@@ -775,7 +795,7 @@ export async function advanceRun(
       // Insert into target (upsert when incremental by timestamp)
       const insertResult = await insertRows(
         target, tableMap.target.schema, resolveTargetTable(tableMap),
-        transformed, ts.targetPkCol, useUpsert
+        transformed, ts.targetPkCol, useUpsert, tableMap.skipConstraints === true
       );
 
       // Accumulate rollback PKs (up to cap) — only actually-inserted rows
@@ -805,10 +825,6 @@ export async function advanceRun(
       if (chunk.length < CHUNK_SIZE) {
         ts.hasMore = false;
         ts.status = 'completed';
-        if (tableMap.skipConstraints) {
-          await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
-          log(`[${ts.targetKey}] constraints re-enabled`);
-        }
         if (tableMap.skipNullViolations) {
           await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
           log(`[${ts.targetKey}] NOT NULL restored`);
@@ -829,13 +845,6 @@ export async function advanceRun(
       ts.error = err instanceof Error ? err.message : String(err);
       run.errors.push(`${ts.sourceKey}: ${ts.error}`);
       log(`[${ts.sourceKey}] ERROR: ${ts.error}`);
-      // Best-effort re-enable constraints so the table is not left in a broken state
-      if (tableMap.skipConstraints) {
-        try {
-          await setTriggers(target, tableMap.target.schema, resolveTargetTable(tableMap), true);
-          log(`[${ts.targetKey}] constraints re-enabled (after error)`);
-        } catch { /* ignore — table may not exist */ }
-      }
       if (tableMap.skipNullViolations) {
         try {
           await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
@@ -855,6 +864,23 @@ export async function advanceRun(
   }
 
   return run;
+}
+
+// Repair trigger state left by the old ALTER TABLE ... DISABLE TRIGGER ALL
+// implementation. Versioned transaction-scoped runs never need this cleanup.
+export async function recoverLegacyDisabledConstraints(run: MigRun, target: MigConn): Promise<string[]> {
+  if (target.type !== 'postgresql' || run.constraintBypassMode === 'transaction') return [];
+  const recovered: string[] = [];
+  for (const tableMap of run.tables.filter(t => t.include && t.skipConstraints)) {
+    const table = resolveTargetTable(tableMap);
+    const targetKey = `${tableMap.target.schema}.${table}`;
+    // A hard process stop can happen before the in-memory "disabled" log is
+    // persisted. For unversioned interrupted runs, enabling every opted-in
+    // table is the only reliable way to repair the former persistent state.
+    await setTriggers(target, tableMap.target.schema, table, true);
+    recovered.push(targetKey);
+  }
+  return recovered;
 }
 
 // ── Rollback ──────────────────────────────────────────────────────────────────

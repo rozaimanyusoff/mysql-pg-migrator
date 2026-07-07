@@ -8,6 +8,7 @@ import {
   Clock, Copy, Loader2, Pause, Pencil, Play,
   Plus, Terminal, Trash2, X,
   AlertTriangle, CircleDot, ListChecks, RotateCcw, Mail, Info,
+  FileSpreadsheet, FileText,
 } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import { useAlert } from '../lib/alert-context';
@@ -122,6 +123,7 @@ export default function SchedulerPage() {
   const [triggering, setTriggering] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [runLogSelection, setRunLogSelection] = useState<{ runId: string; tableId: string | null } | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
   const [preflight, setPreflight] = useState<{ jobName: string; loading: boolean; report: PreflightReport | null; error: string | null } | null>(null);
@@ -447,6 +449,18 @@ export default function SchedulerPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
+                      <Tooltip content="Export all scheduler runs and table-level logs to an Excel workbook" side="bottom">
+                        <a href={`/api/scheduler/export-logs?jobId=${encodeURIComponent(selectedJob.id)}`}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-[12px] font-medium hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
+                          <FileSpreadsheet size={13} />Logs XLSX
+                        </a>
+                      </Tooltip>
+                      <Tooltip content="Export the live migrated target schema as ORM-ready Markdown" side="bottom">
+                        <a href={`/api/scheduler/export-schema-md?jobId=${encodeURIComponent(selectedJob.id)}`}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400 text-[12px] font-medium hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
+                          <FileText size={13} />Schema MD
+                        </a>
+                      </Tooltip>
                       <Tooltip content="Validate connectivity, row counts, type/FK issues and estimate duration before running" side="bottom">
                         <button onClick={() => void handlePreflight(selectedJob.id, selectedJob.name)}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 text-[12px] font-medium hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
@@ -563,7 +577,10 @@ export default function SchedulerPage() {
                       <div key={run.id} className="border-b border-gray-50 dark:border-slate-800/50 last:border-0">
                         <div
                           className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors"
-                          onClick={() => setExpandedRunId(isExpanded ? null : run.id)}>
+                          onClick={() => {
+                            setExpandedRunId(isExpanded ? null : run.id);
+                            if (isExpanded) setRunLogSelection(null);
+                          }}>
                           <RunStatusBadge status={run.status} />
                           {run.interrupted && (
                             <Tooltip content="The server restarted mid-run. Resume continues from the last saved offset." side="top">
@@ -622,29 +639,94 @@ export default function SchedulerPage() {
                           {isExpanded ? <ChevronUp size={13} className="text-slate-400 shrink-0" /> : <ChevronDown size={13} className="text-slate-400 shrink-0" />}
                         </div>
                         {isExpanded && (
-                          <div className="bg-gray-50 dark:bg-slate-950/50 px-4 pb-3 space-y-1.5">
+                          <div className="bg-gray-50 dark:bg-slate-950/50 px-4 pb-3 pt-2">
+                            <div className="overflow-x-auto">
+                              <div className="min-w-[760px]">
+                                <div className="grid grid-cols-[minmax(260px,1.4fr)_minmax(220px,1fr)_120px_100px] gap-3 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-600">
+                                  <span>Source → target</span>
+                                  <span>Progress</span>
+                                  <span className="text-right">Rows</span>
+                                  <span className="text-right">Errors</span>
+                                </div>
+                                <div className="space-y-1">
                             {run.tableStates.map(ts => {
-                              const total = ts.rowsMigrated + ts.rowsSkipped;
-                              const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(total / ts.rowsSource * 100)) : (ts.status === 'completed' ? 100 : 0);
+                              const processed = Math.max(ts.offset, ts.rowsMigrated + ts.rowsSkipped + ts.rowsErrored);
+                              const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(processed / ts.rowsSource * 100)) : (ts.status === 'completed' ? 100 : 0);
                               const barColor = ts.status === 'completed' ? 'bg-emerald-500' : ts.status === 'failed' ? 'bg-rose-500' : 'bg-violet-500';
+                              const isLogSelected = runLogSelection?.runId === run.id && runLogSelection.tableId === ts.id;
                               return (
-                                <div key={ts.id} className="flex items-center gap-2">
-                                  <span className={`text-[11px] font-mono truncate flex-none max-w-[35%] ${ts.status === 'failed' ? 'text-rose-500' : 'text-gray-500 dark:text-slate-400'}`}>{ts.sourceKey}</span>
-                                  <span className="text-[10px] text-slate-300 dark:text-slate-600 shrink-0">→</span>
-                                  <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate flex-none max-w-[30%]">{ts.targetKey}</span>
-                                  <div className="flex-1 h-1 bg-gray-200 dark:bg-slate-800 rounded-full overflow-hidden max-w-24">
-                                    <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                                <div key={ts.id} className={`grid grid-cols-[minmax(260px,1.4fr)_minmax(220px,1fr)_120px_100px] items-center gap-3 rounded-md px-2 py-1.5 ${isLogSelected ? 'bg-rose-50 dark:bg-rose-950/20 ring-1 ring-rose-200 dark:ring-rose-900/50' : 'bg-white/70 dark:bg-slate-900/50'}`}>
+                                  <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
+                                    <span className={`truncate ${ts.status === 'failed' ? 'text-rose-500' : 'text-gray-600 dark:text-slate-300'}`} title={ts.sourceKey}>{ts.sourceKey}</span>
+                                    <span className="shrink-0 text-slate-300 dark:text-slate-600">→</span>
+                                    <span className="truncate text-slate-400 dark:text-slate-500" title={ts.targetKey}>{ts.targetKey}</span>
                                   </div>
-                                  <span className="text-[11px] text-slate-400 shrink-0">{ts.rowsMigrated.toLocaleString()}w</span>
-                                  {ts.rowsErrored > 0 && <span className="text-[11px] text-rose-400 shrink-0">{ts.rowsErrored}e</span>}
+                                  <div className="relative h-5 overflow-hidden rounded-full bg-gray-200 dark:bg-slate-800" title={`${processed.toLocaleString()} of ${ts.rowsSource.toLocaleString()} rows processed`}>
+                                    <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
+                                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold tabular-nums text-slate-700 mix-blend-multiply dark:text-slate-100 dark:mix-blend-normal">
+                                      {pct}% · {processed.toLocaleString()} / {ts.rowsSource.toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <span className="text-right text-[11px] tabular-nums text-slate-500 dark:text-slate-400">{ts.rowsMigrated.toLocaleString()} rows</span>
+                                  <div className="text-right">
+                                    {ts.rowsErrored > 0 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => setRunLogSelection(isLogSelected ? null : { runId: run.id, tableId: ts.id })}
+                                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-rose-500 hover:bg-rose-100 hover:text-rose-700 dark:hover:bg-rose-950/50 dark:hover:text-rose-300"
+                                        title="Show this table's errors in the run log">
+                                        <AlertTriangle size={10} />{ts.rowsErrored.toLocaleString()} errors
+                                      </button>
+                                    ) : <span className="text-[11px] text-slate-300 dark:text-slate-700">—</span>}
+                                  </div>
                                 </div>
                               );
                             })}
-                            {run.errors.length > 0 && (
-                              <div className="mt-2 p-2 rounded bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40">
-                                {run.errors.map((e, i) => <p key={i} className="text-[11px] text-rose-600 dark:text-rose-400 font-mono">{e}</p>)}
+                                </div>
                               </div>
-                            )}
+                            </div>
+
+                            <div className="mt-2 flex justify-end">
+                              <button type="button"
+                                onClick={() => setRunLogSelection(runLogSelection?.runId === run.id && runLogSelection.tableId === null ? null : { runId: run.id, tableId: null })}
+                                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-violet-600 dark:text-slate-400 dark:hover:text-violet-300">
+                                <Terminal size={11} />
+                                {runLogSelection?.runId === run.id && runLogSelection.tableId === null ? 'Hide run log' : 'View full run log'}
+                              </button>
+                            </div>
+
+                            {runLogSelection?.runId === run.id && (() => {
+                              const selectedTable = runLogSelection.tableId
+                                ? run.tableStates.find(ts => ts.id === runLogSelection.tableId) ?? null
+                                : null;
+                              const tableKeys = selectedTable ? [selectedTable.sourceKey, selectedTable.targetKey] : [];
+                              const visibleLogs = selectedTable
+                                ? run.logs.filter(line => tableKeys.some(key => line.includes(`[${key}]`)))
+                                : run.logs;
+                              const extraErrors = [
+                                ...(selectedTable?.error ? [selectedTable.error] : []),
+                                ...run.errors.filter(error => !selectedTable || tableKeys.some(key => error.includes(key))),
+                              ].filter((error, index, all) => all.indexOf(error) === index && !visibleLogs.some(line => line.includes(error)));
+                              return (
+                                <div className="mt-2 overflow-hidden rounded-md border border-slate-700 bg-slate-950 shadow-inner">
+                                  <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+                                    <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                      <Terminal size={12} />
+                                      <span>Run Log</span>
+                                      {selectedTable && <span className="truncate font-mono font-normal normal-case tracking-normal text-rose-400">— {selectedTable.sourceKey}</span>}
+                                    </div>
+                                    <button type="button" onClick={() => setRunLogSelection(null)} className="text-slate-500 hover:text-slate-200" title="Close run log"><X size={13} /></button>
+                                  </div>
+                                  <div className="max-h-56 overflow-auto p-3 font-mono text-[11px] leading-5 text-slate-300">
+                                    {visibleLogs.length === 0 && extraErrors.length === 0 && <div className="italic text-slate-500">No log output for this table.</div>}
+                                    {visibleLogs.map((line, i) => (
+                                      <div key={i} className={line.includes('ERROR') || /\d+ errors/.test(line) ? 'text-rose-400' : line.includes('completed') ? 'text-emerald-400' : line.includes('skipped') ? 'text-amber-400' : ''}>{line}</div>
+                                    ))}
+                                    {extraErrors.map((error, i) => <div key={`error-${i}`} className="text-rose-400">[error] {error}</div>)}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                       </div>

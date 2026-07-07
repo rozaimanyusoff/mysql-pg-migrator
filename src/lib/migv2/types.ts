@@ -50,7 +50,7 @@ export interface TableMap {
   target: { schema: string; table: string };
   columns: ColumnMap[];
   truncateBeforeMigrate: boolean;
-  skipConstraints?: boolean;     // DISABLE TRIGGER ALL on target before insert, re-enable after
+  skipConstraints?: boolean;     // transaction-scoped PG constraint bypass during insert
   skipNullViolations?: boolean;  // DROP NOT NULL on target columns before insert, restore after
   targetAlias?: string | null;               // overrides target.table as the physical table name in SQL
   isSet?: boolean;             // user confirmed mapping is ready to run
@@ -153,6 +153,9 @@ export interface MigRun {
   startedAt: string | null;
   completedAt: string | null;
   restartedFromRunId?: string | null;
+  // Version marker: absent runs may have used persistent ALTER TABLE trigger
+  // changes and need legacy cleanup before resume.
+  constraintBypassMode?: 'transaction';
   // Liveness: server-driven runs stamp this each advance loop. Used to detect
   // orphaned runs (process restart mid-run) so they can be resumed.
   heartbeatAt?: string | null;

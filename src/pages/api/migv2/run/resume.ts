@@ -4,6 +4,7 @@ import { loadJob } from '../../../../lib/migv2/job-store';
 import { listSchedules } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
 import { driveRun } from '../../../../lib/migv2/run-driver';
+import { recoverLegacyDisabledConstraints } from '../../../../lib/migv2/runner';
 
 // POST { runId } → resume an interrupted/failed run from its last saved offsets.
 // advanceRun only touches tables still 'pending'/'running', so completed tables
@@ -29,6 +30,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     conns = await resolveJobConns(job);
   } catch (err) {
     return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+
+  // Runs interrupted under the former persistent ALTER TABLE implementation
+  // may have left target triggers disabled. Repair that state before reopening
+  // the run; fail closed if cleanup cannot be confirmed.
+  if (run.interrupted) {
+    try {
+      const recovered = await recoverLegacyDisabledConstraints(run, conns.target);
+      if (recovered.length > 0) {
+        run.logs.push(`[${new Date().toISOString()}] Recovery: constraints re-enabled on ${recovered.join(', ')}.`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      run.logs.push(`[${new Date().toISOString()}] Recovery ERROR: ${message}`);
+      saveRun(run);
+      return res.status(500).json({ error: `Cannot safely resume: constraint recovery failed. ${message}` });
+    }
   }
 
   // Reopen the run: clear terminal flags, re-arm in-flight tables that were

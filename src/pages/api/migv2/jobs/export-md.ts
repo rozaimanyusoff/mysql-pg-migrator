@@ -138,7 +138,7 @@ function buildJobMd(job: ReturnType<typeof loadJob>, schema: TargetSchema | null
 
     const flags: string[] = [];
     if (map.truncateBeforeMigrate) flags.push('Truncate before migrate');
-    if (map.skipConstraints) flags.push('Skip constraints (DISABLE TRIGGER ALL)');
+    if (map.skipConstraints) flags.push('Skip constraints (transaction-scoped)');
     if (map.skipNullViolations) flags.push('Skip NULL violations (DROP NOT NULL → restore)');
     if (flags.length) lines.push(`> ⚠ ${flags.join(' · ')}`);
     if (map.syncMode === 'incremental') {

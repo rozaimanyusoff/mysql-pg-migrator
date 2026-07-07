@@ -47,6 +47,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     createdAt: now,
     startedAt: null,
     completedAt: null,
+    constraintBypassMode: 'transaction',
     heartbeatAt: now,
     restartedFromRunId: runId,
     sourceMeta: sourceRun.sourceMeta,

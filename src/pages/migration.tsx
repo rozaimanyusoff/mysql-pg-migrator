@@ -1237,7 +1237,7 @@ export default function Migration() {
 
         const flags: string[] = [];
         if (map.truncateBeforeMigrate) flags.push('Truncate before migrate');
-        if (map.skipConstraints)       flags.push('Skip constraints (DISABLE TRIGGER ALL)');
+        if (map.skipConstraints)       flags.push('Skip constraints (transaction-scoped)');
         if (map.skipNullViolations)    flags.push('Skip NULL violations (DROP NOT NULL → restore)');
         if (flags.length) lines.push(`> ⚠ ${flags.join(' · ')}`);
 
@@ -2658,9 +2658,10 @@ export default function Migration() {
                       <Tooltip side="top" content={
                         <div>
                           <p className="font-semibold text-white mb-1">Skip Constraints</p>
-                          <p className="text-gray-300">Runs <span className="font-mono text-white">DISABLE TRIGGER ALL</span> on the target table before inserting, then re-enables after.</p>
+                          <p className="text-gray-300">Bypasses constraints inside the insert transaction using <span className="font-mono text-white">SET LOCAL session_replication_role = replica</span>.</p>
                           <p className="text-gray-300 mt-1">Use when FK or check constraints block rows that depend on tables not yet migrated. All rows will be inserted regardless of violations.</p>
-                          <p className="text-amber-400 mt-1">PostgreSQL only. Requires table owner or superuser.</p>
+                          <p className="text-emerald-400 mt-1">Crash-safe: PostgreSQL automatically restores the normal constraint mode when the transaction or connection ends.</p>
+                          <p className="text-amber-400 mt-1">PostgreSQL only. Requires permission to set session_replication_role (normally superuser).</p>
                         </div>
                       }>
                         <label className="inline-flex items-center gap-1 text-[12px] text-gray-500 dark:text-slate-400 cursor-help">

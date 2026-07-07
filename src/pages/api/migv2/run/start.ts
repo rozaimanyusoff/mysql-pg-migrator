@@ -30,6 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     createdAt: new Date().toISOString(),
     startedAt: null,
     completedAt: null,
+    constraintBypassMode: 'transaction',
     sourceMeta: { type: source.type, host: source.host, port: source.port, database: source.database, username: source.username },
     targetMeta: { type: target.type, host: target.host, port: target.port, database: target.database, username: target.username },
     tables: tables.filter(t => t.include),
