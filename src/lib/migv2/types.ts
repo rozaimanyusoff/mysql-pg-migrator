@@ -58,7 +58,9 @@ export interface TableMap {
   syncMode?: 'full' | 'incremental';
   incrementalCol?: string | null;            // source column used as high-water mark
   incrementalStrategy?: 'id' | 'timestamp'; // id = append-only insert; timestamp = upsert
+  incrementalTieCol?: string | null;         // unique source key for equal timestamp watermarks
   lastSyncedValue?: string | null;          // high-water mark from last completed run
+  lastSyncedPk?: string | null;             // tie-breaker for equal timestamp watermarks
 }
 
 // ── Scheduler ────────────────────────────────────────────────────────────────
@@ -72,7 +74,7 @@ export interface CronSchedule {
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
-  lastRunStatus: 'completed' | 'failed' | 'running' | null;
+  lastRunStatus: 'completed' | 'failed' | 'running' | 'paused' | null;
   lastRunId: string | null;
   notifyEmail?: string | null;   // email to notify on completion/failure (optional)
 }
@@ -121,7 +123,7 @@ export interface MigJobSummary {
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
-export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
+export type RunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
 export type TableRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
 
 export interface MigRunTableState {
@@ -142,6 +144,7 @@ export interface MigRunTableState {
   targetPkCol: string | null;
   // incremental sync
   newWatermark?: string | null; // max value of incrementalCol seen after this run
+  newWatermarkPk?: string | null;
 }
 
 export interface MigRun {

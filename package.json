@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:integration": "node --experimental-strip-types --test tests/scheduler-hardening.test.ts",
     "db:push": "node --env-file=.env scripts/db-push.js",
     "db:seed": "node --env-file=.env scripts/db-seed.js"
   },

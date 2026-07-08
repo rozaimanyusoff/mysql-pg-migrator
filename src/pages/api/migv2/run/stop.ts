@@ -1,8 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { loadRun, saveRun } from '../../../../lib/migv2/run-store';
+import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
+  if (!requireSchedulerMutationAuth(req, res)) return;
 
   const { runId } = req.body as { runId: string };
   if (!runId) return res.status(400).json({ error: 'runId required' });

@@ -33,6 +33,10 @@ JWT_SECRET_KEY=your-secret-key-min-32-chars
 JWT_EXPIRATION_TIME=3600            # Access token TTL in seconds (default: 1 hour)
 REFRESH_TOKEN_EXPIRATION_TIME=86400 # Refresh token TTL in seconds (default: 24 hours)
 
+# Required by external cron/scheduler calls. Browser UI uses same-origin protection.
+SCHEDULER_API_TOKEN=replace-with-a-random-64-character-secret
+RUN_TIMEOUT_SECONDS=86400          # Scheduled-run polling timeout (default: 24 hours)
+
 # File storage — audit logs and config snapshots are saved here
 UPLOAD_DIR=./public/uploads
 UPLOAD_PUBLIC_URL=/uploads

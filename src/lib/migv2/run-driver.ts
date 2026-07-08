@@ -15,7 +15,7 @@ function persistWatermarks(run: MigRun) {
   for (const ts of run.tableStates) {
     if (ts.newWatermark == null) continue;
     const jt = job.tables.find(t => t.id === ts.id);
-    if (jt) { jt.lastSyncedValue = ts.newWatermark; updated = true; }
+    if (jt) { jt.lastSyncedValue = ts.newWatermark; jt.lastSyncedPk = ts.newWatermarkPk ?? null; updated = true; }
   }
   if (updated) saveJob(job);
 }
@@ -76,6 +76,7 @@ export async function driveRun(
       const persisted = loadRun(run.id);
       if (persisted) run = persisted;
       if (TERMINAL.has(run.status)) break;
+      if (run.status === 'paused') return;
       // A run with only paused/terminal tables remains resumable, but should
       // not spin a hot background loop while waiting for user input.
       if (!run.tableStates.some(t => t.status === 'pending' || t.status === 'running')) {
@@ -98,6 +99,7 @@ export async function driveRun(
       const controlled = loadRun(run.id);
       if (controlled) {
         if (controlled.status === 'aborted') run.status = 'aborted';
+        if (controlled.status === 'paused') run.status = 'paused';
         for (const current of controlled.tableStates) {
           if (current.status !== 'paused' && current.status !== 'aborted') continue;
           const table = run.tableStates.find(t => t.id === current.id);

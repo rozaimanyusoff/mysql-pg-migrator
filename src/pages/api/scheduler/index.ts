@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
 import { listSchedules, saveSchedule } from '../../../lib/migv2/schedule-store';
 import type { CronSchedule } from '../../../lib/migv2/types';
+import { requireSchedulerMutationAuth } from '../../../lib/scheduler-security';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
@@ -9,6 +10,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   }
 
   if (req.method === 'POST') {
+    if (!requireSchedulerMutationAuth(req, res)) return;
     const { jobId, jobName, cronExpr, notifyEmail } = req.body as Partial<CronSchedule>;
     if (!jobId || !jobName || !cronExpr) {
       return res.status(400).json({ error: 'jobId, jobName, cronExpr required' });

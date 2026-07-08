@@ -29,7 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         for (const ts of advanced.tableStates) {
           if (ts.newWatermark == null) continue;
           const jt = job.tables.find(t => t.id === ts.id);
-          if (jt) { jt.lastSyncedValue = ts.newWatermark; jobUpdated = true; }
+          if (jt) { jt.lastSyncedValue = ts.newWatermark; jt.lastSyncedPk = ts.newWatermarkPk ?? null; jobUpdated = true; }
         }
         if (jobUpdated) saveJob(job);
       }

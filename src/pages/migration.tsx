@@ -2719,13 +2719,26 @@ export default function Migration() {
                             <option value="id">by ID</option>
                             <option value="timestamp">by Timestamp</option>
                           </select>
+                          {(selectedMap.incrementalStrategy ?? 'id') === 'timestamp' && (
+                            <select
+                              value={selectedMap.incrementalTieCol ?? ''}
+                              onChange={e => updateTableMap(selectedMap.id, { incrementalTieCol: e.target.value || null })}
+                              title="Unique tie-breaker prevents rows with identical timestamps being skipped"
+                              className="px-1.5 py-0.5 text-[12px] rounded border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 max-w-[130px]"
+                            >
+                              <option value="">— tie-breaker PK —</option>
+                              {srcColsForSelected.filter(c => c.name !== selectedMap.incrementalCol).map(c => (
+                                <option key={c.name} value={c.name}>{c.name}</option>
+                              ))}
+                            </select>
+                          )}
                           {selectedMap.lastSyncedValue ? (
                             <span className="inline-flex items-center gap-0.5 text-[12px] text-violet-600 dark:text-violet-400 font-mono">
                               ↑ {selectedMap.lastSyncedValue.length > 20
                                 ? selectedMap.lastSyncedValue.slice(0, 20) + '…'
                                 : selectedMap.lastSyncedValue}
                               <button
-                                onClick={() => updateTableMap(selectedMap.id, { lastSyncedValue: null })}
+                                onClick={() => updateTableMap(selectedMap.id, { lastSyncedValue: null, lastSyncedPk: null })}
                                 title="Reset watermark — next run will re-sync all rows"
                                 className="text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors ml-0.5"
                               >

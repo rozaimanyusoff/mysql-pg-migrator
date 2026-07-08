@@ -3,6 +3,7 @@ import { Client as PgClient } from 'pg';
 import mysql from 'mysql2/promise';
 import type { MigConn, MigRun, TableMap, ColumnMap, DbType } from './types';
 import { suggestTargetType } from './type-map';
+import { buildWhere, cursorValue, type IncrementalFilter, type RangeFilter } from './cursor-query';
 
 const CHUNK_SIZE = 500;
 const MAX_ADVANCE_MS = 8_000;
@@ -54,45 +55,6 @@ async function withMysql<T>(conn: MigConn, fn: (c: mysql.Connection) => Promise<
 
 // ── Row reading ───────────────────────────────────────────────────────────────
 
-interface IncrementalFilter { col: string; gt: string; }
-interface RangeFilter { col: string; from: string | null; to: string | null; }
-
-// Build a parameterised WHERE clause supporting incremental (gt) + date-range (from/to).
-// PostgreSQL uses $N positional params; MySQL uses ? placeholders.
-function buildWhere(
-  dbType: 'postgresql' | 'mysql',
-  inc?: IncrementalFilter,
-  range?: RangeFilter,
-): { where: string; params: unknown[]; orderCol: string | null } {
-  const conds: string[] = [];
-  const params: unknown[] = [];
-  let orderCol: string | null = null;
-
-  const q = (col: string) => dbType === 'postgresql' ? `"${col}"` : `\`${col}\``;
-  const p = () => dbType === 'postgresql' ? `$${params.length}` : '?';
-
-  if (inc) {
-    params.push(inc.gt);
-    conds.push(`${q(inc.col)} > ${p()}`);
-    orderCol = inc.col;
-  }
-  if (range?.from) {
-    params.push(range.from);
-    conds.push(`${q(range.col)} >= ${p()}`);
-    if (!orderCol) orderCol = range.col;
-  }
-  if (range?.to) {
-    params.push(range.to);
-    conds.push(`${q(range.col)} <= ${p()}`);
-    if (!orderCol) orderCol = range.col;
-  }
-
-  return {
-    where: conds.length ? `WHERE ${conds.join(' AND ')}` : '',
-    params,
-    orderCol,
-  };
-}
 
 async function countRows(
   conn: MigConn, schema: string, table: string,
@@ -121,9 +83,9 @@ async function readChunk(
   inc?: IncrementalFilter, range?: RangeFilter
 ): Promise<Record<string, unknown>[]> {
   const colList = cols.map(c => conn.type === 'postgresql' ? `"${c}"` : `\`${c}\``).join(', ');
-  const { where, params, orderCol } = buildWhere(conn.type, inc, range);
-  const orderBy = orderCol
-    ? `ORDER BY ${conn.type === 'postgresql' ? `"${orderCol}"` : `\`${orderCol}\``} ASC`
+  const { where, params, orderCols } = buildWhere(conn.type, inc, range);
+  const orderBy = orderCols.length
+    ? `ORDER BY ${orderCols.map(col => conn.type === 'postgresql' ? `"${col}" ASC` : `\`${col}\` ASC`).join(', ')}`
     : '';
 
   if (conn.type === 'postgresql') {
@@ -142,25 +104,6 @@ async function readChunk(
       [...params, limit, offset]
     );
     return rows as Record<string, unknown>[];
-  });
-}
-
-async function getMaxValue(
-  conn: MigConn, schema: string, table: string, col: string
-): Promise<string | null> {
-  if (conn.type === 'postgresql') {
-    return withPg(conn, async c => {
-      const { rows } = await c.query(
-        `SELECT MAX("${col}") AS v FROM "${schema}"."${table}"`
-      );
-      return rows[0].v != null ? String(rows[0].v) : null;
-    });
-  }
-  return withMysql(conn, async c => {
-    const [rows] = await c.query<any[]>(
-      `SELECT MAX(\`${col}\`) AS v FROM \`${schema}\`.\`${table}\``
-    );
-    return (rows as any[])[0].v != null ? String((rows as any[])[0].v) : null;
   });
 }
 
@@ -666,10 +609,6 @@ export async function advanceRun(
 
       // Build incremental filter (only when syncMode=incremental and a prior watermark exists)
       const isIncremental = tableMap.syncMode === 'incremental' && !!tableMap.incrementalCol;
-      const incFilter: IncrementalFilter | undefined =
-        isIncremental && tableMap.lastSyncedValue
-          ? { col: tableMap.incrementalCol!, gt: tableMap.lastSyncedValue }
-          : undefined;
       const useUpsert = isIncremental && tableMap.incrementalStrategy === 'timestamp';
 
       // Build job-level date-range filter (applies to every table in the run)
@@ -704,6 +643,19 @@ export async function advanceRun(
           return;
         }
       }
+
+      const sourcePkCol = tableMap.incrementalTieCol ?? tableMap.columns.find(c =>
+        c.include && c.sourceCol && (c.conversion === 'serial_to_uuid' || c.sourceCol.toLowerCase() === 'id' || tgtCol(c).toLowerCase() === 'id')
+      )?.sourceCol ?? null;
+      const useCompositeCursor = tableMap.incrementalStrategy === 'timestamp' && !!sourcePkCol;
+      const incFilter: IncrementalFilter | undefined =
+        isIncremental
+          ? {
+              col: tableMap.incrementalCol!, gt: tableMap.lastSyncedValue ?? undefined,
+              pkCol: useCompositeCursor ? sourcePkCol : null,
+              pkGt: useCompositeCursor ? tableMap.lastSyncedPk ?? null : null,
+            }
+          : undefined;
 
       // Count source rows (once)
       if (ts.rowsSource === 0 && ts.offset === 0) {
@@ -784,9 +736,8 @@ export async function advanceRun(
         run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
         // Record watermark even when no new rows (source max may have advanced)
         if (isIncremental && tableMap.incrementalCol) {
-          const wm = await getMaxValue(tableSource, tableMap.source.schema, tableMap.source.table, tableMap.incrementalCol);
-          ts.newWatermark = wm;
-          if (wm) log(`[${ts.sourceKey}] watermark updated → ${wm} (no new rows)`);
+          ts.newWatermark = tableMap.lastSyncedValue ?? null;
+          ts.newWatermarkPk = tableMap.lastSyncedPk ?? null;
         }
         return;
       }
@@ -837,9 +788,10 @@ export async function advanceRun(
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         // Record new high-water mark for incremental sync
         if (isIncremental && tableMap.incrementalCol) {
-          const wm = await getMaxValue(tableSource, tableMap.source.schema, tableMap.source.table, tableMap.incrementalCol);
-          ts.newWatermark = wm;
-          if (wm) log(`[${ts.sourceKey}] watermark updated → ${wm}`);
+          const lastRow = chunk[chunk.length - 1];
+          ts.newWatermark = cursorValue(lastRow[tableMap.incrementalCol]);
+          ts.newWatermarkPk = useCompositeCursor && sourcePkCol ? cursorValue(lastRow[sourcePkCol]) : null;
+          if (ts.newWatermark) log(`[${ts.sourceKey}] watermark updated → ${ts.newWatermark}${ts.newWatermarkPk ? ` / PK ${ts.newWatermarkPk}` : ''}`);
         }
       } else {
         ts.hasMore = true;

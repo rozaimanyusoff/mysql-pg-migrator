@@ -5,6 +5,7 @@ import { listSchedules } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
 import { driveRun } from '../../../../lib/migv2/run-driver';
 import { recoverLegacyDisabledConstraints } from '../../../../lib/migv2/runner';
+import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
 
 // POST { runId } → resume an interrupted/failed run from its last saved offsets.
 // advanceRun only touches tables still 'pending'/'running', so completed tables
@@ -12,6 +13,7 @@ import { recoverLegacyDisabledConstraints } from '../../../../lib/migv2/runner';
 // inserts (ON CONFLICT DO NOTHING) make re-processing the in-flight chunk safe.
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
+  if (!requireSchedulerMutationAuth(req, res)) return;
 
   const { runId } = req.body as { runId?: string };
   if (!runId) return res.status(400).json({ error: 'runId is required' });

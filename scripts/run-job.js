@@ -24,6 +24,8 @@ function getArg(flag) {
 
 const scheduleId = getArg('--schedule-id');
 const baseUrl = getArg('--base-url') || process.env.APP_URL || 'http://localhost:3000';
+const timeoutSeconds = Number(process.env.RUN_TIMEOUT_SECONDS || 86400);
+const schedulerToken = process.env.SCHEDULER_API_TOKEN || '';
 
 if (!scheduleId) {
   console.error('[run-job] Error: --schedule-id is required');
@@ -40,7 +42,10 @@ function request(method, url, body) {
       port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(schedulerToken ? { Authorization: `Bearer ${schedulerToken}` } : {}),
+      },
     };
     const req = lib.request(options, res => {
       let data = '';
@@ -97,12 +102,13 @@ async function main() {
   let lastStatus = null;
   let lastTableSummary = '';
 
-  for (let attempt = 0; attempt < 720; attempt++) { // max 1 hour at 5s intervals
+  const maxAttempts = Math.max(1, Math.ceil(timeoutSeconds / 5));
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await sleep(5000);
 
     let statusRes;
     try {
-      statusRes = await request('GET', `${baseUrl}/api/migv2/run/status`, null);
+      statusRes = await request('GET', `${baseUrl}/api/migv2/run/status?id=${encodeURIComponent(runId)}&compact=1`, null);
     } catch {
       process.stdout.write('.');
       continue;
@@ -110,8 +116,7 @@ async function main() {
 
     if (statusRes.status !== 200) continue;
 
-    const runs = statusRes.body?.runs ?? [];
-    const run = runs.find(r => r.id === runId);
+    const run = statusRes.body?.run;
     if (!run) continue;
 
     if (run.status !== lastStatus) {
@@ -143,7 +148,7 @@ async function main() {
     }
   }
 
-  console.error('[run-job] Timed out waiting for run to complete');
+  console.error(`[run-job] Timed out after ${timeoutSeconds}s waiting for run to complete`);
   process.exit(1);
 }
 

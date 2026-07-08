@@ -8,11 +8,33 @@ export const MAX_CONCURRENT_MIGRATIONS = 5;
 function ensureDir() { fs.mkdirSync(RUN_DIR, { recursive: true }); }
 function runPath(id: string) { return path.join(RUN_DIR, `${id}.json`); }
 
+export async function acquireRunLock(id: string, timeoutMs = 5_000): Promise<() => void> {
+  ensureDir();
+  const lockPath = `${runPath(id)}.lock`;
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      const handle = await fs.promises.open(lockPath, 'wx');
+      return () => {
+        try { fs.closeSync(handle.fd); } catch { /* already closed */ }
+        try { fs.unlinkSync(lockPath); } catch { /* already released */ }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      if (Date.now() >= deadline) throw new Error(`Timed out acquiring run lock for ${id}`);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  }
+}
+
 export function saveRun(run: MigRun): void {
   ensureDir();
   // Keep only last 2000 log lines in the persisted state
   const toSave = { ...run, logs: run.logs.slice(-2000) };
-  fs.writeFileSync(runPath(run.id), JSON.stringify(toSave, null, 2));
+  const destination = runPath(run.id);
+  const temp = `${destination}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(toSave, null, 2));
+  fs.renameSync(temp, destination);
 }
 
 export function loadRun(id: string): MigRun | null {
@@ -37,6 +59,11 @@ export function listRuns(): MigRun[] {
 export function activeRunCount(excludeRunId?: string): number {
   reconcileStaleRuns();
   return listAllRuns().filter(r => r.id !== excludeRunId && (r.status === 'running' || r.status === 'pending')).length;
+}
+
+export function activeRunForJob(jobId: string): MigRun | null {
+  reconcileStaleRuns();
+  return listAllRuns().find(r => r.jobId === jobId && (r.status === 'running' || r.status === 'pending' || r.status === 'paused')) ?? null;
 }
 
 function listAllRuns(): MigRun[] {

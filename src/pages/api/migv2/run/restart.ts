@@ -6,6 +6,7 @@ import { listSchedules } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
 import { driveRun } from '../../../../lib/migv2/run-driver';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
+import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
 
 // POST { runId, truncate? } — restart a run from offset 0 for all tables.
 // Creates a new run ID (original run is preserved for audit).
@@ -13,6 +14,7 @@ import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
 // clears target data before the first chunk of each table.
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
+  if (!requireSchedulerMutationAuth(req, res)) return;
 
   const { runId, truncate = false } = req.body as { runId?: string; truncate?: boolean };
   if (!runId) return res.status(400).json({ error: 'runId is required' });

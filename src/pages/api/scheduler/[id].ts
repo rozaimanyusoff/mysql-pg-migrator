@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { loadSchedule, saveSchedule, deleteSchedule } from '../../../lib/migv2/schedule-store';
 import type { CronSchedule } from '../../../lib/migv2/types';
+import { requireSchedulerMutationAuth } from '../../../lib/scheduler-security';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const { id } = req.query as { id: string };
@@ -12,6 +13,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   }
 
   if (req.method === 'PATCH') {
+    if (!requireSchedulerMutationAuth(req, res)) return;
     const s = loadSchedule(id);
     if (!s) return res.status(404).json({ error: 'Not found' });
     const patch = req.body as Partial<CronSchedule>;
@@ -32,6 +34,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   }
 
   if (req.method === 'DELETE') {
+    if (!requireSchedulerMutationAuth(req, res)) return;
     deleteSchedule(id);
     return res.status(200).json({ ok: true });
   }

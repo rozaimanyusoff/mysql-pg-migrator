@@ -2,6 +2,17 @@
 
 ---
 
+## 2026-07-08
+- **implement** — Scheduler/run hardening: mutation auth, run pause, concurrency locks, composite incremental cursor
+  - New `src/lib/scheduler-security.ts`: all scheduler and run mutation API routes (`/api/scheduler/*`, `/api/migv2/run/{stop,stop-table,resume,restart,control-table,control-tables}`) now require either a `Bearer SCHEDULER_API_TOKEN` (timing-safe compare, for external cron callers) or same-origin browser proof. `SCHEDULER_API_TOKEN` and `RUN_TIMEOUT_SECONDS` documented in `.env.example`/`README.md`; `scripts/run-job.js` sends the token and uses the configurable timeout instead of the hardcoded 1-hour cap.
+  - Run-level `paused` status added to `RunStatus` (`types.ts`); `run-driver.ts` exits its background loop when a run is paused, and `control-table.ts` collapses a run to `paused`/`aborted` when its last active table pauses/stops, syncing `lastRunStatus` back to the owning schedule.
+  - Concurrency safety: `run-store.ts` gained `acquireRunLock()` (lockfile with timeout) and atomic write-then-rename in `saveRun`; `scheduler/[id]/run.ts` serializes check-and-create under a global lock and rejects starting a job that already has an active run (`activeRunForJob`).
+  - Incremental sync correctness: watermark now comes from the last migrated chunk row instead of `MAX(col)` on the source (which could skip rows written mid-run). Timestamp strategy uses a composite cursor — new `incrementalTieCol`/`lastSyncedPk` on `TableMap`, `newWatermarkPk` on table state — via new `src/lib/migv2/cursor-query.ts` (`buildWhere` with multi-column ordering, extracted from `runner.ts`). `preflight.ts` errors when incremental sync lacks a watermark column or a timestamp strategy lacks a resolvable tie-breaker.
+  - New `POST /api/migv2/run/control-tables` bulk table action endpoint (run/pause/stop several tables at once); `control-table.ts` can also start tables added to the job after the run was created. `status.ts` supports `?id=<runId>&compact=1` for cheap polling by `run-job.js`.
+  - UI: `scheduler.tsx` reworked run controls/table history (pause/resume/stop at run and table level, bulk selection); `migration.tsx` threads the new paused status and tie-breaker column.
+  - Tests: new `tests/scheduler-hardening.test.ts` + `npm run test:integration` script (node test runner with type stripping).
+  - Status: done
+
 ## 2026-07-02
 - **fix** — "Skip constraints" still 500'd after FK deferral: wrap relocated statements as best-effort
   - After the previous fix, the log confirmed all 130 FK constraints were correctly deferred to the end of the script — but the import still failed with the same FK violation. Root cause: `ALTER TABLE ADD CONSTRAINT` re-validates against the now-fully-loaded data, and the source dump genuinely has at least one orphaned row (`asset_brand_categories.brand_id` with no matching `asset_brands.id`). Since the whole script runs in one transaction, that validation failure rolled back everything — defeating the purpose of "skip constraints" (the user explicitly wants to tolerate this, not have it abort the import).

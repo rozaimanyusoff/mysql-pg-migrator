@@ -194,6 +194,15 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
 
   for (const tm of included) {
     const issues = staticColumnIssues(tm);
+    if (tm.syncMode === 'incremental' && !tm.incrementalCol) {
+      issues.push({ level: 'error', message: 'Incremental sync requires a watermark column.' });
+    }
+    if (tm.syncMode === 'incremental' && tm.incrementalStrategy === 'timestamp') {
+      const inferredTie = tm.columns.find(c => c.include && c.sourceCol && (c.conversion === 'serial_to_uuid' || c.sourceCol.toLowerCase() === 'id' || c.targetCol.toLowerCase() === 'id'))?.sourceCol;
+      if (!tm.incrementalTieCol && !inferredTie) {
+        issues.push({ level: 'error', message: 'Timestamp incremental sync requires a unique tie-breaker column to prevent equal-timestamp rows being skipped.' });
+      }
+    }
     const tableSource: MigConn = tm.sourceDatabase && tm.sourceDatabase !== source.database
       ? { ...source, database: tm.sourceDatabase }
       : source;

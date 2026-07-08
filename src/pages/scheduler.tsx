@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import { useAlert } from '../lib/alert-context';
-import type { CronSchedule, MigJobSummary, MigRun } from '../lib/migv2/types';
+import type { CronSchedule, MigJobSummary, MigRun, MigRunTableState } from '../lib/migv2/types';
 import type { PreflightReport } from '../lib/migv2/preflight';
 
 function fmtDuration(seconds: number): string {
@@ -86,6 +86,11 @@ function StatusBadge({ status }: { status: CronSchedule['lastRunStatus'] }) {
       <Loader2 size={9} className="animate-spin" />running
     </span>
   );
+  if (status === 'paused') return (
+    <span className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 font-semibold">
+      <Pause size={9} />paused
+    </span>
+  );
   return null;
 }
 
@@ -96,6 +101,7 @@ function RunStatusBadge({ status }: { status: MigRun['status'] }) {
     running: 'bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400',
     pending: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400',
     aborted: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',
+    paused: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',
     rolled_back: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',
   };
   return (
@@ -103,6 +109,7 @@ function RunStatusBadge({ status }: { status: MigRun['status'] }) {
       {status === 'running' && <Loader2 size={9} className="animate-spin" />}
       {status === 'completed' && <CheckCircle2 size={9} />}
       {status === 'failed' && <AlertTriangle size={9} />}
+      {status === 'paused' && <Pause size={9} />}
       {status}
     </span>
   );
@@ -129,7 +136,9 @@ export default function SchedulerPage() {
   const [tableStatusFilter, setTableStatusFilter] = useState('all');
   const [showStatusFilter, setShowStatusFilter] = useState(false);
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
+  const [selectedTableKeys, setSelectedTableKeys] = useState<Set<string>>(new Set());
   const [tableActionKey, setTableActionKey] = useState<string | null>(null);
+  const [bulkTableAction, setBulkTableAction] = useState<'run' | 'pause' | 'stop' | null>(null);
   const [runMenuId, setRunMenuId] = useState<string | null>(null);
   const [hideCompletedRunIds, setHideCompletedRunIds] = useState<Set<string>>(new Set());
   const [preflight, setPreflight] = useState<{ jobName: string; loading: boolean; report: PreflightReport | null; error: string | null } | null>(null);
@@ -149,33 +158,51 @@ export default function SchedulerPage() {
   const selectedRuns = runs
     .filter(r => r.jobId === selectedId)
     .slice(0, 10);
+  const selectedHistoryRun = selectedRuns[0] ?? null;
+  const selectedHistoryTableStates: MigRunTableState[] = selectedHistoryRun && selectedJob
+    ? selectedJob.tables.filter(t => t.include).map(table => selectedHistoryRun.tableStates.find(state => state.id === table.id) ?? ({
+        id: table.id,
+        sourceKey: `${table.source.schema}.${table.source.table}`,
+        targetKey: `${table.target.schema}.${table.targetAlias?.trim() || table.target.table}`,
+        status: 'pending', rowsSource: 0, rowsMigrated: 0, rowsSkipped: 0, rowsErrored: 0,
+        offset: 0, hasMore: true, error: null, insertedPks: [], pkOverflow: false, targetPkCol: null,
+      } satisfies MigRunTableState))
+    : [];
 
   // ── Data fetching ─────────────────────────────────────────────────────────────
   const loadAll = async () => {
     try {
-      const [schRes, jobRes, runRes] = await Promise.all([
+      const [schRes, jobRes] = await Promise.all([
         axios.get<{ schedules: CronSchedule[] }>('/api/scheduler'),
         axios.get<{ jobs: MigJobSummary[] }>('/api/migv2/jobs'),
-        axios.get<{ runs: MigRun[] }>('/api/migv2/run/status'),
       ]);
       setSchedules(schRes.data.schedules);
       setJobs(jobRes.data.jobs);
-      setRuns(runRes.data.runs);
     } catch { /* ignore */ } finally { setLoading(false); }
+  };
+
+  const loadRunsForJob = async (jobId: string) => {
+    try {
+      const { data } = await axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { jobId, limit: 10, compact: 1 } });
+      setRuns(data.runs);
+    } catch { /* ignore */ }
   };
 
   const pollRuns = async () => {
     try {
       const [schRes, runRes] = await Promise.all([
         axios.get<{ schedules: CronSchedule[] }>('/api/scheduler'),
-        axios.get<{ runs: MigRun[] }>('/api/migv2/run/status'),
+        selectedId
+          ? axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { jobId: selectedId, limit: 10, compact: 1 } })
+          : Promise.resolve(null),
       ]);
       setSchedules(schRes.data.schedules);
-      setRuns(runRes.data.runs);
+      if (runRes) setRuns(runRes.data.runs);
     } catch { /* ignore */ }
   };
 
   useEffect(() => { void loadAll(); }, []);
+  useEffect(() => { if (selectedId) void loadRunsForJob(selectedId); }, [selectedId]);
 
   // Deep-link: ?highlight=<jobId> — auto-select the job and open the Add Schedule
   // form when it has no schedule yet. Fires once after jobs have loaded.
@@ -289,6 +316,36 @@ export default function SchedulerPage() {
     } finally { setTableActionKey(null); }
   };
 
+  const handleBulkTableAction = async (action: 'run' | 'pause' | 'stop') => {
+    if (action === 'run') {
+      if (!selectedSchedule) return;
+      setBulkTableAction(action);
+      try {
+        await axios.post(`/api/scheduler/${selectedSchedule.id}/run`);
+        await pollRuns();
+      } catch (err) {
+        const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Run All failed') : 'Run All failed';
+        showError('Run All failed', msg);
+      } finally { setBulkTableAction(null); }
+      return;
+    }
+    if (!selectedHistoryRun) return;
+    const tableIds = selectedHistoryTableStates
+      .filter(table => action === 'pause'
+        ? (table.status === 'running' || table.status === 'pending')
+        : (table.status === 'running' || table.status === 'pending' || table.status === 'paused'))
+      .map(table => table.id);
+    if (!tableIds.length) return;
+    setBulkTableAction(action);
+    try {
+      await axios.post('/api/migv2/run/control-tables', { runId: selectedHistoryRun.id, tableIds, action });
+      await pollRuns();
+    } catch (err) {
+      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? `${action} failed`) : `${action} failed`;
+      showError(`Bulk ${action} failed`, msg);
+    } finally { setBulkTableAction(null); }
+  };
+
   const handleDelete = (s: CronSchedule) => {
     showConfirm({
       title: 'Delete schedule?',
@@ -302,7 +359,7 @@ export default function SchedulerPage() {
   };
 
   const handleCopyCrontab = (s: CronSchedule, appPath: string) => {
-    const line = `${s.cronExpr} cd ${appPath} && node scripts/run-job.js --schedule-id ${s.id}`;
+    const line = `${s.cronExpr} cd ${appPath} && node --env-file=.env scripts/run-job.js --schedule-id ${s.id}`;
     void navigator.clipboard.writeText(line);
     setCopiedId(s.id);
     setTimeout(() => setCopiedId(null), 2000);
@@ -441,7 +498,7 @@ export default function SchedulerPage() {
                 <p className="text-[14px] text-gray-400 dark:text-slate-500">Select a job to view its schedule and run history</p>
               </div>
             ) : (
-              <div className="max-w-6xl mx-auto px-6 py-5 space-y-5">
+              <div className="w-full max-w-none px-4 py-5 space-y-5">
 
                 {/* Job + schedule header */}
                 <div className="bg-white dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-slate-800 p-4 space-y-3">
@@ -532,7 +589,7 @@ export default function SchedulerPage() {
                         </button>
                       </div>
                       <code className="text-[12px] text-emerald-400 dark:text-emerald-300 font-mono break-all">
-                        {selectedSchedule.cronExpr} cd /path/to/app &amp;&amp; node scripts/run-job.js --schedule-id {selectedSchedule.id}
+                        {selectedSchedule.cronExpr} cd /path/to/app &amp;&amp; node --env-file=.env scripts/run-job.js --schedule-id {selectedSchedule.id}
                       </code>
                       <p className="text-[11px] text-slate-500 mt-1.5">
                         Replace <code className="text-slate-400">/path/to/app</code> with your app directory. Set <code className="text-slate-400">APP_URL</code> if not on port 3000.
@@ -587,18 +644,57 @@ export default function SchedulerPage() {
                       <input value={tableSearch} onChange={e => setTableSearch(e.target.value)} placeholder="Search tables…"
                         className="w-full rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-[11px] text-gray-700 outline-none focus:border-violet-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" />
                     </div>
+                    <Tooltip content="Create a new audited run for all included tables; at most 5 tables run concurrently" side="bottom">
+                      <button type="button" onClick={() => void handleBulkTableAction('run')}
+                        disabled={!!bulkTableAction || !selectedSchedule || selectedSchedule.lastRunStatus === 'running' || selectedSchedule.lastRunStatus === 'paused'}
+                        className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 dark:border-emerald-800 dark:hover:bg-emerald-950/30">
+                        {bulkTableAction === 'run' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}Run All
+                      </button>
+                    </Tooltip>
+                    <button type="button" onClick={() => void handleBulkTableAction('pause')}
+                      disabled={!!bulkTableAction || !selectedHistoryTableStates.some(t => t.status === 'running' || t.status === 'pending')}
+                      className="inline-flex items-center gap-1 rounded-md border border-amber-300 px-2 py-1.5 text-[11px] font-medium text-amber-600 hover:bg-amber-50 disabled:opacity-40 dark:border-amber-800 dark:hover:bg-amber-950/30" title="Pause all currently running tables">
+                      {bulkTableAction === 'pause' ? <Loader2 size={11} className="animate-spin" /> : <Pause size={11} />}Pause All
+                    </button>
+                    <button type="button" onClick={() => void handleBulkTableAction('stop')}
+                      disabled={!!bulkTableAction || !selectedHistoryTableStates.some(t => t.status === 'running' || t.status === 'pending' || t.status === 'paused')}
+                      className="inline-flex items-center gap-1 rounded-md border border-rose-300 px-2 py-1.5 text-[11px] font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-800 dark:hover:bg-rose-950/30" title="Stop all currently running tables">
+                      {bulkTableAction === 'stop' ? <Loader2 size={11} className="animate-spin" /> : <Square size={10} />}Stop All
+                    </button>
                     <div className="relative">
                       <button type="button" onClick={() => setShowStatusFilter(v => !v)} title="Filter table status"
                         className={`rounded-md border p-1.5 ${tableStatusFilter !== 'all' ? 'border-violet-400 text-violet-500' : 'border-gray-200 text-slate-400 dark:border-slate-700'}`}>
                         <MoreVertical size={13} />
                       </button>
-                      {showStatusFilter && <div className="absolute right-0 top-8 z-20 w-36 rounded-md border border-gray-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                      {showStatusFilter && <div className="absolute right-0 top-8 z-20 w-56 rounded-md border border-gray-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
                         {['all', 'completed', 'running', 'paused', 'aborted', 'pending'].map(status => (
                           <button key={status} type="button" onClick={() => { setTableStatusFilter(status); setShowStatusFilter(false); }}
                             className={`block w-full rounded px-2 py-1.5 text-left text-[11px] capitalize ${tableStatusFilter === status ? 'bg-violet-50 text-violet-600 dark:bg-violet-950/40' : 'text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
                             {status === 'aborted' ? 'stopped' : status}
                           </button>
                         ))}
+                        {selectedHistoryRun && <>
+                          <div className="my-2 border-t border-gray-100 dark:border-slate-800" />
+                          <div className="space-y-1 px-1 text-[10px] text-slate-500">
+                            {(['completed', 'running', 'paused', 'aborted', 'pending'] as const).map(status => {
+                              const count = selectedHistoryTableStates.filter(t => t.status === status).length;
+                              const pct = selectedHistoryTableStates.length ? Math.round(count / selectedHistoryTableStates.length * 100) : 0;
+                              return <div key={status} className="flex justify-between capitalize"><span>{status === 'aborted' ? 'stopped' : status}</span><span>{pct}% ({count})</span></div>;
+                            })}
+                          </div>
+                          <label className="mt-2 flex cursor-pointer items-center justify-between border-t border-gray-100 px-1 pt-2 text-[11px] text-slate-600 dark:border-slate-800 dark:text-slate-300">
+                            <span>Auto-hide completed</span>
+                            <input type="checkbox" checked={hideCompletedRunIds.has(selectedHistoryRun.id)}
+                              onChange={() => setHideCompletedRunIds(prev => { const next = new Set(prev); next.has(selectedHistoryRun.id) ? next.delete(selectedHistoryRun.id) : next.add(selectedHistoryRun.id); return next; })}
+                              className="h-3.5 w-3.5 accent-violet-600" />
+                          </label>
+                          <div className="mt-2 flex gap-1 border-t border-gray-100 pt-2 dark:border-slate-800">
+                            {(selectedHistoryRun.status === 'failed' || selectedHistoryRun.status === 'aborted') &&
+                              <button type="button" onClick={() => void handleResume(selectedHistoryRun.id)} className="flex-1 rounded border border-violet-300 px-2 py-1 text-[10px] text-violet-600">Resume run</button>}
+                            <button type="button" onClick={() => void handleRestart(selectedHistoryRun.id, false)} className="flex-1 rounded border border-amber-300 px-2 py-1 text-[10px] text-amber-600">Restart</button>
+                            <button type="button" onClick={() => void handleRestart(selectedHistoryRun.id, true)} className="flex-1 rounded border border-rose-300 px-2 py-1 text-[10px] text-rose-600">Truncate</button>
+                          </div>
+                        </>}
                       </div>}
                     </div>
                     <span className="text-[11px] text-gray-400 dark:text-slate-500 shrink-0">{selectedRuns.length} recent</span>
@@ -607,14 +703,14 @@ export default function SchedulerPage() {
                     <div className="flex items-center justify-center py-10 text-[13px] text-gray-400 dark:text-slate-500 italic">
                       {selectedSchedule ? 'No runs yet — click "Run Now" or wait for the cron schedule.' : 'Add a schedule to start running this job.'}
                     </div>
-                  ) : selectedRuns.map(run => {
+                  ) : selectedRuns.filter(run => run.id === selectedHistoryRun?.id).map(run => {
                     const totalRows = run.tableStates.reduce((s, ts) => s + ts.rowsMigrated + ts.rowsSkipped, 0);
                     const completedPct = run.tableStates.length ? Math.round(run.tableStates.filter(t => t.status === 'completed').length / run.tableStates.length * 100) : 0;
                     const hideCompleted = hideCompletedRunIds.has(run.id);
                     return (
-                      <div key={run.id} className="border-b border-gray-50 dark:border-slate-800/50 last:border-0">
+                      <div key={run.id}>
                         <div
-                          className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors">
+                          className="hidden">
                           <input type="checkbox" checked={selectedRunIds.has(run.id)} onChange={() => {}}
                             onClick={e => { e.stopPropagation(); setSelectedRunIds(prev => { const next = new Set(prev); next.has(run.id) ? next.delete(run.id) : next.add(run.id); return next; }); }}
                             aria-label={`Select run ${run.id.slice(0, 8)}`} className="h-3.5 w-3.5 accent-violet-600" />
@@ -706,22 +802,17 @@ export default function SchedulerPage() {
                           </div>
                         </div>
                         {(
-                          <div className="bg-gray-50 dark:bg-slate-950/50 px-4 pb-3 pt-2">
-                            <div className="mb-2 flex items-center justify-end gap-2 text-[10px] text-slate-400">
-                              {hideCompleted && <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-600 dark:bg-emerald-950/30">Completed tables hidden</span>}
-                              <span>Maximum 5 migrations can run concurrently</span>
-                            </div>
-                            <div className="overflow-x-auto">
-                              <div className="min-w-[920px]">
-                                <div className="grid grid-cols-[minmax(260px,1.4fr)_minmax(220px,1fr)_110px_90px_160px] gap-3 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-600">
+                          <div className="px-3 py-2">
+                            <div className="w-full min-w-0">
+                                <div className="grid grid-cols-[20px_minmax(260px,1.4fr)_minmax(220px,1fr)_110px_130px] items-center gap-3 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-600">
+                                  <span />
                                   <span>Source → target</span>
                                   <span>Progress</span>
                                   <span className="text-right">Rows</span>
-                                  <span className="text-right">Errors</span>
                                   <span className="text-right">Actions</span>
                                 </div>
                                 <div className="max-h-[32rem] space-y-1 overflow-y-auto overscroll-contain pr-1">
-                            {run.tableStates.filter(ts => {
+                            {selectedHistoryTableStates.filter(ts => {
                               const query = tableSearch.trim().toLowerCase();
                               const matchesText = !query || ts.sourceKey.toLowerCase().includes(query) || ts.targetKey.toLowerCase().includes(query);
                               return matchesText && (!hideCompleted || ts.status !== 'completed') && (tableStatusFilter === 'all' || ts.status === tableStatusFilter);
@@ -730,8 +821,12 @@ export default function SchedulerPage() {
                               const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(processed / ts.rowsSource * 100)) : (ts.status === 'completed' ? 100 : 0);
                               const barColor = ts.status === 'completed' ? 'bg-emerald-500' : ts.status === 'failed' ? 'bg-rose-500' : 'bg-violet-500';
                               const isLogSelected = runLogSelection?.runId === run.id && runLogSelection.tableId === ts.id;
+                              const tableSelectionKey = `${run.id}:${ts.id}`;
                               return (
-                                <div key={ts.id} style={{ contentVisibility: 'auto', containIntrinsicSize: '32px' }} className={`grid grid-cols-[minmax(260px,1.4fr)_minmax(220px,1fr)_110px_90px_160px] items-center gap-3 rounded-md px-2 py-1.5 ${isLogSelected ? 'bg-rose-50 dark:bg-rose-950/20 ring-1 ring-rose-200 dark:ring-rose-900/50' : 'bg-white/70 dark:bg-slate-900/50'}`}>
+                                <div key={ts.id} style={{ contentVisibility: 'auto', containIntrinsicSize: '34px' }} className={`grid w-full grid-cols-[20px_minmax(260px,1.4fr)_minmax(220px,1fr)_110px_130px] items-center gap-3 rounded-md px-2 py-1.5 ${isLogSelected ? 'bg-violet-50 ring-1 ring-violet-200 dark:bg-violet-950/20 dark:ring-violet-900/50' : 'bg-gray-50 dark:bg-slate-900/70'}`}>
+                                  <input type="checkbox" checked={selectedTableKeys.has(tableSelectionKey)}
+                                    onChange={() => setSelectedTableKeys(prev => { const next = new Set(prev); next.has(tableSelectionKey) ? next.delete(tableSelectionKey) : next.add(tableSelectionKey); return next; })}
+                                    aria-label={`Select table ${ts.sourceKey}`} className="h-3.5 w-3.5 shrink-0 accent-violet-600" />
                                   <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
                                     <span className={`truncate ${ts.status === 'failed' ? 'text-rose-500' : 'text-gray-600 dark:text-slate-300'}`} title={ts.sourceKey}>{ts.sourceKey}</span>
                                     <span className="shrink-0 text-slate-300 dark:text-slate-600">→</span>
@@ -743,19 +838,10 @@ export default function SchedulerPage() {
                                       {pct}% · {processed.toLocaleString()} / {ts.rowsSource.toLocaleString()}
                                     </span>
                                   </div>
-                                  <span className="text-right text-[11px] tabular-nums text-slate-500 dark:text-slate-400">{ts.rowsMigrated.toLocaleString()} rows</span>
-                                  <div className="text-right">
-                                    {ts.rowsErrored > 0 ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => setRunLogSelection(isLogSelected ? null : { runId: run.id, tableId: ts.id })}
-                                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-rose-500 hover:bg-rose-100 hover:text-rose-700 dark:hover:bg-rose-950/50 dark:hover:text-rose-300"
-                                        title="Show this table's errors in the run log">
-                                        <AlertTriangle size={10} />{ts.rowsErrored.toLocaleString()} errors
-                                      </button>
-                                    ) : <span className="text-[11px] text-slate-300 dark:text-slate-700">—</span>}
-                                  </div>
-                                  <div className="flex items-center justify-end gap-1">
+                                  <span className={`text-right text-[11px] tabular-nums ${ts.rowsErrored > 0 ? 'text-rose-500' : 'text-slate-500 dark:text-slate-400'}`}>
+                                    {ts.rowsMigrated.toLocaleString()} rows{ts.rowsErrored > 0 ? ` · ${ts.rowsErrored} errors` : ''}
+                                  </span>
+                                  <div className="flex items-center justify-end gap-0.5">
                                     {ts.status === 'running' && <Loader2 size={12} className="mr-1 animate-spin text-violet-500" aria-label="Running" />}
                                     {ts.status === 'pending' && <button type="button" title="Run table" onClick={() => void handleTableAction(run.id, ts.id, 'run')} className="rounded p-1 text-emerald-500 hover:bg-emerald-50"><Play size={12} /></button>}
                                     {(ts.status === 'running' || ts.status === 'pending') && <button type="button" title="Pause table" onClick={() => void handleTableAction(run.id, ts.id, 'pause')} className="rounded p-1 text-amber-500 hover:bg-amber-50"><Pause size={12} /></button>}
@@ -763,21 +849,15 @@ export default function SchedulerPage() {
                                     {!['completed', 'rolled_back', 'aborted'].includes(ts.status) && <button type="button" title="Stop table" onClick={() => void handleTableAction(run.id, ts.id, 'stop')} className="rounded p-1 text-rose-500 hover:bg-rose-50"><Square size={11} /></button>}
                                     {['completed', 'failed', 'aborted'].includes(ts.status) && <button type="button" title="Restart table" onClick={() => void handleTableAction(run.id, ts.id, 'restart')} className="rounded p-1 text-blue-500 hover:bg-blue-50"><RefreshCw size={12} /></button>}
                                     {tableActionKey?.startsWith(`${run.id}:${ts.id}:`) && <Loader2 size={11} className="animate-spin text-slate-400" />}
+                                    <button type="button" onClick={() => setRunLogSelection(isLogSelected ? null : { runId: run.id, tableId: ts.id })}
+                                      className={`rounded p-1 ${isLogSelected ? 'bg-violet-100 text-violet-600 dark:bg-violet-950/50' : ts.rowsErrored > 0 ? 'text-rose-500 hover:bg-rose-50' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`} title="View table run log">
+                                      <Terminal size={12} />
+                                    </button>
                                   </div>
                                 </div>
                               );
                             })}
                                 </div>
-                              </div>
-                            </div>
-
-                            <div className="mt-2 flex justify-end">
-                              <button type="button"
-                                onClick={() => setRunLogSelection(runLogSelection?.runId === run.id && runLogSelection.tableId === null ? null : { runId: run.id, tableId: null })}
-                                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-violet-600 dark:text-slate-400 dark:hover:text-violet-300">
-                                <Terminal size={11} />
-                                {runLogSelection?.runId === run.id && runLogSelection.tableId === null ? 'Hide run log' : 'View full run log'}
-                              </button>
                             </div>
 
                             {runLogSelection?.runId === run.id && (() => {
@@ -965,6 +1045,33 @@ export default function SchedulerPage() {
                   {jobs.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
                 </select>
               </div>
+
+              {/* Scheduler controls timing only; sync mode belongs to the saved migration job. */}
+              {(() => {
+                const job = jobs.find(j => j.id === formJobId);
+                const included = job?.tables.filter(t => t.include) ?? [];
+                const incremental = included.filter(t => t.syncMode === 'incremental' && t.incrementalCol);
+                return (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/60 dark:bg-blue-950/25">
+                    <div className="flex items-start gap-2">
+                      <Info size={14} className="mt-0.5 shrink-0 text-blue-500" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12px] font-semibold text-blue-700 dark:text-blue-300">Need continuous appended-data sync?</p>
+                        <p className="mt-1 text-[11px] leading-4 text-blue-600/90 dark:text-blue-400">
+                          A schedule only controls when this saved job runs. Return to the Migration module and set each live-source table to <strong>Incremental (⟳Inc)</strong>, then choose its watermark column and ID/Timestamp strategy.
+                        </p>
+                        {job && <p className="mt-1.5 text-[10px] font-medium text-blue-500 dark:text-blue-500">
+                          {incremental.length} of {included.length} included tables currently have incremental sync configured.
+                        </p>}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => { setShowForm(false); void router.push('/migration'); }}
+                      className="mt-2 ml-5 inline-flex items-center gap-1 rounded border border-blue-300 bg-white px-2 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-900/40">
+                      Open Migration module
+                    </button>
+                  </div>
+                );
+              })()}
 
               {/* Cron preset */}
               <div className="space-y-1">
