@@ -122,7 +122,7 @@ export interface MigJobSummary {
 // ── Run ───────────────────────────────────────────────────────────────────────
 
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
-export type TableRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
+export type TableRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
 
 export interface MigRunTableState {
   id: string;           // = tableMap.id

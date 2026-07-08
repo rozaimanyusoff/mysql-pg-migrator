@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
 import { loadSchedule, saveSchedule } from '../../../../lib/migv2/schedule-store';
 import { loadJob } from '../../../../lib/migv2/job-store';
-import { saveRun } from '../../../../lib/migv2/run-store';
+import { activeRunCount, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
 import { driveRun } from '../../../../lib/migv2/run-driver';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
@@ -14,6 +14,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const schedule = loadSchedule(id);
   if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
   if (!schedule.enabled) return res.status(400).json({ error: 'Schedule is disabled' });
+  if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) {
+    return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached. Stop or wait for an active run.` });
+  }
 
   const job = loadJob(schedule.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found' });

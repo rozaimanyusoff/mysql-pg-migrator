@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
-import { loadRun, saveRun } from '../../../../lib/migv2/run-store';
+import { activeRunCount, loadRun, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
 import { loadJob } from '../../../../lib/migv2/job-store';
 import { listSchedules } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
@@ -20,6 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const sourceRun = loadRun(runId);
   if (!sourceRun) return res.status(404).json({ error: 'Run not found' });
   if (sourceRun.status === 'running') return res.status(400).json({ error: 'Run is already in progress' });
+  if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
   if (!sourceRun.jobId) return res.status(400).json({ error: 'Run has no job to resolve connections from' });
 
   const job = loadJob(sourceRun.jobId);

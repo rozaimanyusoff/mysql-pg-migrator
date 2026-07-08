@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { loadRun, saveRun } from '../../../../lib/migv2/run-store';
+import { activeRunCount, loadRun, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
 import { loadJob } from '../../../../lib/migv2/job-store';
 import { listSchedules } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
@@ -20,6 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!run) return res.status(404).json({ error: 'Run not found' });
   if (run.status === 'running') return res.status(400).json({ error: 'Run is already in progress' });
   if (run.status === 'completed') return res.status(400).json({ error: 'Run already completed' });
+  if (activeRunCount(run.id) >= MAX_CONCURRENT_MIGRATIONS) return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
   if (!run.jobId) return res.status(400).json({ error: 'Run has no job to resolve connections from' });
 
   const job = loadJob(run.jobId);

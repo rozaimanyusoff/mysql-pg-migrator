@@ -7,6 +7,7 @@ import { suggestTargetType } from './type-map';
 const CHUNK_SIZE = 500;
 const MAX_ADVANCE_MS = 8_000;
 const MAX_ROLLBACK_PKS = 5_000;
+const MAX_CONCURRENT_TABLES = 5;
 
 // ── Deterministic UUID from source-table namespace + sequential id ────────────
 // Guarantees the same UUID for the same source row across runs,
@@ -648,13 +649,17 @@ export async function advanceRun(
   // Track which columns had NOT NULL dropped per table (for restore after completion)
   const nullDroppedCols = new Map<string, string[]>(); // tableState.id → column names
 
-  for (const ts of run.tableStates) {
-    if (ts.status !== 'pending' && ts.status !== 'running') continue;
-    if (pausedTableIds.includes(ts.id)) continue;
-    if (Date.now() > deadline) break;
+  // Process at most five table migrations in parallel. Running tables keep
+  // their slots on subsequent advances; pending tables enter as slots free up.
+  const activeTables = run.tableStates
+    .filter(ts => (ts.status === 'pending' || ts.status === 'running') && !pausedTableIds.includes(ts.id))
+    .slice(0, MAX_CONCURRENT_TABLES);
+
+  await Promise.all(activeTables.map(async ts => {
+    if (Date.now() > deadline) return;
 
     const tableMap = run.tables.find(t => t.id === ts.id);
-    if (!tableMap || !tableMap.include) { ts.status = 'completed'; continue; }
+    if (!tableMap || !tableMap.include) { ts.status = 'completed'; return; }
 
     try {
       ts.status = 'running';
@@ -687,7 +692,7 @@ export async function advanceRun(
           if (!discovered.length) {
             ts.status = 'completed';
             log(`[${ts.sourceKey}] source table has no columns, skipping`);
-            continue;
+            return;
           }
           tableMap.columns = discovered;
           log(`[${ts.sourceKey}] auto-discovered ${discovered.length} columns`);
@@ -696,7 +701,7 @@ export async function advanceRun(
           ts.error = err instanceof Error ? err.message : String(err);
           log(`[${ts.sourceKey}] failed to auto-discover columns: ${ts.error}`);
           run.errors.push(ts.error);
-          continue;
+          return;
         }
       }
 
@@ -753,7 +758,7 @@ export async function advanceRun(
       if (!srcCols.length) {
         ts.status = 'completed';
         log(`[${ts.sourceKey}] no columns mapped, skipping`);
-        continue;
+        return;
       }
 
       // Find target PK column
@@ -783,7 +788,7 @@ export async function advanceRun(
           ts.newWatermark = wm;
           if (wm) log(`[${ts.sourceKey}] watermark updated → ${wm} (no new rows)`);
         }
-        continue;
+        return;
       }
 
       // Remove accidental CSV header rows before transforming typed values.
@@ -852,13 +857,14 @@ export async function advanceRun(
         } catch { /* ignore */ }
       }
     }
-  }
+  }));
 
   // Check overall completion
-  const allDone = run.tableStates.every(t => t.status === 'completed' || t.status === 'failed' || t.status === 'rolled_back');
+  const allDone = run.tableStates.every(t => t.status === 'completed' || t.status === 'failed' || t.status === 'rolled_back' || t.status === 'aborted');
   const anyFailed = run.tableStates.some(t => t.status === 'failed');
   if (allDone) {
-    run.status = anyFailed ? 'failed' : 'completed';
+    const anyAborted = run.tableStates.some(t => t.status === 'aborted');
+    run.status = anyFailed ? 'failed' : anyAborted ? 'aborted' : 'completed';
     run.completedAt = new Date().toISOString();
     log(`Run ${run.status}. Total: ${run.migratedRows} rows migrated.`);
   }

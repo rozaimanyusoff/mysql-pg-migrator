@@ -1,5 +1,5 @@
 import { advanceRun } from './runner';
-import { saveRun } from './run-store';
+import { loadRun, saveRun } from './run-store';
 import { loadJob, saveJob } from './job-store';
 import { loadSchedule, saveSchedule } from './schedule-store';
 import { sendEmail } from '../mailer';
@@ -71,7 +71,42 @@ export async function driveRun(
   let run = initial;
   try {
     while (!TERMINAL.has(run.status)) {
+      // Re-read persisted control state so table pause/stop requests made by
+      // another API request are observed by this background driver.
+      const persisted = loadRun(run.id);
+      if (persisted) run = persisted;
+      if (TERMINAL.has(run.status)) break;
+      // A run with only paused/terminal tables remains resumable, but should
+      // not spin a hot background loop while waiting for user input.
+      if (!run.tableStates.some(t => t.status === 'pending' || t.status === 'running')) {
+        const hasPaused = run.tableStates.some(t => t.status === 'paused');
+        if (!hasPaused) {
+          run.status = run.tableStates.some(t => t.status === 'failed') ? 'failed'
+            : run.tableStates.some(t => t.status === 'aborted') ? 'aborted' : 'completed';
+          run.completedAt = new Date().toISOString();
+          saveRun(run);
+          break;
+        }
+        run.heartbeatAt = new Date().toISOString();
+        saveRun(run);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        continue;
+      }
       run = await advanceRun(run, source, target);
+      // A control request can arrive while a DB chunk is in flight. Preserve
+      // that request instead of overwriting it with this chunk's stale state.
+      const controlled = loadRun(run.id);
+      if (controlled) {
+        if (controlled.status === 'aborted') run.status = 'aborted';
+        for (const current of controlled.tableStates) {
+          if (current.status !== 'paused' && current.status !== 'aborted') continue;
+          const table = run.tableStates.find(t => t.id === current.id);
+          if (table) {
+            table.status = current.status;
+            table.error = current.error;
+          }
+        }
+      }
       run.heartbeatAt = new Date().toISOString();
       saveRun(run);
       persistWatermarks(run);

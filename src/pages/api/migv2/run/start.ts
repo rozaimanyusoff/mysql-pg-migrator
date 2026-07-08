@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { advanceRun } from '../../../../lib/migv2/runner';
-import { saveRun } from '../../../../lib/migv2/run-store';
+import { activeRunCount, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
 import type { MigConn, MigRun, MigRunTableState, TableMap } from '../../../../lib/migv2/types';
 import { randomUUID } from 'crypto';
 
@@ -20,6 +20,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!source || !target || !tables?.length) {
     return res.status(400).json({ error: 'source, target, tables required' });
+  }
+  if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) {
+    return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
   }
 
   const run: MigRun = {

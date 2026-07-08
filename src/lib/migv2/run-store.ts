@@ -3,6 +3,7 @@ import path from 'path';
 import type { MigRun } from './types';
 
 const RUN_DIR = path.join(process.cwd(), 'data', 'migv2', 'runs');
+export const MAX_CONCURRENT_MIGRATIONS = 5;
 
 function ensureDir() { fs.mkdirSync(RUN_DIR, { recursive: true }); }
 function runPath(id: string) { return path.join(RUN_DIR, `${id}.json`); }
@@ -31,6 +32,22 @@ export function listRuns(): MigRun[] {
     .filter(Boolean)
     .sort((a, b) => b!.createdAt.localeCompare(a!.createdAt))
     .slice(0, 20) as MigRun[];
+}
+
+export function activeRunCount(excludeRunId?: string): number {
+  reconcileStaleRuns();
+  return listAllRuns().filter(r => r.id !== excludeRunId && (r.status === 'running' || r.status === 'pending')).length;
+}
+
+function listAllRuns(): MigRun[] {
+  ensureDir();
+  return fs.readdirSync(RUN_DIR)
+    .filter(f => f.endsWith('.json'))
+    .map(f => {
+      try { return JSON.parse(fs.readFileSync(path.join(RUN_DIR, f), 'utf8')) as MigRun; }
+      catch { return null; }
+    })
+    .filter((r): r is MigRun => !!r);
 }
 
 // A server-driven run stamps heartbeatAt every advance loop (~8s). If a run is

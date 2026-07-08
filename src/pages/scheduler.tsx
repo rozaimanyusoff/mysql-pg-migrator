@@ -4,11 +4,11 @@ import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
-  Calendar, Check, CheckCircle2, ChevronDown, ChevronUp,
+  Calendar, Check, CheckCircle2,
   Clock, Copy, Loader2, Pause, Pencil, Play,
   Plus, Terminal, Trash2, X,
   AlertTriangle, CircleDot, ListChecks, RotateCcw, Mail, Info,
-  FileSpreadsheet, FileText,
+  FileSpreadsheet, FileText, MoreVertical, Search, Square, RefreshCw,
 } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import { useAlert } from '../lib/alert-context';
@@ -122,10 +122,16 @@ export default function SchedulerPage() {
   const [editTarget, setEditTarget] = useState<CronSchedule | null>(null);
   const [triggering, setTriggering] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runLogSelection, setRunLogSelection] = useState<{ runId: string; tableId: string | null } | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
+  const [tableSearch, setTableSearch] = useState('');
+  const [tableStatusFilter, setTableStatusFilter] = useState('all');
+  const [showStatusFilter, setShowStatusFilter] = useState(false);
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
+  const [tableActionKey, setTableActionKey] = useState<string | null>(null);
+  const [runMenuId, setRunMenuId] = useState<string | null>(null);
+  const [hideCompletedRunIds, setHideCompletedRunIds] = useState<Set<string>>(new Set());
   const [preflight, setPreflight] = useState<{ jobName: string; loading: boolean; report: PreflightReport | null; error: string | null } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const highlightHandledRef = useRef(false);
@@ -271,6 +277,18 @@ export default function SchedulerPage() {
     }
   };
 
+  const handleTableAction = async (runId: string, tableId: string, action: 'run' | 'pause' | 'resume' | 'stop' | 'restart') => {
+    const key = `${runId}:${tableId}:${action}`;
+    setTableActionKey(key);
+    try {
+      await axios.post('/api/migv2/run/control-table', { runId, tableId, action });
+      await pollRuns();
+    } catch (err) {
+      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? `${action} failed`) : `${action} failed`;
+      showError(`Table ${action} failed`, msg);
+    } finally { setTableActionKey(null); }
+  };
+
   const handleDelete = (s: CronSchedule) => {
     showConfirm({
       title: 'Delete schedule?',
@@ -348,7 +366,7 @@ export default function SchedulerPage() {
         <div className="flex h-[calc(100vh-3rem)] overflow-hidden">
 
           {/* Left — all jobs list */}
-          <div className="w-80 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
+          <div className="w-72 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
             <div className="px-3 py-2 border-b border-gray-100 dark:border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex items-center justify-between">
               <span>MIGRATION JOBS</span>
               <div className="flex items-center gap-2">
@@ -423,7 +441,7 @@ export default function SchedulerPage() {
                 <p className="text-[14px] text-gray-400 dark:text-slate-500">Select a job to view its schedule and run history</p>
               </div>
             ) : (
-              <div className="max-w-3xl mx-auto px-6 py-5 space-y-5">
+              <div className="max-w-6xl mx-auto px-6 py-5 space-y-5">
 
                 {/* Job + schedule header */}
                 <div className="bg-white dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-slate-800 p-4 space-y-3">
@@ -562,25 +580,44 @@ export default function SchedulerPage() {
 
                 {/* Run history */}
                 <div className="bg-white dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
-                    <span className="text-[12px] font-semibold text-gray-600 dark:text-slate-400 uppercase tracking-wider">Run History</span>
-                    <span className="text-[11px] text-gray-400 dark:text-slate-500">{selectedRuns.length} recent</span>
+                  <div className="px-4 py-2.5 border-b border-gray-100 dark:border-slate-800 flex items-center gap-3">
+                    <span className="text-[12px] font-semibold text-gray-600 dark:text-slate-400 uppercase tracking-wider shrink-0">Run History</span>
+                    <div className="relative ml-auto w-64">
+                      <Search size={12} className="absolute left-2.5 top-2 text-slate-400" />
+                      <input value={tableSearch} onChange={e => setTableSearch(e.target.value)} placeholder="Search tables…"
+                        className="w-full rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-[11px] text-gray-700 outline-none focus:border-violet-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" />
+                    </div>
+                    <div className="relative">
+                      <button type="button" onClick={() => setShowStatusFilter(v => !v)} title="Filter table status"
+                        className={`rounded-md border p-1.5 ${tableStatusFilter !== 'all' ? 'border-violet-400 text-violet-500' : 'border-gray-200 text-slate-400 dark:border-slate-700'}`}>
+                        <MoreVertical size={13} />
+                      </button>
+                      {showStatusFilter && <div className="absolute right-0 top-8 z-20 w-36 rounded-md border border-gray-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                        {['all', 'completed', 'running', 'paused', 'aborted', 'pending'].map(status => (
+                          <button key={status} type="button" onClick={() => { setTableStatusFilter(status); setShowStatusFilter(false); }}
+                            className={`block w-full rounded px-2 py-1.5 text-left text-[11px] capitalize ${tableStatusFilter === status ? 'bg-violet-50 text-violet-600 dark:bg-violet-950/40' : 'text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
+                            {status === 'aborted' ? 'stopped' : status}
+                          </button>
+                        ))}
+                      </div>}
+                    </div>
+                    <span className="text-[11px] text-gray-400 dark:text-slate-500 shrink-0">{selectedRuns.length} recent</span>
                   </div>
                   {selectedRuns.length === 0 ? (
                     <div className="flex items-center justify-center py-10 text-[13px] text-gray-400 dark:text-slate-500 italic">
                       {selectedSchedule ? 'No runs yet — click "Run Now" or wait for the cron schedule.' : 'Add a schedule to start running this job.'}
                     </div>
                   ) : selectedRuns.map(run => {
-                    const isExpanded = expandedRunId === run.id;
                     const totalRows = run.tableStates.reduce((s, ts) => s + ts.rowsMigrated + ts.rowsSkipped, 0);
+                    const completedPct = run.tableStates.length ? Math.round(run.tableStates.filter(t => t.status === 'completed').length / run.tableStates.length * 100) : 0;
+                    const hideCompleted = hideCompletedRunIds.has(run.id);
                     return (
                       <div key={run.id} className="border-b border-gray-50 dark:border-slate-800/50 last:border-0">
                         <div
-                          className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors"
-                          onClick={() => {
-                            setExpandedRunId(isExpanded ? null : run.id);
-                            if (isExpanded) setRunLogSelection(null);
-                          }}>
+                          className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors">
+                          <input type="checkbox" checked={selectedRunIds.has(run.id)} onChange={() => {}}
+                            onClick={e => { e.stopPropagation(); setSelectedRunIds(prev => { const next = new Set(prev); next.has(run.id) ? next.delete(run.id) : next.add(run.id); return next; }); }}
+                            aria-label={`Select run ${run.id.slice(0, 8)}`} className="h-3.5 w-3.5 accent-violet-600" />
                           <RunStatusBadge status={run.status} />
                           {run.interrupted && (
                             <Tooltip content="The server restarted mid-run. Resume continues from the last saved offset." side="top">
@@ -601,7 +638,7 @@ export default function SchedulerPage() {
                             <span className="text-[12px] text-gray-400 dark:text-slate-500 ml-2">{relativeTime(run.createdAt)}</span>
                           </div>
                           <span className="text-[12px] text-gray-500 dark:text-slate-400 shrink-0">
-                            {run.tableStates.length} tables · {totalRows.toLocaleString()} rows
+                            {completedPct}% · {run.tableStates.length} tables · {totalRows.toLocaleString()} rows
                           </span>
                           {(run.status === 'failed' || run.status === 'aborted') && (
                             <Tooltip content="Continue from last saved offset — retries failed tables" side="top">
@@ -636,26 +673,65 @@ export default function SchedulerPage() {
                               </Tooltip>
                             </>
                           )}
-                          {isExpanded ? <ChevronUp size={13} className="text-slate-400 shrink-0" /> : <ChevronDown size={13} className="text-slate-400 shrink-0" />}
+                          <div className="relative shrink-0">
+                            <button type="button" onClick={() => setRunMenuId(runMenuId === run.id ? null : run.id)}
+                              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200" title="Run summary and display options">
+                              <MoreVertical size={14} />
+                            </button>
+                            {runMenuId === run.id && (
+                              <div className="absolute right-0 top-7 z-30 w-60 rounded-lg border border-gray-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Table summary</p>
+                                <div className="space-y-1.5">
+                                  {([
+                                    ['completed', 'Completed', 'text-emerald-500'], ['running', 'Running', 'text-violet-500'],
+                                    ['paused', 'Paused', 'text-amber-500'], ['aborted', 'Stopped', 'text-rose-500'],
+                                    ['pending', 'Pending', 'text-slate-400'],
+                                  ] as const).map(([status, label, color]) => {
+                                    const count = run.tableStates.filter(t => t.status === status).length;
+                                    const pct = run.tableStates.length ? Math.round(count / run.tableStates.length * 100) : 0;
+                                    return <div key={status} className="flex items-center gap-2 text-[11px]">
+                                      <span className={`w-16 ${color}`}>{label}</span>
+                                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-current" style={{ width: `${pct}%` }} /></div>
+                                      <span className="w-14 text-right tabular-nums text-slate-500">{pct}% ({count})</span>
+                                    </div>;
+                                  })}
+                                </div>
+                                <label className="mt-3 flex cursor-pointer items-center justify-between border-t border-gray-100 pt-2.5 text-[11px] text-slate-600 dark:border-slate-800 dark:text-slate-300">
+                                  <span>Auto-hide completed tables</span>
+                                  <input type="checkbox" checked={hideCompleted} onChange={() => setHideCompletedRunIds(prev => { const next = new Set(prev); next.has(run.id) ? next.delete(run.id) : next.add(run.id); return next; })}
+                                    className="h-3.5 w-3.5 accent-violet-600" />
+                                </label>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        {isExpanded && (
+                        {(
                           <div className="bg-gray-50 dark:bg-slate-950/50 px-4 pb-3 pt-2">
+                            <div className="mb-2 flex items-center justify-end gap-2 text-[10px] text-slate-400">
+                              {hideCompleted && <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-600 dark:bg-emerald-950/30">Completed tables hidden</span>}
+                              <span>Maximum 5 migrations can run concurrently</span>
+                            </div>
                             <div className="overflow-x-auto">
-                              <div className="min-w-[760px]">
-                                <div className="grid grid-cols-[minmax(260px,1.4fr)_minmax(220px,1fr)_120px_100px] gap-3 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-600">
+                              <div className="min-w-[920px]">
+                                <div className="grid grid-cols-[minmax(260px,1.4fr)_minmax(220px,1fr)_110px_90px_160px] gap-3 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-600">
                                   <span>Source → target</span>
                                   <span>Progress</span>
                                   <span className="text-right">Rows</span>
                                   <span className="text-right">Errors</span>
+                                  <span className="text-right">Actions</span>
                                 </div>
-                                <div className="space-y-1">
-                            {run.tableStates.map(ts => {
+                                <div className="max-h-[32rem] space-y-1 overflow-y-auto overscroll-contain pr-1">
+                            {run.tableStates.filter(ts => {
+                              const query = tableSearch.trim().toLowerCase();
+                              const matchesText = !query || ts.sourceKey.toLowerCase().includes(query) || ts.targetKey.toLowerCase().includes(query);
+                              return matchesText && (!hideCompleted || ts.status !== 'completed') && (tableStatusFilter === 'all' || ts.status === tableStatusFilter);
+                            }).map(ts => {
                               const processed = Math.max(ts.offset, ts.rowsMigrated + ts.rowsSkipped + ts.rowsErrored);
                               const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(processed / ts.rowsSource * 100)) : (ts.status === 'completed' ? 100 : 0);
                               const barColor = ts.status === 'completed' ? 'bg-emerald-500' : ts.status === 'failed' ? 'bg-rose-500' : 'bg-violet-500';
                               const isLogSelected = runLogSelection?.runId === run.id && runLogSelection.tableId === ts.id;
                               return (
-                                <div key={ts.id} className={`grid grid-cols-[minmax(260px,1.4fr)_minmax(220px,1fr)_120px_100px] items-center gap-3 rounded-md px-2 py-1.5 ${isLogSelected ? 'bg-rose-50 dark:bg-rose-950/20 ring-1 ring-rose-200 dark:ring-rose-900/50' : 'bg-white/70 dark:bg-slate-900/50'}`}>
+                                <div key={ts.id} style={{ contentVisibility: 'auto', containIntrinsicSize: '32px' }} className={`grid grid-cols-[minmax(260px,1.4fr)_minmax(220px,1fr)_110px_90px_160px] items-center gap-3 rounded-md px-2 py-1.5 ${isLogSelected ? 'bg-rose-50 dark:bg-rose-950/20 ring-1 ring-rose-200 dark:ring-rose-900/50' : 'bg-white/70 dark:bg-slate-900/50'}`}>
                                   <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
                                     <span className={`truncate ${ts.status === 'failed' ? 'text-rose-500' : 'text-gray-600 dark:text-slate-300'}`} title={ts.sourceKey}>{ts.sourceKey}</span>
                                     <span className="shrink-0 text-slate-300 dark:text-slate-600">→</span>
@@ -678,6 +754,15 @@ export default function SchedulerPage() {
                                         <AlertTriangle size={10} />{ts.rowsErrored.toLocaleString()} errors
                                       </button>
                                     ) : <span className="text-[11px] text-slate-300 dark:text-slate-700">—</span>}
+                                  </div>
+                                  <div className="flex items-center justify-end gap-1">
+                                    {ts.status === 'running' && <Loader2 size={12} className="mr-1 animate-spin text-violet-500" aria-label="Running" />}
+                                    {ts.status === 'pending' && <button type="button" title="Run table" onClick={() => void handleTableAction(run.id, ts.id, 'run')} className="rounded p-1 text-emerald-500 hover:bg-emerald-50"><Play size={12} /></button>}
+                                    {(ts.status === 'running' || ts.status === 'pending') && <button type="button" title="Pause table" onClick={() => void handleTableAction(run.id, ts.id, 'pause')} className="rounded p-1 text-amber-500 hover:bg-amber-50"><Pause size={12} /></button>}
+                                    {ts.status === 'paused' && <button type="button" title="Resume table" onClick={() => void handleTableAction(run.id, ts.id, 'resume')} className="rounded p-1 text-violet-500 hover:bg-violet-50"><Play size={12} /></button>}
+                                    {!['completed', 'rolled_back', 'aborted'].includes(ts.status) && <button type="button" title="Stop table" onClick={() => void handleTableAction(run.id, ts.id, 'stop')} className="rounded p-1 text-rose-500 hover:bg-rose-50"><Square size={11} /></button>}
+                                    {['completed', 'failed', 'aborted'].includes(ts.status) && <button type="button" title="Restart table" onClick={() => void handleTableAction(run.id, ts.id, 'restart')} className="rounded p-1 text-blue-500 hover:bg-blue-50"><RefreshCw size={12} /></button>}
+                                    {tableActionKey?.startsWith(`${run.id}:${ts.id}:`) && <Loader2 size={11} className="animate-spin text-slate-400" />}
                                   </div>
                                 </div>
                               );
