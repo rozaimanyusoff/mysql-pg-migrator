@@ -7,6 +7,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { ConnCfg } from '../../../lib/sql-exporter';
 import { execSqlImport } from './import';
+import { markDbUpdated, markSchemaUpdated } from '../../../lib/export-import-metadata';
 
 const execFileAsync = promisify(execFile);
 
@@ -128,10 +129,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         else await createMysqlDatabase(cfg, targetName);
         log.push(`[OK] Created database "${targetName}"`);
         const result = await execSqlImport({ ...cfg, database: targetName }, sqlText, { skipConstraints });
+        if (result.success) markDbUpdated(cfg, targetName, 'imported');
         return res.status(result.success ? 200 : 500).json({ success: result.success, log: [...log, ...result.log] });
       }
       if (scope === 'schema') {
         const result = await execSqlImport(cfg, sqlText, { schema: targetName, skipConstraints });
+        if (result.success) markSchemaUpdated(cfg, cfg.database, targetName, 'imported');
         return res.status(result.success ? 200 : 500).json({ success: result.success, log: [...log, ...result.log] });
       }
       const result = await execSqlImport(cfg, sqlText, { schema: parentSchema, skipConstraints });
@@ -148,6 +151,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const r = await runPgBinary('pg_restore', ['--no-owner', '--clean', '--if-exists', '-h', host, '-p', port, '-U', user, '-d', targetName, fileEntry.filepath], env);
       log.push(...r.output.split('\n').filter(Boolean));
       log.push(r.ok ? `[OK] Restored dump into database "${targetName}"` : '[FAIL] pg_restore reported errors');
+      if (r.ok) markDbUpdated(cfg, targetName, 'imported');
       return res.status(r.ok ? 200 : 500).json({ success: r.ok, log });
     }
     if (scope === 'schema') {
@@ -157,6 +161,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const r = await runPgBinary('pg_restore', ['--no-owner', '-h', host, '-p', port, '-U', user, '-d', cfg.database, fileEntry.filepath], { ...env, PGOPTIONS: `-c search_path=${targetName}` });
       log.push(...r.output.split('\n').filter(Boolean));
       log.push(r.ok ? `[OK] Restored dump into schema "${targetName}"` : '[FAIL] pg_restore reported errors');
+      if (r.ok) markSchemaUpdated(cfg, cfg.database, targetName, 'imported');
       return res.status(r.ok ? 200 : 500).json({ success: r.ok, log });
     }
     // table scope

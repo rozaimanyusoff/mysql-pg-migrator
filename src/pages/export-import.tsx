@@ -41,6 +41,14 @@ interface DryRunSummary {
   drops: number; alters: number; truncates: number; updates: number;
 }
 interface TableEntry { schema: string; name: string; rowCount: number; }
+interface MaintenanceObjectMeta {
+  key: string;
+  scope: 'db' | 'schema';
+  database: string;
+  schema?: string;
+  updatedAt: string;
+  action: 'imported' | 'renamed' | 'moved' | 'copied' | 'created';
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -76,6 +84,19 @@ function timeAgo(iso: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+function maintenanceMetaKey(conn: ConnectionRow, scope: 'db' | 'schema', database: string, schema?: string): string {
+  const port = conn.port ?? (conn.db_type === 'postgres' ? 5432 : 3306);
+  const base = `${conn.db_type}:${conn.host}:${port}:${conn.username}`;
+  return scope === 'db'
+    ? `${base}:db:${database}`
+    : `${base}:schema:${database}:${schema ?? ''}`;
+}
+
+function formatObjectUpdated(meta?: MaintenanceObjectMeta): string | null {
+  if (!meta) return null;
+  return `${meta.action} ${timeAgo(meta.updatedAt)}`;
 }
 
 function fmtRows(n: number): string {
@@ -1042,6 +1063,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
 }) {
   const [dbs, setDbs]           = useState<string[]>([]);
   const [loading, setLoading]   = useState(false);
+  const [metadata, setMetadata] = useState<Record<string, MaintenanceObjectMeta>>({});
   const [tgtDbs, setTgtDbs]     = useState<string[]>([]);
   const [tgtLoading, setTgtLoading] = useState(false);
   const [showNew, setShowNew]   = useState(false);
@@ -1050,7 +1072,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
   const [createErr, setCreateErr] = useState<string | null>(null);
 
   const load = useCallback(async (c: ConnectionRow) => {
-    setLoading(true); setDbs([]);
+    setLoading(true); setDbs([]); setMetadata({});
     try {
       if (c.db_type === 'postgres') {
         const { data } = await axios.post('/api/pg-databases',
@@ -1061,6 +1083,10 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
           { host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '' });
         setDbs((data as { databases: string[] }).databases);
       }
+      try {
+        const metaRes = await axios.post('/api/export-import/metadata', { cfg: connToCfg(c, c.database_name) });
+        setMetadata((metaRes.data as { metadata: Record<string, MaintenanceObjectMeta> }).metadata ?? {});
+      } catch { setMetadata({}); }
     } catch { setDbs([]); }
     finally { setLoading(false); }
   }, []);
@@ -1153,7 +1179,18 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
                         : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
                     }`}>
                     <Database size={12} className={active ? 'text-purple-400 shrink-0' : 'text-slate-400 dark:text-slate-500 shrink-0'} />
-                    <span className="text-[13px] font-mono truncate flex-1">{db}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-mono truncate">{db}</span>
+                      {(() => {
+                        const meta = metadata[maintenanceMetaKey(conn, 'db', db)];
+                        const label = formatObjectUpdated(meta);
+                        return label ? (
+                          <span className="block text-[10px] text-amber-500 dark:text-amber-400 truncate" title={new Date(meta!.updatedAt).toLocaleString()}>
+                            {label}
+                          </span>
+                        ) : null;
+                      })()}
+                    </span>
                     {active && pct !== null && (
                       <span className="text-[11px] font-mono text-violet-500 dark:text-violet-400 shrink-0">{pct}%</span>
                     )}
@@ -1262,14 +1299,19 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
 }) {
   const [schemas,    setSchemas]    = useState<{ schema: string; tableCount: number }[]>([]);
   const [loading,    setLoading]    = useState(false);
+  const [metadata, setMetadata]     = useState<Record<string, MaintenanceObjectMeta>>({});
   const [tgtSchemas, setTgtSchemas] = useState<{ schema: string; tableCount: number }[]>([]);
   const [tgtLoading, setTgtLoading] = useState(false);
 
   const load = useCallback(async (c: ConnectionRow, db: string) => {
-    setLoading(true); setSchemas([]);
+    setLoading(true); setSchemas([]); setMetadata({});
     try {
       const { data } = await axios.post('/api/schema-explorer/schemas', connToExplorerConn(c, db));
       setSchemas((data as { schemas: { schema: string; tableCount: number }[] }).schemas);
+      try {
+        const metaRes = await axios.post('/api/export-import/metadata', { cfg: connToCfg(c, db) });
+        setMetadata((metaRes.data as { metadata: Record<string, MaintenanceObjectMeta> }).metadata ?? {});
+      } catch { setMetadata({}); }
     } catch { setSchemas([]); }
     finally { setLoading(false); }
   }, []);
@@ -1328,7 +1370,18 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
                   }`}>
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-mono truncate">{s.schema}</p>
-                    <p className="text-[11px] text-gray-400 dark:text-slate-500">{s.tableCount} tables</p>
+                    <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                      {s.tableCount} tables
+                      {(() => {
+                        const meta = conn ? metadata[maintenanceMetaKey(conn, 'schema', database, s.schema)] : undefined;
+                        const label = formatObjectUpdated(meta);
+                        return label ? (
+                          <span className="text-amber-500 dark:text-amber-400" title={new Date(meta!.updatedAt).toLocaleString()}>
+                            {' · '}{label}
+                          </span>
+                        ) : null;
+                      })()}
+                    </p>
                   </div>
                 </button>
                 {onRowMaintain && (

@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { Client, Pool } from 'pg';
 import mysql from 'mysql2/promise';
 import { ConnCfg } from '../../../lib/sql-exporter';
+import { markDbUpdated, markSchemaUpdated } from '../../../lib/export-import-metadata';
 
 type Scope = 'db' | 'schema' | 'table';
 type Action = 'rename' | 'truncate' | 'drop';
@@ -80,6 +81,7 @@ async function pgDb(cfg: ConnCfg, name: string, action: Action, newName: string 
     if (action === 'rename') {
       await admin.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, [name]);
       await admin.query(`ALTER DATABASE ${quotePgIdent(name)} RENAME TO ${quotePgIdent(newName!)}`);
+      markDbUpdated(cfg, newName!, 'renamed');
       log.push(`[OK] Renamed database "${name}" to "${newName}"`);
       return res.status(200).json({ success: true, log });
     }
@@ -110,6 +112,7 @@ async function pgSchema(cfg: ConnCfg, name: string, action: Action, newName: str
     }
     if (action === 'rename') {
       await pool.query(`ALTER SCHEMA ${quotePgIdent(name)} RENAME TO ${quotePgIdent(newName!)}`);
+      markSchemaUpdated(cfg, cfg.database, newName!, 'renamed');
       log.push(`[OK] Renamed schema "${name}" to "${newName}"`);
       return res.status(200).json({ success: true, log });
     }

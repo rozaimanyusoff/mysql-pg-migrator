@@ -9,14 +9,14 @@ import {
 
 const modules = [
   { key: 'migration',    title: 'Migration',           desc: 'Map and migrate data across any two databases (MySQL ↔ PostgreSQL), with serial→UUID conversion, rollback, and job management.', href: '/migration', available: true, Icon: Database },
-  { key: 'schema-studio', title: 'Schema Studio',   desc: 'Inspect, design and refactor PostgreSQL schemas visually. Scan live DB, get PK/FK/constraint suggestions, interactive ERD with drag-to-create FK.', href: '/schema-studio', available: true, Icon: Columns },
+  { key: 'scheduler', title: 'Scheduler', desc: 'Schedule migration jobs to run automatically via cron. Trigger runs from CLI or manually from the UI, and track live run status.', href: '/scheduler', available: true, Icon: Calendar },
   { key: 'export-import',title: 'Data Maintenance',    desc: 'Backup, export, import, sync and copy database tables across environments.',    href: '/export-import',available: true,  Icon: UploadCloud },
   { key: 'schema-explorer', title: 'Schema Explorer', desc: 'Browse any database, inspect columns, visualise ERD, and export migration SQL or XLSX.', href: '/schema-explorer', available: true, Icon: Network },
   // hidden: normalization & flow-designer deprioritised while cron job module is built
   // { key: 'normalization',title: 'Data Normalization',  desc: 'Convert CSV/XLSX raw files into structured schema-ready datasets.',             href: '/normalizer',   available: true,  Icon: Wand2 },
   // { key: 'flow-designer', title: 'Flow-to-Database Designer', desc: 'Design your database starting from a business process flow. Get entities, relationships, ERD, PostgreSQL DDL, and Drizzle ORM schema.', href: '/flow-designer', available: true, Icon: Workflow },
-  { key: 'ai-migration', title: 'AI Migration Assistant', desc: 'AI-powered pre-flight schema analysis, smart column type suggestions, and plain-language error explanations for MySQL→PostgreSQL migrations.', href: '/ai-migration', available: true, Icon: Brain },
-  { key: 'scheduler', title: 'Scheduler', desc: 'Schedule migration jobs to run automatically via cron. Trigger runs from CLI or manually from the UI, and track live run status.', href: '/scheduler', available: true, Icon: Calendar },
+  { key: 'ai-migration', title: 'AI Migration Assistant', desc: 'AI-powered pre-flight schema analysis, smart column type suggestions, and plain-language error explanations for MySQL→PostgreSQL migrations.', href: '/ai-migration', available: false, Icon: Brain },
+  { key: 'schema-studio', title: 'Schema Studio',   desc: 'Inspect, design and refactor PostgreSQL schemas visually. Scan live DB, get PK/FK/constraint suggestions, interactive ERD with drag-to-create FK.', href: '/schema-studio', available: false, Icon: Columns },
 ];
 
 export default function ModuleMenu() {

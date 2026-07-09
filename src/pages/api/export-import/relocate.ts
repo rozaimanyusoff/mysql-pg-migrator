@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { Pool } from 'pg';
 import mysql from 'mysql2/promise';
 import { exportDatabase, ConnCfg, ExportInclude, ConflictStrategy } from '../../../lib/sql-exporter';
+import { markDbUpdated, markSchemaUpdated } from '../../../lib/export-import-metadata';
 
 // Relocate = copy or move objects to another live location (schema/db), generalising
 // the old Sync (db→db) and adding PostgreSQL schema/table relocation.
@@ -113,6 +114,7 @@ async function relocatePg(
         log.push({ step: 'drop', ok: true, text: `[DROP] source schema "${sourceSchema}"` });
       }
       await client.query('COMMIT');
+      if (scope === 'schema') markSchemaUpdated(target, target.database, targetSchema, 'moved');
       log.push({ step: 'relocate', ok: true, text: `[DONE] ${operation === 'move' ? 'Moved' : 'Copied'} ${tables.length} table(s) into schema "${targetSchema}".` });
       return res.status(200).json({ success: true, log, tables });
     } catch (err: unknown) {
@@ -181,6 +183,7 @@ async function relocatePg(
       } finally { await admin.end(); }
 
       log.push({ step: 'relocate', ok: true, text: `[DONE] Moved ${exported.tables.length} table(s).` });
+      markDbUpdated(target, target.database, 'moved');
       return res.status(200).json({ success: true, log, tables: exported.tables });
     }
 
@@ -195,6 +198,8 @@ async function relocatePg(
   }
 
   log.push({ step: 'relocate', ok: true, text: `[DONE] ${operation === 'move' ? 'Moved' : 'Copied'} ${exported.tables.length} table(s).` });
+  if (scope === 'db') markDbUpdated(target, target.database, operation === 'move' ? 'moved' : 'copied');
+  else if (scope === 'schema') markSchemaUpdated(target, target.database, targetSchema, operation === 'move' ? 'moved' : 'copied');
   return res.status(200).json({ success: true, log, tables: exported.tables });
 }
 
@@ -242,5 +247,6 @@ async function relocateMysqlDb(
   }
 
   log.push({ step: 'relocate', ok: true, text: `[DONE] ${operation === 'move' ? 'Moved' : 'Copied'} database — ${exported.tables.length} table(s).` });
+  markDbUpdated(target, target.database, operation === 'move' ? 'moved' : 'copied');
   return res.status(200).json({ success: true, log, tables: exported.tables });
 }

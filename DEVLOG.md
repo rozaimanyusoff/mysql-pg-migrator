@@ -2,6 +2,15 @@
 
 ---
 
+## 2026-07-09
+- **update** — Home module availability + Data Maintenance object update timestamps
+  - Home module grid now swaps Scheduler into the previous Schema Studio position. AI Migration Assistant and Schema Studio are disabled/greyed out from the home screen.
+  - Added app-level DB/schema metadata store (`data/export-import-object-meta.json`) plus `POST /api/export-import/metadata` for Data Maintenance panels.
+  - Database and Schema panels now display the last app-managed update label (`imported`, `renamed`, `moved`, `copied`) with relative time and exact timestamp tooltip.
+  - Metadata is written when DB/schema imports succeed, PostgreSQL DB/schema rename succeeds, and DB/schema copy/move relocate succeeds. This tracks changes performed through this app; external DB-engine changes are not inferred.
+  - Files: `src/pages/index.tsx`, `src/pages/export-import.tsx`, `src/lib/export-import-metadata.ts`, `src/pages/api/export-import/metadata.ts`, `src/pages/api/export-import/{import-object,maintain,relocate}.ts`.
+  - Status: done
+
 ## 2026-07-08
 - **implement** — Scheduler/run hardening: mutation auth, run pause, concurrency locks, composite incremental cursor
   - New `src/lib/scheduler-security.ts`: all scheduler and run mutation API routes (`/api/scheduler/*`, `/api/migv2/run/{stop,stop-table,resume,restart,control-table,control-tables}`) now require either a `Bearer SCHEDULER_API_TOKEN` (timing-safe compare, for external cron callers) or same-origin browser proof. `SCHEDULER_API_TOKEN` and `RUN_TIMEOUT_SECONDS` documented in `.env.example`/`README.md`; `scripts/run-job.js` sends the token and uses the configurable timeout instead of the hardcoded 1-hour cap.
