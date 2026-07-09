@@ -285,6 +285,7 @@ export default function Migration() {
   const logsEndRef = useRef<HTMLDivElement>(null);
   const stopRequestedRef = useRef(false);
   const [pausedTableIds, setPausedTableIds] = useState<Set<string>>(new Set());
+  const linkedJobLoadedRef = useRef(false);
   const pendingJobRestoreRef = useRef<{ tables: TableMap[]; srcDbs: string[]; selectedMapId: string | null; srcSchema: string } | null>(null);
   const pendingTgtDbRestoreRef = useRef<string | null>(null);
   const pendingTgtSchemaRestoreRef = useRef<string | null>(null);
@@ -1169,6 +1170,14 @@ export default function Migration() {
     } catch { /* ignore */ }
   };
 
+  useEffect(() => {
+    if (!router.isReady || linkedJobLoadedRef.current || connections.length === 0) return;
+    const linkedJobId = typeof router.query.job === 'string' ? router.query.job : null;
+    if (!linkedJobId) return;
+    linkedJobLoadedRef.current = true;
+    void handleLoadJob(linkedJobId);
+  }, [router.isReady, router.query.job, connections.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleExportJobMd = async (jobId: string) => {
     try {
       const res = await fetch(`/api/migv2/jobs/export-md?id=${jobId}`);
@@ -1446,7 +1455,8 @@ export default function Migration() {
     setCurrentRun(null);
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/start', {
-        source: srcConn, target: tgtConn, tables: included,
+        source: srcConn, target: tgtConn,
+        tables: included.map(t => t.syncMode === 'incremental' ? { ...t, truncateBeforeMigrate: false } : t),
         jobId: activeJobId, jobName: saveJobName || 'Migration',
         filterCol: filterCol.trim() || null,
         filterFrom: filterFrom.trim() || null,
@@ -1605,7 +1615,7 @@ export default function Migration() {
     try {
       const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/start', {
         source: srcConn, target: tgtConn,
-        tables: [{ ...map, include: true, truncateBeforeMigrate: truncate || map.truncateBeforeMigrate }],
+        tables: [{ ...map, include: true, truncateBeforeMigrate: truncate === true }],
         jobId: activeJobId, jobName: saveJobName || 'Migration',
         filterCol: filterCol.trim() || null,
         filterFrom: filterFrom.trim() || null,
@@ -2488,9 +2498,13 @@ export default function Migration() {
 
                                   {/* sync toggle — always visible */}
                                   <button
-                                    onClick={() => updateTableMap(mapping.id, {
-                                      syncMode: (mapping.syncMode ?? 'full') === 'incremental' ? 'full' : 'incremental',
-                                    })}
+                                    onClick={() => {
+                                      const nextMode = (mapping.syncMode ?? 'full') === 'incremental' ? 'full' : 'incremental';
+                                      updateTableMap(mapping.id, {
+                                        syncMode: nextMode,
+                                        ...(nextMode === 'incremental' ? { truncateBeforeMigrate: false } : {}),
+                                      });
+                                    }}
                                     title={`Sync mode: ${(mapping.syncMode ?? 'full') === 'incremental' ? 'Incremental' : 'Full'} — click to toggle`}
                                     className={`p-0.5 rounded border text-[10px] font-mono transition-colors ${
                                       (mapping.syncMode ?? 'full') === 'incremental'
@@ -2651,9 +2665,10 @@ export default function Migration() {
                     <div className="flex items-center gap-2">
                       <label className="inline-flex items-center gap-1 text-[12px] text-gray-500 dark:text-slate-400">
                         <input type="checkbox" checked={selectedMap.truncateBeforeMigrate}
+                          disabled={(selectedMap.syncMode ?? 'full') === 'incremental'}
                           onChange={e => updateTableMap(selectedMap.id, { truncateBeforeMigrate: e.target.checked })}
                           className="accent-rose-500" />
-                        Truncate
+                        Truncate{(selectedMap.syncMode ?? 'full') === 'incremental' ? ' (off for incremental)' : ''}
                       </label>
                       <Tooltip side="top" content={
                         <div>

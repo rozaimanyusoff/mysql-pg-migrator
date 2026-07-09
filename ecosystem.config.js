@@ -11,6 +11,10 @@ module.exports = {
       exec_mode: 'fork',     // use 'cluster' if instances > 1
 
       // ── Environment ──────────────────────────────────────────────────────
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3046,
+      },
       env_production: {
         NODE_ENV: 'production',
         PORT: 3046,

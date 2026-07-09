@@ -197,6 +197,9 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
     if (tm.syncMode === 'incremental' && !tm.incrementalCol) {
       issues.push({ level: 'error', message: 'Incremental sync requires a watermark column.' });
     }
+    if (tm.syncMode === 'incremental' && tm.truncateBeforeMigrate) {
+      issues.push({ level: 'warning', message: 'Incremental sync conflicts with truncate-before-migrate. Truncate is ignored for scheduled/manual sync runs and should be disabled in the mapping.' });
+    }
     if (tm.syncMode === 'incremental' && tm.incrementalStrategy === 'timestamp') {
       const inferredTie = tm.columns.find(c => c.include && c.sourceCol && (c.conversion === 'serial_to_uuid' || c.sourceCol.toLowerCase() === 'id' || c.targetCol.toLowerCase() === 'id'))?.sourceCol;
       if (!tm.incrementalTieCol && !inferredTie) {

@@ -6,9 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { isSchedulerRequestAuthorized } from '../src/lib/scheduler-security.ts';
 import { acquireRunLock, activeRunForJob, loadRun, saveRun } from '../src/lib/migv2/run-store.ts';
 import { buildWhere } from '../src/lib/migv2/cursor-query.ts';
-import type { MigRun } from '../src/lib/migv2/types.ts';
+import { prepareRunTables } from '../src/lib/migv2/run-tables.ts';
+import { saveJob } from '../src/lib/migv2/job-store.ts';
+import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
 
 const runFiles: string[] = [];
+const jobFiles: string[] = [];
 
 function makeRun(id: string, jobId: string): MigRun {
   return {
@@ -24,6 +27,9 @@ test.after(() => {
   for (const file of runFiles) {
     try { fs.unlinkSync(file); } catch { /* cleaned */ }
     try { fs.unlinkSync(`${file}.lock`); } catch { /* cleaned */ }
+  }
+  for (const file of jobFiles) {
+    try { fs.unlinkSync(file); } catch { /* cleaned */ }
   }
 });
 
@@ -84,4 +90,44 @@ test('timestamp cursor uses primary-key tie breaker', () => {
   assert.match(pg.where, /"updated_at" = \$2 AND "id" > \$3/);
   assert.deepEqual(pg.params, ['2026-01-01', '2026-01-01', '42']);
   assert.deepEqual(pg.orderCols, ['updated_at', 'id']);
+});
+
+test('scheduled/manual runs ignore saved truncate flags unless explicitly requested', () => {
+  const table: TableMap = {
+    id: 'table-1',
+    include: true,
+    source: { schema: 'src', table: 'items' },
+    target: { schema: 'dst', table: 'items' },
+    columns: [],
+    truncateBeforeMigrate: true,
+  };
+  assert.equal(prepareRunTables([table])[0].truncateBeforeMigrate, false);
+  assert.equal(prepareRunTables([table], { truncate: true })[0].truncateBeforeMigrate, true);
+});
+
+test('saving incremental jobs clears truncate-before-migrate conflicts', () => {
+  const id = `test-${randomUUID()}`;
+  const file = path.join(process.cwd(), 'data', 'migv2', 'jobs', `${id}.json`);
+  jobFiles.push(file);
+  const table: TableMap = {
+    id: 'table-1',
+    include: true,
+    source: { schema: 'src', table: 'items' },
+    target: { schema: 'dst', table: 'items' },
+    columns: [],
+    truncateBeforeMigrate: true,
+    syncMode: 'incremental',
+  };
+  const job: MigJob = {
+    id,
+    name: 'test job',
+    description: '',
+    version: 0,
+    createdAt: '',
+    updatedAt: '',
+    sourceMeta: { type: 'mysql', host: 'localhost', port: 3306, database: 'source', username: 'test' },
+    targetMeta: { type: 'postgresql', host: 'localhost', port: 5432, database: 'target', username: 'test' },
+    tables: [table],
+  };
+  assert.equal(saveJob(job).tables[0].truncateBeforeMigrate, false);
 });

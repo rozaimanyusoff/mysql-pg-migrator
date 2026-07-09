@@ -5,6 +5,7 @@ import { loadJob } from '../../../../lib/migv2/job-store';
 import { listSchedules } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
 import { driveRun } from '../../../../lib/migv2/run-driver';
+import { prepareRunTables } from '../../../../lib/migv2/run-tables';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
 
@@ -37,10 +38,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const now = new Date().toISOString();
 
-  const tables = sourceRun.tables.map(t => ({
-    ...t,
-    truncateBeforeMigrate: truncate ? true : t.truncateBeforeMigrate,
-  }));
+  const tables = prepareRunTables(sourceRun.tables, { truncate });
 
   const newRun: MigRun = {
     id: randomUUID(),

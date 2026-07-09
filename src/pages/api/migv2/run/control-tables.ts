@@ -82,6 +82,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const owningSchedule = listSchedules().find(s => s.jobId === run.jobId) ?? null;
   if (owningSchedule && (run.status === 'paused' || run.status === 'aborted')) {
     saveSchedule({ ...owningSchedule, lastRunStatus: run.status === 'paused' ? 'paused' : 'failed', updatedAt: now });
+  } else if (owningSchedule && run.status === 'running') {
+    saveSchedule({ ...owningSchedule, lastRunStatus: 'running', updatedAt: now });
   }
 
   if (shouldDrive) {

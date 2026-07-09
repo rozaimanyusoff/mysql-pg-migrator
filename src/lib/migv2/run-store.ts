@@ -4,9 +4,25 @@ import type { MigRun } from './types';
 
 const RUN_DIR = path.join(process.cwd(), 'data', 'migv2', 'runs');
 export const MAX_CONCURRENT_MIGRATIONS = 5;
+const LOCK_STALE_MS = 120_000;
 
 function ensureDir() { fs.mkdirSync(RUN_DIR, { recursive: true }); }
 function runPath(id: string) { return path.join(RUN_DIR, `${id}.json`); }
+
+function readRunFile(filePath: string): MigRun | null {
+  try {
+    // Avoid Node 25's native ReadFileUtf8 path, which can assert-crash under
+    // Next dev/Turbopack when many run JSON files are read during polling.
+    return JSON.parse(fs.readFileSync(filePath).toString('utf8')) as MigRun;
+  } catch {
+    return null;
+  }
+}
+
+function runFiles(): string[] {
+  ensureDir();
+  return fs.readdirSync(RUN_DIR).filter(f => f.endsWith('.json'));
+}
 
 export async function acquireRunLock(id: string, timeoutMs = 5_000): Promise<() => void> {
   ensureDir();
@@ -14,13 +30,25 @@ export async function acquireRunLock(id: string, timeoutMs = 5_000): Promise<() 
   const deadline = Date.now() + timeoutMs;
   while (true) {
     try {
-      const handle = await fs.promises.open(lockPath, 'wx');
+      const fd = fs.openSync(lockPath, 'wx');
+      let released = false;
       return () => {
-        try { fs.closeSync(handle.fd); } catch { /* already closed */ }
+        if (released) return;
+        released = true;
+        try { fs.closeSync(fd); } catch { /* already closed */ }
         try { fs.unlinkSync(lockPath); } catch { /* already released */ }
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue;
+      }
       if (Date.now() >= deadline) throw new Error(`Timed out acquiring run lock for ${id}`);
       await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -39,18 +67,12 @@ export function saveRun(run: MigRun): void {
 
 export function loadRun(id: string): MigRun | null {
   ensureDir();
-  try { return JSON.parse(fs.readFileSync(runPath(id), 'utf8')) as MigRun; }
-  catch { return null; }
+  return readRunFile(runPath(id));
 }
 
 export function listRuns(): MigRun[] {
-  ensureDir();
-  return fs.readdirSync(RUN_DIR)
-    .filter(f => f.endsWith('.json'))
-    .map(f => {
-      try { return JSON.parse(fs.readFileSync(path.join(RUN_DIR, f), 'utf8')) as MigRun; }
-      catch { return null; }
-    })
+  return runFiles()
+    .map(f => readRunFile(path.join(RUN_DIR, f)))
     .filter(Boolean)
     .sort((a, b) => b!.createdAt.localeCompare(a!.createdAt))
     .slice(0, 20) as MigRun[];
@@ -67,13 +89,8 @@ export function activeRunForJob(jobId: string): MigRun | null {
 }
 
 function listAllRuns(): MigRun[] {
-  ensureDir();
-  return fs.readdirSync(RUN_DIR)
-    .filter(f => f.endsWith('.json'))
-    .map(f => {
-      try { return JSON.parse(fs.readFileSync(path.join(RUN_DIR, f), 'utf8')) as MigRun; }
-      catch { return null; }
-    })
+  return runFiles()
+    .map(f => readRunFile(path.join(RUN_DIR, f)))
     .filter((r): r is MigRun => !!r);
 }
 
@@ -87,10 +104,8 @@ export function reconcileStaleRuns(): MigRun[] {
   ensureDir();
   const now = Date.now();
   const reconciled: MigRun[] = [];
-  for (const f of fs.readdirSync(RUN_DIR).filter(f => f.endsWith('.json'))) {
-    let run: MigRun | null = null;
-    try { run = JSON.parse(fs.readFileSync(path.join(RUN_DIR, f), 'utf8')) as MigRun; }
-    catch { continue; }
+  for (const f of runFiles()) {
+    const run = readRunFile(path.join(RUN_DIR, f));
     if (!run || run.status !== 'running') continue;
     const beat = run.heartbeatAt ?? run.startedAt ?? run.createdAt;
     if (now - new Date(beat).getTime() < HEARTBEAT_STALE_MS) continue;
@@ -106,13 +121,8 @@ export function reconcileStaleRuns(): MigRun[] {
 }
 
 export function listRunsForJob(jobId: string): MigRun[] {
-  ensureDir();
-  return fs.readdirSync(RUN_DIR)
-    .filter(f => f.endsWith('.json'))
-    .map(f => {
-      try { return JSON.parse(fs.readFileSync(path.join(RUN_DIR, f), 'utf8')) as MigRun; }
-      catch { return null; }
-    })
+  return runFiles()
+    .map(f => readRunFile(path.join(RUN_DIR, f)))
     .filter((r): r is MigRun => !!r && r.jobId === jobId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

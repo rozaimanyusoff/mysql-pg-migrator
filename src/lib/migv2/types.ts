@@ -108,6 +108,7 @@ export interface MigJobTableSummary {
   syncMode?: 'full' | 'incremental';
   incrementalCol?: string | null;
   lastSyncedValue?: string | null;
+  truncateBeforeMigrate?: boolean;
 }
 
 export interface MigJobSummary {

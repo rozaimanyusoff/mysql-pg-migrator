@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
-import { loadSchedule, saveSchedule } from '../../../../lib/migv2/schedule-store';
 import { loadJob } from '../../../../lib/migv2/job-store';
 import { acquireRunLock, activeRunCount, activeRunForJob, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
@@ -13,20 +12,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== 'POST') return res.status(405).end();
   if (!requireSchedulerMutationAuth(req, res)) return;
 
-  const { id } = req.query as { id: string };
-  const schedule = loadSchedule(id);
-  if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
-  if (!schedule.enabled) return res.status(400).json({ error: 'Schedule is disabled' });
+  const { jobId } = req.body as { jobId?: string };
+  if (!jobId) return res.status(400).json({ error: 'jobId is required' });
+
+  const job = loadJob(jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  const includedTables = prepareRunTables(job.tables);
+  if (!includedTables.length) return res.status(400).json({ error: 'Job has no included tables' });
+
   if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) {
     return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached. Stop or wait for an active run.` });
   }
-
-  const job = loadJob(schedule.jobId);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
   const existingRun = activeRunForJob(job.id);
-  if (existingRun) return res.status(409).json({ error: `This job already has an active ${existingRun.status} run (${existingRun.id.slice(0, 8)}). Resume or stop it before starting another.` });
+  if (existingRun) {
+    return res.status(409).json({ error: `This job already has an active ${existingRun.status} run (${existingRun.id.slice(0, 8)}). Resume or stop it before starting another.` });
+  }
 
-  // Look up full connection credentials from dbt_connections (jobs never store passwords)
   let source, target;
   try {
     ({ source, target } = await resolveJobConns(job));
@@ -34,8 +35,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 
-  // Serialize the check-and-create section across concurrent cron/server calls.
-  const releaseJobLock = await acquireRunLock('scheduler-global-start');
+  const releaseJobLock = await acquireRunLock('manual-job-start');
   if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) {
     releaseJobLock();
     return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
@@ -46,7 +46,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(409).json({ error: `This job already has an active ${lockedExistingRun.status} run (${lockedExistingRun.id.slice(0, 8)}).` });
   }
 
-  const includedTables = prepareRunTables(job.tables);
   const now = new Date().toISOString();
   const run: MigRun = {
     id: randomUUID(),
@@ -79,16 +78,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try { saveRun(run); } finally { releaseJobLock(); }
 
-  // Mark schedule as running
-  saveSchedule({
-    ...schedule,
-    lastRunStatus: 'running',
-    lastRunId: run.id,
-    updatedAt: now,
-  });
-
-  // Run in background — response returns immediately with the run ID
-  void driveRun(run, source, target, id);
+  void driveRun(run, source, target, null);
 
   return res.status(200).json({ runId: run.id });
 }

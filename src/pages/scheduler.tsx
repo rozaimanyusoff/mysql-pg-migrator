@@ -155,6 +155,7 @@ export default function SchedulerPage() {
   // selectedId is now a JOB id, not a schedule id
   const selectedJob = jobs.find(j => j.id === selectedId) ?? null;
   const selectedSchedule = schedules.find(s => s.jobId === selectedId) ?? null;
+  const selectedTruncateTables = selectedJob?.tables.filter(t => t.include && t.truncateBeforeMigrate) ?? [];
   const selectedRuns = runs
     .filter(r => r.jobId === selectedId)
     .slice(0, 10);
@@ -168,6 +169,14 @@ export default function SchedulerPage() {
         offset: 0, hasMore: true, error: null, insertedPks: [], pkOverflow: false, targetPkCol: null,
       } satisfies MigRunTableState))
     : [];
+  const isCurrentRunRunning = selectedHistoryRun?.status === 'running' || selectedSchedule?.lastRunStatus === 'running';
+  const hasPausableTables = selectedHistoryTableStates.some(t => t.status === 'running' || t.status === 'pending');
+  const canResumePausedRun = Boolean(
+    selectedHistoryRun &&
+    (selectedHistoryRun.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') &&
+    selectedHistoryTableStates.some(t => t.status === 'pending' || t.status === 'paused')
+  );
+  const runAllLabel = canResumePausedRun ? 'Resume All' : 'Run All';
 
   // ── Data fetching ─────────────────────────────────────────────────────────────
   const loadAll = async () => {
@@ -240,6 +249,14 @@ export default function SchedulerPage() {
     } catch {
       setSchedules(prev => prev.map(x => x.id === s.id ? s : x));
     }
+  };
+
+  const handleHeaderPauseOrToggle = (s: CronSchedule) => {
+    if (isCurrentRunRunning) {
+      void handleBulkTableAction('pause');
+      return;
+    }
+    handleToggleEnabled(s);
   };
 
   const handleRunNow = async (s: CronSchedule) => {
@@ -318,10 +335,23 @@ export default function SchedulerPage() {
 
   const handleBulkTableAction = async (action: 'run' | 'pause' | 'stop') => {
     if (action === 'run') {
-      if (!selectedSchedule) return;
+      if (!selectedJob) return;
+      const resumePausedRun = canResumePausedRun && selectedHistoryRun;
+      const tableIds = resumePausedRun
+        ? selectedHistoryTableStates
+            .filter(table => table.status === 'pending' || table.status === 'paused')
+            .map(table => table.id)
+        : [];
+      if (resumePausedRun && !tableIds.length) return;
       setBulkTableAction(action);
       try {
-        await axios.post(`/api/scheduler/${selectedSchedule.id}/run`);
+        if (resumePausedRun) {
+          await axios.post('/api/migv2/run/control-tables', { runId: selectedHistoryRun.id, tableIds, action });
+        } else if (selectedSchedule) {
+          await axios.post(`/api/scheduler/${selectedSchedule.id}/run`);
+        } else {
+          await axios.post('/api/migv2/run/start-job', { jobId: selectedJob.id });
+        }
         await pollRuns();
       } catch (err) {
         const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Run All failed') : 'Run All failed';
@@ -448,6 +478,7 @@ export default function SchedulerPage() {
               ) : jobs.map(job => {
                 const sched = schedules.find(s => s.jobId === job.id);
                 const isSelected = selectedId === job.id;
+                const truncateCount = job.tables.filter(t => t.include && t.truncateBeforeMigrate).length;
                 return (
                   <div key={job.id}
                     onClick={() => setSelectedId(job.id)}
@@ -457,6 +488,13 @@ export default function SchedulerPage() {
                       <span className={`text-[13px] font-medium truncate flex-1 ${isSelected ? 'text-violet-700 dark:text-violet-300' : 'text-gray-800 dark:text-slate-200'}`}>
                         {job.name}
                       </span>
+                      {truncateCount > 0 && (
+                        <Tooltip content={`${truncateCount} included table mapping(s) have truncate enabled`} side="right">
+                          <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                            <AlertTriangle size={9} />Trunc {truncateCount}
+                          </span>
+                        </Tooltip>
+                      )}
                       <span className="text-[11px] text-gray-400 dark:text-slate-500 shrink-0">{job.tableCount} tables</span>
                     </div>
                     {/* Schedule info or "not scheduled" */}
@@ -507,6 +545,13 @@ export default function SchedulerPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[15px] font-semibold text-gray-800 dark:text-slate-100">{selectedJob.name}</span>
                         <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{selectedJob.tableCount} tables</span>
+                        {selectedTruncateTables.length > 0 && (
+                          <Tooltip content={`${selectedTruncateTables.length} saved mapping(s) have truncate enabled. Run All ignores this; explicit truncate actions still truncate.`} side="bottom">
+                            <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                              <AlertTriangle size={10} />Truncate flags: {selectedTruncateTables.length}
+                            </span>
+                          </Tooltip>
+                        )}
                         {selectedSchedule && <StatusBadge status={selectedSchedule.lastRunStatus} />}
                       </div>
                       {selectedSchedule ? (
@@ -550,8 +595,9 @@ export default function SchedulerPage() {
                             {triggering === selectedSchedule.id ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
                             Run Now
                           </button>
-                          <button onClick={() => handleToggleEnabled(selectedSchedule)}
-                            title={selectedSchedule.enabled ? 'Disable' : 'Enable'}
+                          <button onClick={() => handleHeaderPauseOrToggle(selectedSchedule)}
+                            disabled={isCurrentRunRunning && !hasPausableTables}
+                            title={isCurrentRunRunning ? 'Pause current run' : selectedSchedule.enabled ? 'Disable schedule' : 'Enable schedule'}
                             className="p-1.5 rounded border border-gray-200 dark:border-slate-700 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors">
                             {selectedSchedule.enabled ? <Pause size={13} /> : <Play size={13} />}
                           </button>
@@ -599,36 +645,65 @@ export default function SchedulerPage() {
                   )}
                 </div>
 
-                {/* Sync-mode summary */}
+                {/* Mapping flags summary */}
                 {(() => {
                   const incTables = selectedJob.tables.filter(t => t.syncMode === 'incremental');
-                  if (incTables.length === 0) return null;
+                  if (incTables.length === 0 && selectedTruncateTables.length === 0) return null;
+                  const missingWatermark = incTables.filter(t => !t.incrementalCol);
                   const withWatermark = incTables.filter(t => t.lastSyncedValue);
+                  const previewTables = selectedJob.tables
+                    .filter(t => t.include && (t.truncateBeforeMigrate || t.syncMode === 'incremental'))
+                    .slice(0, 6);
                   return (
-                    <div className="bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-900/40 px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <CircleDot size={12} className="text-blue-500 shrink-0" />
-                        <span className="text-[12px] font-semibold text-blue-700 dark:text-blue-300">
-                          {incTables.length} table{incTables.length !== 1 ? 's' : ''} in incremental sync mode
-                        </span>
+                    <div className="rounded-lg border border-slate-300 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Info size={13} className="shrink-0 text-slate-500 dark:text-slate-400" />
+                        <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Mapping flags</span>
+                        {selectedTruncateTables.length > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                            <AlertTriangle size={10} />{selectedTruncateTables.length} truncate
+                          </span>
+                        )}
+                        {incTables.length > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                            <CircleDot size={10} />{incTables.length} incremental
+                          </span>
+                        )}
+                        {missingWatermark.length > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                            <AlertTriangle size={10} />{missingWatermark.length} no watermark
+                          </span>
+                        )}
+                        <button type="button" onClick={() => void router.push(`/migration?job=${encodeURIComponent(selectedJob.id)}`)}
+                          className="ml-auto rounded-md border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                          Review in Migration
+                        </button>
                       </div>
-                      <p className="text-[11px] text-blue-600/80 dark:text-blue-400/80 mt-1 pl-5">
-                        Each run upserts only rows newer than the last watermark
-                        {withWatermark.length > 0 ? ` (${withWatermark.length} already have a watermark)` : ' (first run migrates everything, then tracks the watermark)'}.
+                      <p className="mt-1 pl-5 text-[11px] text-slate-500 dark:text-slate-400">
+                        {selectedTruncateTables.length > 0 && 'Run All ignores saved truncate flags; explicit truncate/restart actions remain destructive. '}
+                        {incTables.length > 0 && (missingWatermark.length > 0
+                          ? `${missingWatermark.length} incremental table${missingWatermark.length !== 1 ? 's' : ''} still need a watermark column before true incremental filtering can run.`
+                          : `Incremental runs use saved watermarks${withWatermark.length > 0 ? ` (${withWatermark.length} table${withWatermark.length !== 1 ? 's' : ''} already have one).` : ' after the first completed run.'}`)}
                       </p>
                       <div className="mt-2 pl-5 space-y-0.5">
-                        {incTables.slice(0, 6).map(t => (
+                        {previewTables.map(t => (
                           <div key={t.id} className="flex items-center gap-2 text-[11px]">
-                            <span className="font-mono text-blue-700/90 dark:text-blue-300/90 truncate max-w-[45%]">{t.source.schema}.{t.source.table}</span>
-                            <span className="text-blue-400 dark:text-blue-600">on</span>
-                            <span className="font-mono text-blue-600 dark:text-blue-400">{t.incrementalCol ?? '—'}</span>
-                            {t.lastSyncedValue
-                              ? <span className="text-blue-500/80 dark:text-blue-500/80">since {t.lastSyncedValue}</span>
-                              : <span className="text-blue-400/70 dark:text-blue-600/70 italic">no watermark yet</span>}
+                            <span className="max-w-[45%] truncate font-mono text-slate-600 dark:text-slate-300">{t.source.schema}.{t.source.table}</span>
+                            {t.truncateBeforeMigrate && (
+                              <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">truncate</span>
+                            )}
+                            {t.syncMode === 'incremental' && (
+                              <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                                inc {t.incrementalCol ? `on ${t.incrementalCol}` : 'no watermark'}
+                              </span>
+                            )}
+                            {t.lastSyncedValue && <span className="text-blue-500/80 dark:text-blue-400/80">since {t.lastSyncedValue}</span>}
                           </div>
                         ))}
-                        {incTables.length > 6 && (
-                          <p className="text-[11px] text-blue-400 dark:text-blue-600 italic">+{incTables.length - 6} more…</p>
+                        {selectedJob.tables.filter(t => t.include && (t.truncateBeforeMigrate || t.syncMode === 'incremental')).length > previewTables.length && (
+                          <p className="text-[11px] italic text-slate-400 dark:text-slate-500">
+                            +{selectedJob.tables.filter(t => t.include && (t.truncateBeforeMigrate || t.syncMode === 'incremental')).length - previewTables.length} more…
+                          </p>
                         )}
                       </div>
                     </div>
@@ -644,11 +719,11 @@ export default function SchedulerPage() {
                       <input value={tableSearch} onChange={e => setTableSearch(e.target.value)} placeholder="Search tables…"
                         className="w-full rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-[11px] text-gray-700 outline-none focus:border-violet-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" />
                     </div>
-                    <Tooltip content="Create a new audited run for all included tables; at most 5 tables run concurrently" side="bottom">
+                    <Tooltip content={canResumePausedRun ? 'Resume all pending or paused tables in the current run' : selectedSchedule ? 'Create a new audited run for all included tables; at most 5 tables run concurrently' : 'Create a manual audited run for this unscheduled job'} side="bottom">
                       <button type="button" onClick={() => void handleBulkTableAction('run')}
-                        disabled={!!bulkTableAction || !selectedSchedule || selectedSchedule.lastRunStatus === 'running' || selectedSchedule.lastRunStatus === 'paused'}
+                        disabled={!!bulkTableAction || !selectedJob || isCurrentRunRunning || ((selectedHistoryRun?.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') && !canResumePausedRun)}
                         className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 dark:border-emerald-800 dark:hover:bg-emerald-950/30">
-                        {bulkTableAction === 'run' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}Run All
+                        {bulkTableAction === 'run' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}{runAllLabel}
                       </button>
                     </Tooltip>
                     <button type="button" onClick={() => void handleBulkTableAction('pause')}
@@ -817,6 +892,7 @@ export default function SchedulerPage() {
                               const matchesText = !query || ts.sourceKey.toLowerCase().includes(query) || ts.targetKey.toLowerCase().includes(query);
                               return matchesText && (!hideCompleted || ts.status !== 'completed') && (tableStatusFilter === 'all' || ts.status === tableStatusFilter);
                             }).map(ts => {
+                              const tableMap = selectedJob.tables.find(t => t.id === ts.id);
                               const processed = Math.max(ts.offset, ts.rowsMigrated + ts.rowsSkipped + ts.rowsErrored);
                               const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(processed / ts.rowsSource * 100)) : (ts.status === 'completed' ? 100 : 0);
                               const barColor = ts.status === 'completed' ? 'bg-emerald-500' : ts.status === 'failed' ? 'bg-rose-500' : 'bg-violet-500';
@@ -831,6 +907,20 @@ export default function SchedulerPage() {
                                     <span className={`truncate ${ts.status === 'failed' ? 'text-rose-500' : 'text-gray-600 dark:text-slate-300'}`} title={ts.sourceKey}>{ts.sourceKey}</span>
                                     <span className="shrink-0 text-slate-300 dark:text-slate-600">→</span>
                                     <span className="truncate text-slate-400 dark:text-slate-500" title={ts.targetKey}>{ts.targetKey}</span>
+                                    {tableMap?.truncateBeforeMigrate && (
+                                      <Tooltip content="Saved migration mapping has truncate enabled" side="top">
+                                        <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                                          truncate
+                                        </span>
+                                      </Tooltip>
+                                    )}
+                                    {tableMap?.syncMode === 'incremental' && (
+                                      <Tooltip content={tableMap.incrementalCol ? `Incremental sync on ${tableMap.incrementalCol}` : 'Incremental sync enabled but no watermark column selected'} side="top">
+                                        <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${tableMap.incrementalCol ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' : 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'}`}>
+                                          {tableMap.incrementalCol ? 'inc' : 'inc?'}
+                                        </span>
+                                      </Tooltip>
+                                    )}
                                   </div>
                                   <div className="relative h-5 overflow-hidden rounded-full bg-gray-200 dark:bg-slate-800" title={`${processed.toLocaleString()} of ${ts.rowsSource.toLocaleString()} rows processed`}>
                                     <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
@@ -838,8 +928,10 @@ export default function SchedulerPage() {
                                       {pct}% · {processed.toLocaleString()} / {ts.rowsSource.toLocaleString()}
                                     </span>
                                   </div>
-                                  <span className={`text-right text-[11px] tabular-nums ${ts.rowsErrored > 0 ? 'text-rose-500' : 'text-slate-500 dark:text-slate-400'}`}>
-                                    {ts.rowsMigrated.toLocaleString()} rows{ts.rowsErrored > 0 ? ` · ${ts.rowsErrored} errors` : ''}
+                                  <span
+                                    title={`${ts.rowsMigrated.toLocaleString()} written · ${ts.rowsSkipped.toLocaleString()} skipped · ${ts.rowsErrored.toLocaleString()} errors`}
+                                    className={`text-right text-[11px] tabular-nums ${ts.rowsErrored > 0 ? 'text-rose-500' : 'text-slate-500 dark:text-slate-400'}`}>
+                                    {(ts.rowsMigrated + ts.rowsSkipped + ts.rowsErrored).toLocaleString()} rows{ts.rowsSkipped > 0 ? ` · ${ts.rowsSkipped.toLocaleString()} skipped` : ''}{ts.rowsErrored > 0 ? ` · ${ts.rowsErrored} errors` : ''}
                                   </span>
                                   <div className="flex items-center justify-end gap-0.5">
                                     {ts.status === 'running' && <Loader2 size={12} className="mr-1 animate-spin text-violet-500" aria-label="Running" />}
