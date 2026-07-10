@@ -19,12 +19,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (conn.type === 'postgresql') {
       const schemas = await withPg(conn, async (client) => {
         const { rows } = await client.query<{ schema: string; table_count: string }>(`
-          SELECT table_schema AS schema, COUNT(*) AS table_count
-          FROM information_schema.tables
-          WHERE table_schema NOT IN ('pg_catalog','information_schema','pg_toast')
-            AND table_type = 'BASE TABLE'
-          GROUP BY table_schema
-          ORDER BY table_schema
+          SELECT
+            s.schema_name AS schema,
+            COUNT(t.table_name) AS table_count
+          FROM information_schema.schemata s
+          LEFT JOIN information_schema.tables t
+            ON t.table_schema = s.schema_name
+           AND t.table_type = 'BASE TABLE'
+          WHERE s.schema_name NOT IN ('pg_catalog','information_schema','pg_toast')
+            AND s.schema_name NOT LIKE 'pg_temp_%'
+            AND s.schema_name NOT LIKE 'pg_toast_temp_%'
+          GROUP BY s.schema_name
+          ORDER BY s.schema_name
         `);
         return rows.map(r => ({ schema: r.schema, tableCount: Number(r.table_count) }));
       });

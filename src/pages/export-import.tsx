@@ -30,6 +30,8 @@ type ImportStrategy = 'import_rows' | 'replace_schema' | 'replace_db' | 'replace
 // Target of a per-row import/export action. `database` is the db to act on
 // (the clicked db row, or the currently selected db for schema/table scope).
 interface ScopeInfo { scope: 'db' | 'schema' | 'table'; name: string; database: string; schema?: string }
+interface RelocateTargetPrefill { connId?: number | ''; database?: string; schema?: string }
+interface RelocateDialogState { info: ScopeInfo; target?: RelocateTargetPrefill }
 type MaintainAction = 'export' | 'copy' | 'rename' | 'truncate' | 'drop';
 interface DestructiveInfo extends ScopeInfo { action: 'truncate' | 'drop' }
 // Info for the header-level "create new object from file" dialog — scope of the
@@ -49,6 +51,8 @@ interface MaintenanceObjectMeta {
   updatedAt: string;
   action: 'imported' | 'renamed' | 'moved' | 'copied' | 'created';
 }
+
+const RELOCATE_DRAG_MIME = 'application/x-mysql-pg-migrator-relocate';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -103,6 +107,22 @@ function fmtRows(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
+}
+
+function writeRelocateDrag(e: React.DragEvent, info: ScopeInfo) {
+  e.dataTransfer.effectAllowed = 'copyMove';
+  e.dataTransfer.setData(RELOCATE_DRAG_MIME, JSON.stringify(info));
+  e.dataTransfer.setData('text/plain', `${info.scope}:${info.database}:${info.schema ?? ''}:${info.name}`);
+}
+
+function readRelocateDrag(e: React.DragEvent): ScopeInfo | null {
+  const raw = e.dataTransfer.getData(RELOCATE_DRAG_MIME);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as ScopeInfo;
+    if ((parsed.scope === 'db' || parsed.scope === 'schema' || parsed.scope === 'table') && parsed.name && parsed.database) return parsed;
+  } catch { /* ignore invalid drag payload */ }
+  return null;
 }
 
 function parseDryRun(sql: string): DryRunSummary {
@@ -289,8 +309,9 @@ function ExportDialogModal({ info, busy, onConfirm, onCancel }: {
 
 // ── Per-row Copy / Move (relocate) dialog ──────────────────────────────────────
 
-function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm, onCancel }: {
+function RelocateDialogModal({ info, initialTarget, connections, sourceConnId, busy, onConfirm, onCancel }: {
   info: ScopeInfo;
+  initialTarget?: RelocateTargetPrefill;
   connections: ConnectionRow[];
   sourceConnId: number | '';
   busy: boolean;
@@ -299,10 +320,10 @@ function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm,
 }) {
   const sourceType = connections.find(c => c.id === sourceConnId)?.db_type;
   const candidates = connections.filter(c => c.db_type === sourceType);
-  const [connId, setConnId] = useState<number | ''>(sourceConnId);
-  const [database, setDatabase] = useState('');
+  const [connId, setConnId] = useState<number | ''>(initialTarget?.connId ?? sourceConnId);
+  const [database, setDatabase] = useState(initialTarget?.database ?? '');
   const [dbs, setDbs] = useState<string[]>([]);
-  const [schema, setSchema] = useState(info.scope === 'schema' ? info.name : 'public');
+  const [schema, setSchema] = useState(initialTarget?.schema ?? (info.scope === 'schema' ? info.name : (info.schema ?? 'public')));
   const [schemas, setSchemas] = useState<string[]>([]);
   const [operation, setOperation] = useState<'copy' | 'move' | null>(null);
   const [include, setInclude] = useState<ExportInclude>('both');
@@ -312,6 +333,12 @@ function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm,
   const isPg = targetConn?.db_type === 'postgres';
   const needsSchema = info.scope !== 'db' && isPg;
   const noun = scopeNoun(info);
+
+  useEffect(() => {
+    setConnId(initialTarget?.connId ?? sourceConnId);
+    setDatabase(initialTarget?.database ?? '');
+    setSchema(initialTarget?.schema ?? (info.scope === 'schema' ? info.name : (info.schema ?? 'public')));
+  }, [initialTarget?.connId, initialTarget?.database, initialTarget?.schema, sourceConnId, info.scope, info.name, info.schema]);
 
   // Load databases for the chosen target connection
   useEffect(() => {
@@ -323,7 +350,7 @@ function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm,
         const { data } = await axios.post(ep, { host: c.host, port: c.port, user: c.username, password: c.password_enc ?? '', ssl: c.ssl_enabled });
         const list = (data as { databases: string[] }).databases;
         setDbs(list);
-        setDatabase(prev => prev && list.includes(prev) ? prev : (list[0] ?? ''));
+        setDatabase(prev => prev ? prev : (list[0] ?? ''));
       } catch { setDbs([]); }
     })();
   }, [connId, connections]);
@@ -335,7 +362,9 @@ function RelocateDialogModal({ info, connections, sourceConnId, busy, onConfirm,
     void (async () => {
       try {
         const { data } = await axios.post('/api/schema-explorer/schemas', connToExplorerConn(c, database));
-        setSchemas((data as { schemas: { schema: string }[] }).schemas.map(s => s.schema));
+        const list = (data as { schemas: { schema: string }[] }).schemas.map(s => s.schema);
+        setSchemas(list);
+        setSchema(prev => prev ? prev : (list.includes(info.schema ?? '') ? info.schema! : (list.includes('public') ? 'public' : (list[0] ?? 'public'))));
       } catch { setSchemas([]); }
     })();
   }, [connId, database, connections]);
@@ -1047,7 +1076,7 @@ function ConnectionsPanel({ connections, value, onChange, label, tgtValue, onTgt
 
 // ── Panel 2: Databases ─────────────────────────────────────────────────────────
 
-function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtConn, tgtValue, onTgtChange, onItemContextMenu, onRowMaintain, onHeaderImport, refreshKey }: {
+function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtConn, tgtValue, onTgtChange, onItemContextMenu, onRowMaintain, onHeaderImport, onRelocateDrop, refreshKey }: {
   conn: ConnectionRow | null;
   value: string;
   onChange: (db: string) => void;
@@ -1059,6 +1088,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
   onItemContextMenu?: (e: React.MouseEvent, dbName: string) => void;
   onRowMaintain?: (action: MaintainAction, db: string) => void;   // per-row gear menu (maintain view)
   onHeaderImport?: () => void;                                    // header "import new database" button
+  onRelocateDrop?: (info: ScopeInfo, targetDb: string) => void;
   refreshKey?: number;                                            // bump to force-reload the list after a maintain action
 }) {
   const [dbs, setDbs]           = useState<string[]>([]);
@@ -1170,8 +1200,18 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
             {dbs.map(db => {
               const active = value === db;
               return (
-                <div key={db} className="group relative">
+                <div key={db} className="group relative"
+                  onDragOver={onRelocateDrop ? e => {
+                    if (e.dataTransfer.types.includes(RELOCATE_DRAG_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
+                  } : undefined}
+                  onDrop={onRelocateDrop ? e => {
+                    e.preventDefault();
+                    const info = readRelocateDrag(e);
+                    if (info && info.scope !== 'db') onRelocateDrop(info, db);
+                  } : undefined}>
                   <button type="button" onClick={() => onChange(db)}
+                    draggable={!!onRowMaintain}
+                    onDragStart={onRowMaintain ? e => writeRelocateDrag(e, { scope: 'db', name: db, database: db }) : undefined}
                     onContextMenu={onItemContextMenu ? e => { e.preventDefault(); e.stopPropagation(); onItemContextMenu(e, db); } : undefined}
                     className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${onRowMaintain ? 'pr-8' : ''} ${
                       active
@@ -1283,7 +1323,7 @@ function DatabasePanel({ conn, value, onChange, allowCreate, syncProgress, tgtCo
 
 // ── Panel 3: Schemas ───────────────────────────────────────────────────────────
 
-function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tgtValue, onTgtChange, onItemContextMenu, onRowMaintain, onHeaderImport, refreshKey }: {
+function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tgtValue, onTgtChange, onItemContextMenu, onRowMaintain, onHeaderImport, onRelocateDrop, refreshKey }: {
   conn: ConnectionRow | null;
   database: string;
   value: string;
@@ -1295,6 +1335,7 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
   onItemContextMenu?: (e: React.MouseEvent, schemaName: string) => void;
   onRowMaintain?: (action: MaintainAction, schema: string) => void;  // per-row gear menu (maintain view)
   onHeaderImport?: () => void;                                       // header "import new schema" button
+  onRelocateDrop?: (info: ScopeInfo, targetSchema: string) => void;
   refreshKey?: number;                                               // bump to force-reload after a maintain action
 }) {
   const [schemas,    setSchemas]    = useState<{ schema: string; tableCount: number }[]>([]);
@@ -1348,6 +1389,7 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
     accent: 'teal' | 'violet',
     isLoading: boolean,
     onCtx?: (e: React.MouseEvent, schemaName: string) => void,
+    onDropRelocate?: (info: ScopeInfo, targetSchema: string) => void,
   ) => (
     <div className="flex-1 sidebar-scroll overflow-y-auto">
       {isLoading ? (
@@ -1362,8 +1404,18 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
               ? 'bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300'
               : 'bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300';
             return (
-              <div key={s.schema} className="group relative">
+              <div key={s.schema} className="group relative"
+                onDragOver={onDropRelocate ? e => {
+                  if (e.dataTransfer.types.includes(RELOCATE_DRAG_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
+                } : undefined}
+                onDrop={onDropRelocate ? e => {
+                  e.preventDefault();
+                  const info = readRelocateDrag(e);
+                  if (info && info.scope === 'table') onDropRelocate(info, s.schema);
+                } : undefined}>
                 <button type="button" onClick={() => onSelect(s.schema)}
+                  draggable={!!onRowMaintain}
+                  onDragStart={onRowMaintain ? e => writeRelocateDrag(e, { scope: 'schema', name: s.schema, database, schema: s.schema }) : undefined}
                   onContextMenu={onCtx ? e => { e.preventDefault(); e.stopPropagation(); onCtx(e, s.schema); } : undefined}
                   className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${onRowMaintain ? 'pr-8' : ''} ${
                     active ? cls : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/60'
@@ -1418,7 +1470,7 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
         <p className="text-[12px] text-gray-400 dark:text-slate-600 text-center py-8 px-2 italic">PostgreSQL only</p>
       ) : !conn || !database ? (
         <p className="text-[12px] text-gray-400 dark:text-slate-500 text-center py-8 italic px-2">Select a DB first</p>
-      ) : renderList(schemas, value, onChange, 'teal', loading, onItemContextMenu)}
+      ) : renderList(schemas, value, onChange, 'teal', loading, onItemContextMenu, onRelocateDrop)}
 
       {/* Target schema section (sync only) */}
       {isDual && (
@@ -1795,7 +1847,7 @@ export default function ExportImportPage() {
   // Dispatch a gear-menu action for a db/schema/table row to the right dialog
   const handleTableMaintain = (action: MaintainAction, info: ScopeInfo) => {
     if (action === 'export') setExportDialog(info);
-    else if (action === 'copy') setRelocateDialog(info);
+    else if (action === 'copy') setRelocateDialog({ info });
     else if (action === 'rename') setRenameDialog(info);
     else setDestructiveDialog({ ...info, action });
   };
@@ -1925,7 +1977,11 @@ export default function ExportImportPage() {
   };
 
   // ── Copy / Move relocate (unifies Sync) ─────────────────────────────────────
-  const [relocateDialog, setRelocateDialog] = useState<ScopeInfo | null>(null);
+  const [relocateDialog, setRelocateDialog] = useState<RelocateDialogState | null>(null);
+
+  const openRelocateDialog = (info: ScopeInfo, target?: RelocateTargetPrefill) => {
+    setRelocateDialog({ info, target });
+  };
 
   const runRelocate = async (
     info: ScopeInfo,
@@ -2298,6 +2354,11 @@ export default function ExportImportPage() {
                       onItemContextMenu={tab === 'sync' ? (e, dbName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'db', name: dbName }) : undefined}
                       onRowMaintain={tab === 'export' ? (action, db) => handleTableMaintain(action, { scope: 'db', name: db, database: db }) : undefined}
                       onHeaderImport={tab === 'export' && conn ? () => setCreateImportDialog({ scope: 'db' }) : undefined}
+                      onRelocateDrop={tab === 'export' && conn ? (info, targetDb) => openRelocateDialog(info, {
+                        connId,
+                        database: targetDb,
+                        schema: info.scope === 'schema' ? info.name : ((info.schema ?? schema) || 'public'),
+                      }) : undefined}
                       refreshKey={dbRefreshKey}
                     />
                   </div>
@@ -2317,6 +2378,11 @@ export default function ExportImportPage() {
                       onItemContextMenu={tab === 'sync' ? (e, schemaName) => setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'schema', name: schemaName }) : undefined}
                       onRowMaintain={tab === 'export' ? (action, s) => handleTableMaintain(action, { scope: 'schema', name: s, database, schema: s }) : undefined}
                       onHeaderImport={tab === 'export' && conn?.db_type === 'postgres' && database ? () => setCreateImportDialog({ scope: 'schema', database }) : undefined}
+                      onRelocateDrop={tab === 'export' && conn?.db_type === 'postgres' && database ? (info, targetSchema) => openRelocateDialog(info, {
+                        connId,
+                        database,
+                        schema: targetSchema,
+                      }) : undefined}
                       refreshKey={schemaRefreshKey}
                     />
                   </div>
@@ -2405,6 +2471,8 @@ export default function ExportImportPage() {
                           return (
                             <label key={key}
                               className={`group flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer ${hasError ? 'bg-rose-50/50 dark:bg-rose-950/10' : ''}`}
+                              draggable={tab === 'export'}
+                              onDragStart={tab === 'export' ? e => writeRelocateDrag(e, { scope: 'table', name: t.name, database, schema: t.schema }) : undefined}
                               onContextMenu={tab === 'sync' ? e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, scope: 'table', name: t.name }); } : undefined}>
 
                               {/* Sync status indicator (replaces checkbox area when status is set) */}
@@ -2603,9 +2671,9 @@ export default function ExportImportPage() {
             onConfirm={(include, fmt) => void runScopedExport(exportDialog, include, fmt)} />
         )}
         {relocateDialog && (
-          <RelocateDialogModal info={relocateDialog} connections={connections} sourceConnId={connId} busy={running}
+          <RelocateDialogModal info={relocateDialog.info} initialTarget={relocateDialog.target} connections={connections} sourceConnId={connId} busy={running}
             onCancel={() => setRelocateDialog(null)}
-            onConfirm={(target, op, include, conflictStrategy) => void runRelocate(relocateDialog, target, op, include, conflictStrategy)} />
+            onConfirm={(target, op, include, conflictStrategy) => void runRelocate(relocateDialog.info, target, op, include, conflictStrategy)} />
         )}
         {renameDialog && (
           <RenameDialogModal info={renameDialog} busy={running}
