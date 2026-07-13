@@ -282,15 +282,15 @@ function coerceValue(
 ): unknown {
   if (val === null || val === undefined) return null;
 
-  if (col.conversion === 'serial_to_uuid') {
-    const ns = `${tableMap.source.schema}.${tableMap.source.table}`;
-    return seqToUUID(ns, String(val));
-  }
-
   if (col.fkRef) {
     // Use only the last 2 parts (schema.table) as the namespace so that 3-part
     // cross-DB refs (database.schema.table) generate the same UUID as 2-part refs.
     const ns = col.fkRef.split('.').slice(-2).join('.');
+    return seqToUUID(ns, String(val));
+  }
+
+  if (col.conversion === 'serial_to_uuid') {
+    const ns = `${tableMap.source.schema}.${tableMap.source.table}`;
     return seqToUUID(ns, String(val));
   }
 

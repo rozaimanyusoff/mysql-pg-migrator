@@ -170,12 +170,12 @@ function seqToUUID(ns, sourceId) {
 
 function coerceValue(val, col, table) {
   if (val === null || val === undefined) return null;
-  if (col.conversion === 'serial_to_uuid') {
-    return seqToUUID(table.sourceSchema + '.' + table.sourceTable, String(val));
-  }
   if (col.fkRef) {
     const ns = col.fkRef.split('.').slice(-2).join('.');
     return seqToUUID(ns, String(val));
+  }
+  if (col.conversion === 'serial_to_uuid') {
+    return seqToUUID(table.sourceSchema + '.' + table.sourceTable, String(val));
   }
   const t = (col.targetType || '').toLowerCase();
   if (t === 'boolean' || t === 'bool') {
