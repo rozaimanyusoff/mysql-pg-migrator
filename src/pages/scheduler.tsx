@@ -900,7 +900,8 @@ export default function SchedulerPage() {
                               const isLogSelected = runLogSelection?.runId === run.id && runLogSelection.tableId === ts.id;
                               const tableSelectionKey = `${run.id}:${ts.id}`;
                               return (
-                                <div key={ts.id} style={{ contentVisibility: 'auto', containIntrinsicSize: '34px' }} className={`grid w-full grid-cols-[20px_minmax(260px,1.4fr)_minmax(220px,1fr)_110px_130px] items-center gap-3 rounded-md px-2 py-1.5 ${isLogSelected ? 'bg-violet-50 ring-1 ring-violet-200 dark:bg-violet-950/20 dark:ring-violet-900/50' : 'bg-gray-50 dark:bg-slate-900/70'}`}>
+                                <div key={ts.id} className="w-full">
+                                  <div style={{ contentVisibility: 'auto', containIntrinsicSize: '34px' }} className={`grid w-full grid-cols-[20px_minmax(260px,1.4fr)_minmax(220px,1fr)_110px_130px] items-center gap-3 rounded-md px-2 py-1.5 ${isLogSelected ? 'bg-violet-50 ring-1 ring-violet-200 dark:bg-violet-950/20 dark:ring-violet-900/50' : 'bg-gray-50 dark:bg-slate-900/70'}`}>
                                   <input type="checkbox" checked={selectedTableKeys.has(tableSelectionKey)}
                                     onChange={() => setSelectedTableKeys(prev => { const next = new Set(prev); next.has(tableSelectionKey) ? next.delete(tableSelectionKey) : next.add(tableSelectionKey); return next; })}
                                     aria-label={`Select table ${ts.sourceKey}`} className="h-3.5 w-3.5 shrink-0 accent-violet-600" />
@@ -947,44 +948,41 @@ export default function SchedulerPage() {
                                       <Terminal size={12} />
                                     </button>
                                   </div>
+                                  </div>
+
+                                  {isLogSelected && (() => {
+                                    const tableKeys = [ts.sourceKey, ts.targetKey];
+                                    const visibleLogs = run.logs.filter(line => tableKeys.some(key => line.includes(`[${key}]`)));
+                                    const extraErrors = [
+                                      ...(ts.error ? [ts.error] : []),
+                                      ...run.errors.filter(error => tableKeys.some(key => error.includes(key))),
+                                    ].filter((error, index, all) => all.indexOf(error) === index && !visibleLogs.some(line => line.includes(error)));
+                                    return (
+                                      <div className="mt-1 overflow-hidden rounded-md border border-slate-700 bg-slate-950 shadow-inner">
+                                        <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+                                          <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                            <Terminal size={12} />
+                                            <span>Run Log</span>
+                                            <span className="truncate font-mono font-normal normal-case tracking-normal text-violet-400">— {ts.sourceKey}</span>
+                                          </div>
+                                          <button type="button" onClick={() => setRunLogSelection(null)} className="text-slate-500 hover:text-slate-200" title="Close run log"><X size={13} /></button>
+                                        </div>
+                                        <div className="max-h-56 overflow-auto p-3 font-mono text-[11px] leading-5 text-slate-300">
+                                          {visibleLogs.length === 0 && extraErrors.length === 0 && <div className="italic text-slate-500">No log output for this table.</div>}
+                                          {visibleLogs.map((line, i) => (
+                                            <div key={i} className={line.includes('ERROR') || /\d+ errors/.test(line) ? 'text-rose-400' : line.includes('completed') ? 'text-emerald-400' : line.includes('skipped') ? 'text-amber-400' : ''}>{line}</div>
+                                          ))}
+                                          {extraErrors.map((error, i) => <div key={`error-${i}`} className="text-rose-400">[error] {error}</div>)}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               );
                             })}
                                 </div>
                             </div>
 
-                            {runLogSelection?.runId === run.id && (() => {
-                              const selectedTable = runLogSelection.tableId
-                                ? run.tableStates.find(ts => ts.id === runLogSelection.tableId) ?? null
-                                : null;
-                              const tableKeys = selectedTable ? [selectedTable.sourceKey, selectedTable.targetKey] : [];
-                              const visibleLogs = selectedTable
-                                ? run.logs.filter(line => tableKeys.some(key => line.includes(`[${key}]`)))
-                                : run.logs;
-                              const extraErrors = [
-                                ...(selectedTable?.error ? [selectedTable.error] : []),
-                                ...run.errors.filter(error => !selectedTable || tableKeys.some(key => error.includes(key))),
-                              ].filter((error, index, all) => all.indexOf(error) === index && !visibleLogs.some(line => line.includes(error)));
-                              return (
-                                <div className="mt-2 overflow-hidden rounded-md border border-slate-700 bg-slate-950 shadow-inner">
-                                  <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-                                    <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                                      <Terminal size={12} />
-                                      <span>Run Log</span>
-                                      {selectedTable && <span className="truncate font-mono font-normal normal-case tracking-normal text-rose-400">— {selectedTable.sourceKey}</span>}
-                                    </div>
-                                    <button type="button" onClick={() => setRunLogSelection(null)} className="text-slate-500 hover:text-slate-200" title="Close run log"><X size={13} /></button>
-                                  </div>
-                                  <div className="max-h-56 overflow-auto p-3 font-mono text-[11px] leading-5 text-slate-300">
-                                    {visibleLogs.length === 0 && extraErrors.length === 0 && <div className="italic text-slate-500">No log output for this table.</div>}
-                                    {visibleLogs.map((line, i) => (
-                                      <div key={i} className={line.includes('ERROR') || /\d+ errors/.test(line) ? 'text-rose-400' : line.includes('completed') ? 'text-emerald-400' : line.includes('skipped') ? 'text-amber-400' : ''}>{line}</div>
-                                    ))}
-                                    {extraErrors.map((error, i) => <div key={`error-${i}`} className="text-rose-400">[error] {error}</div>)}
-                                  </div>
-                                </div>
-                              );
-                            })()}
                           </div>
                         )}
                       </div>
