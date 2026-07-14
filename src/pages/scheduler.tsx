@@ -142,7 +142,6 @@ export default function SchedulerPage() {
   const [runMenuId, setRunMenuId] = useState<string | null>(null);
   const [hideCompletedRunIds, setHideCompletedRunIds] = useState<Set<string>>(new Set());
   const [preflight, setPreflight] = useState<{ jobName: string; loading: boolean; report: PreflightReport | null; error: string | null } | null>(null);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const highlightHandledRef = useRef(false);
 
   // ── Form state ───────────────────────────────────────────────────────────────
@@ -229,16 +228,18 @@ export default function SchedulerPage() {
     void router.replace('/scheduler', undefined, { shallow: true });
   }, [loading, jobs, schedules, router.isReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll every 3s when any schedule or run is in progress (covers resumed runs)
+  const hasActiveRun = schedules.some(s => s.lastRunStatus === 'running') ||
+    runs.some(r => r.status === 'running' || r.status === 'pending');
+
+  // Poll every 3s while work is active. Keep the interval independent from the
+  // schedules/runs arrays: each poll replaces those arrays, and the previous
+  // ref-based cleanup left a cleared timer reference that prevented polling
+  // from starting again after the first refresh.
   useEffect(() => {
-    const hasRunning = schedules.some(s => s.lastRunStatus === 'running') || runs.some(r => r.status === 'running');
-    if (hasRunning) {
-      if (!pollingRef.current) pollingRef.current = setInterval(() => void pollRuns(), 3000);
-    } else {
-      if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
-    }
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-  }, [schedules, runs]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!hasActiveRun) return;
+    const interval = setInterval(() => void pollRuns(), 3000);
+    return () => clearInterval(interval);
+  }, [hasActiveRun, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Actions ───────────────────────────────────────────────────────────────────
   const handleToggleEnabled = async (s: CronSchedule) => {
@@ -719,7 +720,7 @@ export default function SchedulerPage() {
                       <input value={tableSearch} onChange={e => setTableSearch(e.target.value)} placeholder="Search tables…"
                         className="w-full rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-[11px] text-gray-700 outline-none focus:border-violet-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" />
                     </div>
-                    <Tooltip content={canResumePausedRun ? 'Resume all pending or paused tables in the current run' : selectedSchedule ? 'Create a new audited run for all included tables; at most 5 tables run concurrently' : 'Create a manual audited run for this unscheduled job'} side="bottom">
+                    <Tooltip content={canResumePausedRun ? 'Resume all pending or paused tables in the current run' : selectedSchedule ? 'Create a new audited run and process included table chunks sequentially' : 'Create a manual audited run for this unscheduled job'} side="bottom">
                       <button type="button" onClick={() => void handleBulkTableAction('run')}
                         disabled={!!bulkTableAction || !selectedJob || isCurrentRunRunning || ((selectedHistoryRun?.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') && !canResumePausedRun)}
                         className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 dark:border-emerald-800 dark:hover:bg-emerald-950/30">

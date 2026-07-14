@@ -2,6 +2,17 @@
 
 ---
 
+## 2026-07-14
+- **fix** — Keep Scheduler row progress polling alive during migration
+  - Fixed `src/pages/scheduler.tsx` polling lifecycle: replacing the schedules/runs arrays no longer clears the interval while leaving a stale timer reference that blocks subsequent refreshes.
+  - Scheduler now polls every three seconds for both `pending` and `running` runs, so migrated/skipped counts and progress bars continue updating until the run reaches a terminal state.
+  - Status: done
+- **fix** — Restore sequential Scheduler table migration throughput
+  - Replaced the five-table `Promise.all` fan-out in `src/lib/migv2/runner.ts` with sequential chunk execution, preventing large tables from competing for source scans, target writes, and per-chunk connections; updated the Scheduler Run All tooltip to describe the new behavior.
+  - Added `src/lib/migv2/sequential-executor.ts` and a regression test proving multi-table work never exceeds one active table task while preserving table order.
+  - The global limit of five independent migration runs remains unchanged; this fix only removes five-way table concurrency inside an individual run.
+  - Status: done
+
 ## 2026-07-09
 - **update** — Home module availability + Data Maintenance object update timestamps
   - Home module grid now swaps Scheduler into the previous Schema Studio position. AI Migration Assistant and Schema Studio are disabled/greyed out from the home screen.

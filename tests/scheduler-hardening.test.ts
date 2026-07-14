@@ -7,6 +7,7 @@ import { isSchedulerRequestAuthorized } from '../src/lib/scheduler-security.ts';
 import { acquireRunLock, activeRunForJob, loadRun, saveRun } from '../src/lib/migv2/run-store.ts';
 import { buildWhere } from '../src/lib/migv2/cursor-query.ts';
 import { prepareRunTables } from '../src/lib/migv2/run-tables.ts';
+import { runSequentially } from '../src/lib/migv2/sequential-executor.ts';
 import { saveJob } from '../src/lib/migv2/job-store.ts';
 import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
 
@@ -90,6 +91,23 @@ test('timestamp cursor uses primary-key tie breaker', () => {
   assert.match(pg.where, /"updated_at" = \$2 AND "id" > \$3/);
   assert.deepEqual(pg.params, ['2026-01-01', '2026-01-01', '42']);
   assert.deepEqual(pg.orderCols, ['updated_at', 'id']);
+});
+
+test('scheduler table work stays sequential under multi-table load', async () => {
+  let active = 0;
+  let maxActive = 0;
+  const completed: number[] = [];
+
+  await runSequentially([1, 2, 3, 4, 5], async item => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    completed.push(item);
+    active--;
+  });
+
+  assert.equal(maxActive, 1);
+  assert.deepEqual(completed, [1, 2, 3, 4, 5]);
 });
 
 test('scheduled/manual runs ignore saved truncate flags unless explicitly requested', () => {

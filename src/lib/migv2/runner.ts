@@ -3,12 +3,12 @@ import { Client as PgClient } from 'pg';
 import mysql from 'mysql2/promise';
 import type { MigConn, MigRun, TableMap, ColumnMap, DbType } from './types';
 import { suggestTargetType } from './type-map';
+import { runSequentially } from './sequential-executor';
 import { buildWhere, cursorValue, type IncrementalFilter, type RangeFilter } from './cursor-query';
 
 const CHUNK_SIZE = 500;
 const MAX_ADVANCE_MS = 8_000;
 const MAX_ROLLBACK_PKS = 5_000;
-const MAX_CONCURRENT_TABLES = 5;
 
 // ── Deterministic UUID from source-table namespace + sequential id ────────────
 // Guarantees the same UUID for the same source row across runs,
@@ -592,14 +592,15 @@ export async function advanceRun(
   // Track which columns had NOT NULL dropped per table (for restore after completion)
   const nullDroppedCols = new Map<string, string[]>(); // tableState.id → column names
 
-  // Process at most five table migrations in parallel. Running tables keep
-  // their slots on subsequent advances; pending tables enter as slots free up.
-  const activeTables = run.tableStates
-    .filter(ts => (ts.status === 'pending' || ts.status === 'running') && !pausedTableIds.includes(ts.id))
-    .slice(0, MAX_CONCURRENT_TABLES);
+  // Process table chunks sequentially. Running five large tables in parallel
+  // caused source scans, row-by-row target writes, and connection setup to
+  // contend with each other, making high-volume scheduler runs dramatically
+  // slower. Preserve the advance deadline so later tables enter on the next
+  // driver iteration without creating a five-way Promise.all barrier.
+  const runnableTables = run.tableStates
+    .filter(ts => (ts.status === 'pending' || ts.status === 'running') && !pausedTableIds.includes(ts.id));
 
-  await Promise.all(activeTables.map(async ts => {
-    if (Date.now() > deadline) return;
+  await runSequentially(runnableTables, async ts => {
 
     const tableMap = run.tables.find(t => t.id === ts.id);
     if (!tableMap || !tableMap.include) { ts.status = 'completed'; return; }
@@ -809,7 +810,7 @@ export async function advanceRun(
         } catch { /* ignore */ }
       }
     }
-  }));
+  }, () => Date.now() > deadline);
 
   // Check overall completion
   const allDone = run.tableStates.every(t => t.status === 'completed' || t.status === 'failed' || t.status === 'rolled_back' || t.status === 'aborted');
