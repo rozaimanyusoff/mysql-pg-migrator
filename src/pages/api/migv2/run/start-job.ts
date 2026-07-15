@@ -7,14 +7,18 @@ import { driveRun } from '../../../../lib/migv2/run-driver';
 import { prepareRunTables } from '../../../../lib/migv2/run-tables';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
-import { getPreflightStatus, preflightRequiredMessage } from '../../../../lib/migv2/preflight-store';
+import { getPreflightResult, getPreflightStatus, preflightRequiredMessage } from '../../../../lib/migv2/preflight-store';
+import { createRunExecutionPolicy } from '../../../../lib/migv2/execution-policy';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
   if (!requireSchedulerMutationAuth(req, res)) return;
 
-  const { jobId } = req.body as { jobId?: string };
+  const { jobId, chunkRows } = req.body as { jobId?: string; chunkRows?: number | null };
   if (!jobId) return res.status(400).json({ error: 'jobId is required' });
+  if (chunkRows != null && (!Number.isFinite(chunkRows) || chunkRows <= 0)) {
+    return res.status(400).json({ error: 'chunkRows must be a positive number' });
+  }
 
   const job = loadJob(jobId);
   if (!job) return res.status(404).json({ error: 'Job not found' });
@@ -60,6 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     completedAt: null,
     constraintBypassMode: 'transaction',
     heartbeatAt: now,
+    executionPolicy: createRunExecutionPolicy(getPreflightResult(job).report?.capabilities, chunkRows),
     sourceMeta: job.sourceMeta,
     targetMeta: job.targetMeta,
     tables: includedTables,

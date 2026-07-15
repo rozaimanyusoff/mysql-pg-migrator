@@ -1,13 +1,16 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { Client as PgClient } from 'pg';
+import { from as copyFrom } from 'pg-copy-streams';
 import mysql from 'mysql2/promise';
-import type { MigConn, MigRun, TableMap, ColumnMap, DbType } from './types';
+import type { MigConn, MigRun, TableMap, ColumnMap, DbType, MigRunReject } from './types';
 import { suggestTargetType } from './type-map';
-import { runSequentially } from './sequential-executor';
+import { runWithTableWorkerLimit } from './table-worker-pool';
+import { usesUpsertStrategy } from './sync-strategy';
 import { buildWhere, cursorValue, type IncrementalFilter, type RangeFilter } from './cursor-query';
+import { runChunkRows } from './execution-policy';
 
-const CHUNK_SIZE = 1_000;
-const MAX_ADVANCE_MS = 8_000;
 const MAX_ROLLBACK_PKS = 5_000;
 
 // ── Deterministic UUID from source-table namespace + sequential id ────────────
@@ -80,7 +83,8 @@ async function countRows(
 async function readChunk(
   conn: MigConn, schema: string, table: string,
   cols: string[], offset: number, limit: number,
-  inc?: IncrementalFilter, range?: RangeFilter
+  inc?: IncrementalFilter, range?: RangeFilter,
+  useKeyset = false,
 ): Promise<Record<string, unknown>[]> {
   const colList = cols.map(c => conn.type === 'postgresql' ? `"${c}"` : `\`${c}\``).join(', ');
   const { where, params, orderCols } = buildWhere(conn.type, inc, range);
@@ -93,7 +97,7 @@ async function readChunk(
       const nextIdx = params.length + 1;
       const { rows } = await c.query(
         `SELECT ${colList} FROM "${schema}"."${table}" ${where} ${orderBy} LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`,
-        [...params, limit, offset]
+        [...params, limit, useKeyset ? 0 : offset]
       );
       return rows;
     });
@@ -101,7 +105,7 @@ async function readChunk(
   return withMysql(conn, async c => {
     const [rows] = await c.query(
       `SELECT ${colList} FROM \`${schema}\`.\`${table}\` ${where} ${orderBy} LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...params, limit, useKeyset ? 0 : offset]
     );
     return rows as Record<string, unknown>[];
   });
@@ -150,38 +154,6 @@ async function setTriggers(conn: MigConn, schema: string, table: string, enable:
   await withPg(conn, async c => {
     await c.query(`ALTER TABLE "${schema}"."${table}" ${action} TRIGGER ALL`);
   });
-}
-
-// Drop or restore NOT NULL constraints on a PG table before/after insert.
-// Returns the list of columns altered so the caller can restore the same set.
-async function setNullable(
-  conn: MigConn, schema: string, table: string, enable: boolean,
-  log: (msg: string) => void, cols?: string[]
-): Promise<string[]> {
-  if (conn.type !== 'postgresql') return [];
-  const altered: string[] = [];
-  await withPg(conn, async c => {
-    const targets = cols ?? await (async () => {
-      const res = await c.query<{ column_name: string }>(
-        `SELECT column_name FROM information_schema.columns
-         WHERE table_schema = $1 AND table_name = $2
-           AND is_nullable = 'NO'
-           AND (column_default IS NULL OR column_default NOT LIKE 'nextval%')`,
-        [schema, table]
-      );
-      return res.rows.map(r => r.column_name);
-    })();
-    for (const col of targets) {
-      try {
-        const action = enable ? 'SET NOT NULL' : 'DROP NOT NULL';
-        await c.query(`ALTER TABLE "${schema}"."${table}" ALTER COLUMN "${col}" ${action}`);
-        altered.push(col);
-      } catch (e) {
-        log(`[${schema}.${table}] warn: cannot ${enable ? 'restore' : 'drop'} NOT NULL on "${col}": ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-  });
-  return altered;
 }
 
 export function buildCreateTableSQL(tableMap: TableMap, targetType: 'postgresql' | 'mysql'): string {
@@ -324,10 +296,21 @@ function coerceValue(
   return val;
 }
 
+interface TransformResult {
+  row: Record<string, unknown> | null;
+  reject: Omit<MigRunReject, 'tableId' | 'sourceKey' | 'targetKey' | 'sourcePk' | 'createdAt'> | null;
+}
+
+function valuePreview(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return text.length > 120 ? `${text.slice(0, 117)}…` : text;
+}
+
 function transformRow(
   row: Record<string, unknown>,
   tableMap: TableMap
-): Record<string, unknown> {
+): TransformResult {
   const out: Record<string, unknown> = {};
   for (const col of tableMap.columns.filter(c => c.include)) {
     const outCol = tgtCol(col);
@@ -335,13 +318,35 @@ function transformRow(
       out[outCol] = col.defaultValue ?? null;
     } else {
       const originalVal = row[col.sourceCol];
-      out[outCol] = coerceValue(originalVal, col, tableMap);
+      const normalizedVal = col.emptyPolicy === 'as_null' && typeof originalVal === 'string' && originalVal.trim() === ''
+        ? null
+        : originalVal;
+      let converted = coerceValue(normalizedVal, col, tableMap);
+      const targetNullable = col.targetNullable ?? col.nullable;
+      if (converted == null && !targetNullable) {
+        const policy = col.nullPolicy ?? 'fail';
+        if (policy === 'target_default' && (col.targetDefaultValue ?? col.defaultValue) != null) {
+          // Omitting the column is what activates a database DEFAULT.
+          continue;
+        }
+        if (policy === 'fallback') {
+          converted = coerceValue(col.nullFallback, col, tableMap);
+          if (converted == null) {
+            return { row: null, reject: { column: outCol, reason: 'fallback_invalid', message: `Fallback for "${outCol}" resolves to NULL.`, valuePreview: valuePreview(col.nullFallback) } };
+          }
+        } else if (policy === 'skip_row') {
+          return { row: null, reject: { column: outCol, reason: 'row_skipped', message: `Row skipped because "${outCol}" is required.`, valuePreview: valuePreview(originalVal) } };
+        } else if (policy === 'fail') {
+          return { row: null, reject: { column: outCol, reason: 'null_not_allowed', message: `Required target column "${outCol}" received NULL.`, valuePreview: valuePreview(originalVal) } };
+        }
+      }
+      out[outCol] = converted;
       if (col.keepLegacyAs && col.conversion === 'serial_to_uuid') {
         out[col.keepLegacyAs] = originalVal != null ? Number(originalVal) : null;
       }
     }
   }
-  return out;
+  return { row: out, reject: null };
 }
 
 // Some legacy tables were populated from CSV with the CSV header stored as the
@@ -368,6 +373,68 @@ interface InsertResult {
   conflictSkipped: number; // rowCount=0 from ON CONFLICT DO NOTHING — intentional
   errored: number;         // exceptions — type errors, FK violations, etc.
   firstError: string | null;
+  failedRows: Array<{ rowIndex: number; message: string }>;
+  writerMethod: 'copy-staging' | 'multi-row' | 'row-by-row';
+  fallbackReason?: string | null;
+}
+
+function copyCsvValue(value: unknown): string {
+  if (value === null || value === undefined) return '\\N';
+  let text: string;
+  if (Buffer.isBuffer(value)) text = `\\x${value.toString('hex')}`;
+  else if (value instanceof Date) text = value.toISOString();
+  else if (typeof value === 'object') text = JSON.stringify(value);
+  else text = String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+async function insertRowsPgCopy(
+  conn: MigConn, schema: string, table: string,
+  rows: Record<string, unknown>[], targetPkCol: string | null,
+  upsert: boolean, bypassConstraints: boolean,
+): Promise<InsertResult> {
+  return withPg(conn, async client => {
+    const insertedPks: string[] = [];
+    let inserted = 0;
+    let conflictSkipped = 0;
+    const groups = new Map<string, { cols: string[]; rows: Record<string, unknown>[] }>();
+    for (const row of rows) {
+      const cols = Object.keys(row);
+      if (!cols.length) throw new Error('COPY staging cannot insert a row containing only target defaults.');
+      const key = cols.join('\u0000');
+      const group = groups.get(key) ?? { cols, rows: [] };
+      group.rows.push(row);
+      groups.set(key, group);
+    }
+    await client.query('BEGIN');
+    try {
+      if (bypassConstraints) await client.query("SET LOCAL session_replication_role = 'replica'");
+      for (const group of groups.values()) {
+        const stage = `mig_stage_${randomUUID().replace(/-/g, '')}`;
+        const colList = group.cols.map(col => `"${col}"`).join(', ');
+        await client.query(`CREATE TEMP TABLE "${stage}" (LIKE "${schema}"."${table}" INCLUDING DEFAULTS) ON COMMIT DROP`);
+        const copyStream = client.query(copyFrom(`COPY "${stage}" (${colList}) FROM STDIN WITH (FORMAT csv, NULL '\\N')`));
+        const input = Readable.from(group.rows.map(row => `${group.cols.map(col => copyCsvValue(row[col])).join(',')}\n`));
+        await pipeline(input, copyStream);
+        const updateCols = group.cols.filter(col => col !== targetPkCol);
+        const conflictSql = upsert && targetPkCol && updateCols.length
+          ? `ON CONFLICT ("${targetPkCol}") DO UPDATE SET ${updateCols.map(col => `"${col}" = EXCLUDED."${col}"`).join(', ')}`
+          : 'ON CONFLICT DO NOTHING';
+        const returning = !upsert && targetPkCol ? ` RETURNING "${targetPkCol}"` : '';
+        const merged = await client.query(
+          `INSERT INTO "${schema}"."${table}" (${colList}) SELECT ${colList} FROM "${stage}" WHERE true ${conflictSql}${returning}`
+        );
+        inserted += merged.rowCount ?? 0;
+        if (!upsert && targetPkCol) insertedPks.push(...merged.rows.map(row => String(row[targetPkCol])));
+        if (!upsert) conflictSkipped += group.rows.length - (merged.rowCount ?? 0);
+      }
+      await client.query('COMMIT');
+      return { pks: insertedPks, inserted, conflictSkipped, errored: 0, firstError: null, failedRows: [], writerMethod: 'copy-staging' };
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* connection may be gone */ }
+      throw err;
+    }
+  });
 }
 
 async function insertRows(
@@ -376,18 +443,26 @@ async function insertRows(
   upsert = false,
   bypassConstraints = false,
 ): Promise<InsertResult> {
-  if (!rows.length) return { pks: [], inserted: 0, conflictSkipped: 0, errored: 0, firstError: null };
-  const cols = Object.keys(rows[0]);
+  if (!rows.length) return { pks: [], inserted: 0, conflictSkipped: 0, errored: 0, firstError: null, failedRows: [], writerMethod: conn.type === 'postgresql' ? 'copy-staging' : 'row-by-row' };
+  let copyFallbackReason: string | null = null;
+  if (conn.type === 'postgresql' && rows.length > 1 && rows.every(row => Object.keys(row).length > 0)) {
+    try {
+      return await insertRowsPgCopy(conn, schema, table, rows, targetPkCol, upsert, bypassConstraints);
+    } catch (err) {
+      // A malformed value can abort COPY for the whole batch. Rollback is
+      // complete, so retry row-by-row to preserve per-row reject evidence.
+      copyFallbackReason = err instanceof Error ? err.message : String(err);
+    }
+  }
   const insertedPks: string[] = [];
   let actualInserted = 0;
   let conflictSkipped = 0;
   let errored = 0;
   let firstError: string | null = null;
-  const updateCols = cols.filter(c => c !== targetPkCol);
+  const failedRows: Array<{ rowIndex: number; message: string }> = [];
 
   if (conn.type === 'postgresql') {
     await withPg(conn, async c => {
-      const colList = cols.map(c => `"${c}"`).join(', ');
       if (bypassConstraints) {
         await c.query('BEGIN');
         // Transaction-local and connection-local: a crash/disconnect rolls this
@@ -397,10 +472,15 @@ async function insertRows(
       try {
         for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
           const row = rows[rowIndex];
+          const cols = Object.keys(row);
+          const colList = cols.map(c => `"${c}"`).join(', ');
+          const updateCols = cols.filter(c => c !== targetPkCol);
           const values = cols.map(k => row[k]);
           const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
           let sql: string;
-          if (upsert && targetPkCol && updateCols.length > 0) {
+          if (cols.length === 0) {
+            sql = `INSERT INTO "${schema}"."${table}" DEFAULT VALUES`;
+          } else if (upsert && targetPkCol && updateCols.length > 0) {
             const setClauses = updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
             sql = `INSERT INTO "${schema}"."${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT ("${targetPkCol}") DO UPDATE SET ${setClauses}`;
           } else {
@@ -413,7 +493,9 @@ async function insertRows(
             const written = result.rowCount ?? 0;
             if (written > 0) {
               actualInserted += written;
-              if (targetPkCol && row[targetPkCol] != null) {
+              // An upsert may have updated an existing row. Without a before
+              // image it cannot be rolled back safely by deleting the PK.
+              if (!upsert && targetPkCol && row[targetPkCol] != null) {
                 insertedPks.push(String(row[targetPkCol]));
               }
             } else {
@@ -426,7 +508,9 @@ async function insertRows(
               await c.query(`RELEASE SAVEPOINT ${savepoint}`);
             }
             errored++;
-            if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+            const message = err instanceof Error ? err.message : String(err);
+            failedRows.push({ rowIndex, message });
+            if (!firstError) firstError = message;
           }
         }
         if (bypassConstraints) await c.query('COMMIT');
@@ -439,12 +523,17 @@ async function insertRows(
     });
   } else {
     await withMysql(conn, async c => {
-      const colList = cols.map(c => `\`${c}\``).join(', ');
-      for (const row of rows) {
+      for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+        const row = rows[rowIndex];
+        const cols = Object.keys(row);
+        const colList = cols.map(c => `\`${c}\``).join(', ');
+        const updateCols = cols.filter(c => c !== targetPkCol);
         const values = cols.map(k => row[k]);
         const placeholders = values.map(() => '?').join(', ');
         let sql: string;
-        if (upsert && updateCols.length > 0) {
+        if (cols.length === 0) {
+          sql = `INSERT INTO \`${schema}\`.\`${table}\` () VALUES ()`;
+        } else if (upsert && updateCols.length > 0) {
           const setClauses = updateCols.map(c => `\`${c}\` = VALUES(\`${c}\`)`).join(', ');
           sql = `INSERT INTO \`${schema}\`.\`${table}\` (${colList}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${setClauses}`;
         } else {
@@ -455,7 +544,7 @@ async function insertRows(
           const written = (result as { affectedRows?: number }).affectedRows ?? 0;
           if (written > 0) {
             actualInserted++;
-            if (targetPkCol && row[targetPkCol] != null) {
+            if (!upsert && targetPkCol && row[targetPkCol] != null) {
               insertedPks.push(String(row[targetPkCol]));
             }
           } else {
@@ -463,13 +552,15 @@ async function insertRows(
           }
         } catch (err) {
           errored++;
-          if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+          const message = err instanceof Error ? err.message : String(err);
+          failedRows.push({ rowIndex, message });
+          if (!firstError) firstError = message;
         }
       }
     });
   }
 
-  return { pks: insertedPks, inserted: actualInserted, conflictSkipped, errored, firstError };
+  return { pks: insertedPks, inserted: actualInserted, conflictSkipped, errored, firstError, failedRows, writerMethod: 'row-by-row', fallbackReason: copyFallbackReason };
 }
 
 // ── Ensure target schema + table exist ───────────────────────────────────────
@@ -522,6 +613,29 @@ async function ensureTargetTable(conn: MigConn, tableMap: TableMap): Promise<voi
       }
     });
   }
+}
+
+async function enforcedForeignKeyColumns(conn: MigConn, schema: string, table: string): Promise<Set<string>> {
+  if (conn.type === 'postgresql') {
+    return withPg(conn, async c => {
+      const { rows } = await c.query<{ column_name: string }>(`
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = $1 AND tc.table_name = $2
+      `, [schema, table]);
+      return new Set(rows.map(row => row.column_name.toLowerCase()));
+    });
+  }
+  return withMysql(conn, async c => {
+    const [rows] = await c.query<any[]>(`
+      SELECT COLUMN_NAME AS column_name
+      FROM information_schema.KEY_COLUMN_USAGE
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL
+    `, [schema, table]);
+    return new Set((rows as Array<{ column_name: string }>).map(row => row.column_name.toLowerCase()));
+  });
 }
 
 // ── Auto-discover columns from source schema (fresh migration, no mapping) ────
@@ -580,17 +694,20 @@ export async function advanceRun(
   target: MigConn,
   pausedTableIds: string[] = []
 ): Promise<MigRun> {
-  const deadline = Date.now() + MAX_ADVANCE_MS;
+  const chunkSize = runChunkRows(run.executionPolicy);
   run.startedAt ??= new Date().toISOString();
   run.status = 'running';
+  run.rejects ??= [];
+  run.integrityIssues ??= [];
 
   function log(msg: string) {
     run.logs.push(`[${new Date().toISOString()}] ${msg}`);
     if (run.logs.length > 2000) run.logs = run.logs.slice(-2000);
   }
-
-  // Track which columns had NOT NULL dropped per table (for restore after completion)
-  const nullDroppedCols = new Map<string, string[]>(); // tableState.id → column names
+  if (!run.logs.some(entry => entry.includes('Execution policy:'))) {
+    const policy = run.executionPolicy;
+    log(`Execution policy: ${policy?.mode ?? 'legacy-default'} chunk ${chunkSize.toLocaleString()} rows, up to ${policy?.maxConcurrentTables ?? 1} table workers, ${target.type === 'postgresql' ? 'COPY staging' : 'row writer'} (${policy?.source ?? 'system_default'}).`);
+  }
 
   // Process table chunks sequentially. Running five large tables in parallel
   // caused source scans, row-by-row target writes, and connection setup to
@@ -600,17 +717,37 @@ export async function advanceRun(
   const runnableTables = run.tableStates
     .filter(ts => (ts.status === 'pending' || ts.status === 'running') && !pausedTableIds.includes(ts.id));
 
-  await runSequentially(runnableTables, async ts => {
+  const tableBySourceKey = new Map(run.tables.map(table => [`${table.source.schema}.${table.source.table}`.toLowerCase(), table]));
+  const tableByTargetKey = new Map(run.tables.map(table => [`${table.target.schema}.${resolveTargetTable(table)}`.toLowerCase(), table]));
+  const eligibleTables = runnableTables.filter(state => {
+    const table = run.tables.find(candidate => candidate.id === state.id);
+    if (!table) return true;
+    const dependencies = [
+      ...table.columns.filter(column => column.include && column.fkRef).map(column => ({ key: column.fkRef!.split('.').slice(-2).join('.').toLowerCase(), target: false })),
+      ...table.columns.filter(column => column.include && column.targetFkRef).map(column => ({ key: column.targetFkRef!.split('.').slice(0, 2).join('.').toLowerCase(), target: true })),
+    ];
+    return dependencies.every(dependency => {
+      const parent = dependency.target ? tableByTargetKey.get(dependency.key) : tableBySourceKey.get(dependency.key);
+      if (!parent || parent.id === table.id) return true;
+      const parentState = run.tableStates.find(candidate => candidate.id === parent.id);
+      return !parentState || parentState.status === 'completed';
+    });
+  });
+  const workerLimit = Math.max(1, Math.min(5, run.executionPolicy?.maxConcurrentTables ?? 1));
+  const currentWave = (eligibleTables.length ? eligibleTables : runnableTables.slice(0, 1)).slice(0, workerLimit);
+
+  await runWithTableWorkerLimit(currentWave, workerLimit, async ts => {
 
     const tableMap = run.tables.find(t => t.id === ts.id);
     if (!tableMap || !tableMap.include) { ts.status = 'completed'; return; }
 
     try {
       ts.status = 'running';
+      ts.startedAt ??= new Date().toISOString();
 
       // Build incremental filter (only when syncMode=incremental and a prior watermark exists)
       const isIncremental = tableMap.syncMode === 'incremental' && !!tableMap.incrementalCol;
-      const useUpsert = isIncremental && tableMap.incrementalStrategy === 'timestamp';
+      const useUpsert = usesUpsertStrategy(tableMap);
 
       // Build job-level date-range filter (applies to every table in the run)
       const rangeFilter: RangeFilter | undefined =
@@ -649,7 +786,7 @@ export async function advanceRun(
         c.include && c.sourceCol && (c.conversion === 'serial_to_uuid' || c.sourceCol.toLowerCase() === 'id' || tgtCol(c).toLowerCase() === 'id')
       )?.sourceCol ?? null;
       const useCompositeCursor = tableMap.incrementalStrategy === 'timestamp' && !!sourcePkCol;
-      const incFilter: IncrementalFilter | undefined =
+      const countFilter: IncrementalFilter | undefined =
         isIncremental
           ? {
               col: tableMap.incrementalCol!, gt: tableMap.lastSyncedValue ?? undefined,
@@ -657,10 +794,21 @@ export async function advanceRun(
               pkGt: useCompositeCursor ? tableMap.lastSyncedPk ?? null : null,
             }
           : undefined;
+      const readFilter: IncrementalFilter | undefined = isIncremental
+        ? {
+            col: tableMap.incrementalCol!,
+            gt: ts.sourceCursorValue ?? tableMap.lastSyncedValue ?? undefined,
+            pkCol: useCompositeCursor ? sourcePkCol : null,
+            pkGt: useCompositeCursor ? (ts.sourceCursorPk ?? tableMap.lastSyncedPk ?? null) : null,
+          }
+        : sourcePkCol
+          ? { col: sourcePkCol, gt: ts.sourceCursorValue ?? undefined }
+          : undefined;
+      const useKeyset = Boolean(readFilter);
 
       // Count source rows (once)
       if (ts.rowsSource === 0 && ts.offset === 0) {
-        ts.rowsSource = await countRows(tableSource, tableMap.source.schema, tableMap.source.table, incFilter, rangeFilter);
+        ts.rowsSource = await countRows(tableSource, tableMap.source.schema, tableMap.source.table, countFilter, rangeFilter);
         run.totalRows = run.tableStates.reduce((s, t) => s + t.rowsSource, 0);
         const filterDesc = [
           isIncremental ? `incremental since ${tableMap.lastSyncedValue ?? 'beginning'}` : '',
@@ -694,13 +842,8 @@ export async function advanceRun(
         log(`[${ts.targetKey}] constraint bypass enabled (transaction-scoped)`);
       }
 
-      // Drop NOT NULL on target columns (first chunk only)
       if (ts.offset === 0 && tableMap.skipNullViolations) {
-        const dropped = await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), false, log);
-        if (dropped.length) {
-          nullDroppedCols.set(ts.id, dropped);
-          log(`[${ts.targetKey}] NOT NULL dropped on: ${dropped.join(', ')}`);
-        }
+        log(`[${ts.targetKey}] legacy Skip NULL ignored; use an explicit per-column NULL policy.`);
       }
 
       // Determine which source columns to SELECT
@@ -721,18 +864,19 @@ export async function advanceRun(
       ts.targetPkCol = pkColMap ? tgtCol(pkColMap) : null;
 
       // Read chunk
+      const readStarted = Date.now();
       const chunk = await readChunk(
         tableSource, tableMap.source.schema, tableMap.source.table,
-        srcCols, ts.offset, CHUNK_SIZE, incFilter, rangeFilter
+        srcCols, ts.offset, chunkSize, readFilter, rangeFilter, useKeyset
       );
+      ts.readDurationMs = (ts.readDurationMs ?? 0) + (Date.now() - readStarted);
 
       if (!chunk.length) {
         ts.hasMore = false;
         ts.status = 'completed';
-        if (tableMap.skipNullViolations) {
-          await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
-          log(`[${ts.targetKey}] NOT NULL restored`);
-        }
+        ts.completedAt = new Date().toISOString();
+        const tableElapsed = ts.startedAt ? Math.max(0.001, (Date.parse(ts.completedAt) - Date.parse(ts.startedAt)) / 1000) : 0;
+        ts.rowsPerSecond = tableElapsed ? Number((ts.rowsMigrated / tableElapsed).toFixed(1)) : null;
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
         // Record watermark even when no new rows (source max may have advanced)
@@ -747,13 +891,67 @@ export async function advanceRun(
       const dataRows = chunk.filter(row => !isEmbeddedHeaderRow(row, tableMap));
       const embeddedHeaders = chunk.length - dataRows.length;
       if (embeddedHeaders > 0) log(`[${ts.sourceKey}] skipped ${embeddedHeaders} embedded CSV header row(s)`);
-      const transformed = dataRows.map(row => transformRow(row, tableMap));
+      const transformedResults = dataRows.map(row => transformRow(row, tableMap));
+      const acceptedRows: Record<string, unknown>[] = [];
+      const acceptedSourceRows: Record<string, unknown>[] = [];
+      let blockingPolicyError: string | null = null;
+      transformedResults.forEach((result, index) => {
+        if (result.row) {
+          acceptedRows.push(result.row);
+          acceptedSourceRows.push(dataRows[index]);
+          return;
+        }
+        if (!result.reject) return;
+        const sourcePk = sourcePkCol && dataRows[index][sourcePkCol] != null ? String(dataRows[index][sourcePkCol]) : null;
+        if (run.rejects!.length < 1000) {
+          run.rejects!.push({
+            ...result.reject,
+            tableId: ts.id,
+            sourceKey: ts.sourceKey,
+            targetKey: ts.targetKey,
+            sourcePk,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        ts.rowsRejected = (ts.rowsRejected ?? 0) + 1;
+        if (result.reject.reason === 'null_not_allowed' || result.reject.reason === 'fallback_invalid') {
+          blockingPolicyError ??= result.reject.message;
+        }
+      });
+
+      if (blockingPolicyError) {
+        ts.status = 'failed';
+        ts.error = blockingPolicyError;
+        ts.rowsErrored += transformedResults.filter(result => result.reject?.reason === 'null_not_allowed' || result.reject?.reason === 'fallback_invalid').length;
+        run.errors.push(`${ts.sourceKey}: ${blockingPolicyError}`);
+        log(`[${ts.sourceKey}] ERROR: ${blockingPolicyError}`);
+        return;
+      }
 
       // Insert into target (upsert when incremental by timestamp)
+      const writeStarted = Date.now();
       const insertResult = await insertRows(
         target, tableMap.target.schema, resolveTargetTable(tableMap),
-        transformed, ts.targetPkCol, useUpsert, tableMap.skipConstraints === true
+        acceptedRows, ts.targetPkCol, useUpsert, tableMap.skipConstraints === true
       );
+      ts.writeDurationMs = (ts.writeDurationMs ?? 0) + (Date.now() - writeStarted);
+      ts.writerMethod = insertResult.writerMethod;
+      if (insertResult.fallbackReason) log(`[${ts.targetKey}] COPY staging rolled back; row-by-row reject isolation used: ${insertResult.fallbackReason}`);
+      for (const failed of insertResult.failedRows) {
+        const sourceRow = acceptedSourceRows[failed.rowIndex];
+        if (run.rejects!.length >= 1000) break;
+        run.rejects!.push({
+          tableId: ts.id,
+          sourceKey: ts.sourceKey,
+          targetKey: ts.targetKey,
+          sourcePk: sourcePkCol && sourceRow?.[sourcePkCol] != null ? String(sourceRow[sourcePkCol]) : null,
+          column: null,
+          reason: 'db_error',
+          message: failed.message,
+          valuePreview: null,
+          createdAt: new Date().toISOString(),
+        });
+      }
 
       // Accumulate rollback PKs (up to cap) — only actually-inserted rows
       if (!ts.pkOverflow) {
@@ -767,6 +965,11 @@ export async function advanceRun(
       }
 
       ts.offset += chunk.length;
+      const lastSourceRow = chunk[chunk.length - 1];
+      if (readFilter) {
+        ts.sourceCursorValue = cursorValue(lastSourceRow[readFilter.col]);
+        ts.sourceCursorPk = readFilter.pkCol ? cursorValue(lastSourceRow[readFilter.pkCol]) : null;
+      }
       ts.rowsMigrated += insertResult.inserted;
       ts.rowsSkipped  += insertResult.conflictSkipped + embeddedHeaders;
       ts.rowsErrored  += insertResult.errored;
@@ -779,13 +982,12 @@ export async function advanceRun(
       if (parts.length > 1 || insertResult.errored > 0) log(`[${ts.sourceKey}] ${parts.join(', ')}`);
       if (insertResult.firstError) log(`[${ts.sourceKey}] ERROR: ${insertResult.firstError}`);
 
-      if (chunk.length < CHUNK_SIZE) {
+      if (chunk.length < chunkSize) {
         ts.hasMore = false;
         ts.status = 'completed';
-        if (tableMap.skipNullViolations) {
-          await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
-          log(`[${ts.targetKey}] NOT NULL restored`);
-        }
+        ts.completedAt = new Date().toISOString();
+        const tableElapsed = ts.startedAt ? Math.max(0.001, (Date.parse(ts.completedAt) - Date.parse(ts.startedAt)) / 1000) : 0;
+        ts.rowsPerSecond = tableElapsed ? Number((ts.rowsMigrated / tableElapsed).toFixed(1)) : null;
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         // Record new high-water mark for incremental sync
         if (isIncremental && tableMap.incrementalCol) {
@@ -803,14 +1005,8 @@ export async function advanceRun(
       ts.error = err instanceof Error ? err.message : String(err);
       run.errors.push(`${ts.sourceKey}: ${ts.error}`);
       log(`[${ts.sourceKey}] ERROR: ${ts.error}`);
-      if (tableMap.skipNullViolations) {
-        try {
-          await setNullable(target, tableMap.target.schema, resolveTargetTable(tableMap), true, log, nullDroppedCols.get(ts.id));
-          log(`[${ts.targetKey}] NOT NULL restored (after error)`);
-        } catch { /* ignore */ }
-      }
     }
-  }, () => Date.now() > deadline);
+  });
 
   // Check overall completion
   const allDone = run.tableStates.every(t => t.status === 'completed' || t.status === 'failed' || t.status === 'rolled_back' || t.status === 'aborted');
@@ -819,7 +1015,52 @@ export async function advanceRun(
     const anyAborted = run.tableStates.some(t => t.status === 'aborted');
     run.status = anyFailed ? 'failed' : anyAborted ? 'aborted' : 'completed';
     run.completedAt = new Date().toISOString();
+    const elapsedSeconds = run.startedAt ? Math.max(0.001, (Date.parse(run.completedAt) - Date.parse(run.startedAt)) / 1000) : null;
+    const targetSeconds = run.executionPolicy?.performanceTargetSeconds ?? 15 * 60;
+    const actualRowsPerSecond = elapsedSeconds ? Number((run.migratedRows / elapsedSeconds).toFixed(1)) : null;
+    run.performance = {
+      targetSeconds,
+      requiredRowsPerSecond: run.totalRows ? Number((run.totalRows / targetSeconds).toFixed(1)) : 0,
+      actualRowsPerSecond,
+      elapsedSeconds,
+      meetsTarget: elapsedSeconds == null ? null : elapsedSeconds <= targetSeconds,
+    };
+    run.integrityIssues = run.tableStates.flatMap(ts => {
+      const issues = [];
+      if ((ts.rowsRejected ?? 0) > 0) issues.push({
+        tableId: ts.id, targetKey: ts.targetKey, kind: 'rejected_rows' as const,
+        level: 'warning' as const,
+        message: `${ts.rowsRejected} source row${ts.rowsRejected === 1 ? '' : 's'} rejected by mapping data policies.`,
+      });
+      if (ts.rowsErrored > 0) issues.push({
+        tableId: ts.id, targetKey: ts.targetKey, kind: 'database_errors' as const,
+        level: 'error' as const,
+        message: `${ts.rowsErrored} row${ts.rowsErrored === 1 ? '' : 's'} failed target database validation or insertion.`,
+      });
+      return issues;
+    });
+    for (const tableMap of run.tables.filter(table => table.include && table.columns.some(column => column.include && column.fkRef))) {
+      try {
+        const physicalTable = resolveTargetTable(tableMap);
+        const enforced = await enforcedForeignKeyColumns(target, tableMap.target.schema, physicalTable);
+        const logicalOnly = tableMap.columns.filter(column => column.include && column.fkRef && !enforced.has(tgtCol(column).toLowerCase()));
+        for (const column of logicalOnly) {
+          run.integrityIssues.push({
+            tableId: tableMap.id,
+            targetKey: `${tableMap.target.schema}.${physicalTable}`,
+            kind: 'logical_fk_not_enforced',
+            level: 'warning',
+            message: `"${tgtCol(column)}" is a logical mapping reference to ${column.fkRef}, but the target database has no FK constraint on this column.`,
+          });
+        }
+      } catch (err) {
+        log(`[${tableMap.target.schema}.${resolveTargetTable(tableMap)}] integrity inspection incomplete: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     log(`Run ${run.status}. Total: ${run.migratedRows} rows migrated.`);
+    if (run.performance.actualRowsPerSecond != null && run.performance.elapsedSeconds != null) {
+      log(`Performance: ${run.performance.actualRowsPerSecond.toLocaleString()} rows/s over ${run.performance.elapsedSeconds.toFixed(1)}s — 15-minute target ${run.performance.meetsTarget ? 'met' : 'missed'}.`);
+    }
   }
 
   return run;

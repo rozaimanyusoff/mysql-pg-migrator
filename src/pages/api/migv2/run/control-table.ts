@@ -68,6 +68,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       table.pkOverflow = false;
       table.newWatermark = null;
       table.newWatermarkPk = null;
+      table.sourceCursorValue = null;
+      table.sourceCursorPk = null;
+      table.startedAt = null;
+      table.completedAt = null;
+      table.readDurationMs = 0;
+      table.writeDurationMs = 0;
+      table.rowsPerSecond = null;
+      table.writerMethod = undefined;
     } else if (action === 'run' && table.status !== 'pending') {
       return res.status(409).json({ error: `Cannot run a ${table.status} table; use resume or restart` });
     }

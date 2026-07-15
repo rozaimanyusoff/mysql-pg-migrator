@@ -3,6 +3,8 @@ import { advanceRun } from '../../../../lib/migv2/runner';
 import { activeRunCount, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
 import type { MigConn, MigRun, MigRunTableState, TableMap } from '../../../../lib/migv2/types';
 import { randomUUID } from 'crypto';
+import { assessMigrationTables } from '../../../../lib/migv2/recurring-validation';
+import { createRunExecutionPolicy } from '../../../../lib/migv2/execution-policy';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -21,6 +23,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!source || !target || !tables?.length) {
     return res.status(400).json({ error: 'source, target, tables required' });
   }
+  const assessment = assessMigrationTables(tables);
+  if (!assessment.oneOffReady) {
+    return res.status(422).json({
+      error: `Migration setup has ${assessment.oneOffIssues.length} blocking issue${assessment.oneOffIssues.length !== 1 ? 's' : ''}.`,
+      setupIssues: assessment.oneOffIssues,
+    });
+  }
   if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) {
     return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
   }
@@ -34,6 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     startedAt: null,
     completedAt: null,
     constraintBypassMode: 'transaction',
+    executionPolicy: createRunExecutionPolicy(),
     sourceMeta: { type: source.type, host: source.host, port: source.port, database: source.database, username: source.username },
     targetMeta: { type: target.type, host: target.host, port: target.port, database: target.database, username: target.username },
     tables: tables.filter(t => t.include),

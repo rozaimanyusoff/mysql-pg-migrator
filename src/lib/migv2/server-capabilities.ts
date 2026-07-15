@@ -3,6 +3,13 @@ import fs from 'fs';
 import { Client as PgClient } from 'pg';
 import mysql from 'mysql2/promise';
 import type { MigConn, MigJob } from './types';
+import { MAX_CONCURRENT_MIGRATIONS } from './run-store.ts';
+import { MAX_CONCURRENT_TABLE_WORKERS } from './table-worker-pool.ts';
+
+const DEFAULT_CHUNK_ROWS = 1_000;
+const MIN_CHUNK_ROWS = 100;
+const SINGLE_RUN_CHUNK_LIMIT = 5_000;
+const CHUNK_MEMORY_BUDGET_PERCENT = 10;
 
 export interface RuntimeCapability {
   hostname: string;
@@ -31,15 +38,100 @@ export interface TransferCapabilityReport {
   target: DatabaseCapability;
   currentBatchRows: number;
   recommendedBatchRows: number;
+  /** Effective ceiling after accounting for all concurrently active runs. */
   maxSafeBatchRows: number;
+  singleRunMaxChunkRows: number;
+  concurrencyAdjustedMaxChunkRows: number;
+  assumedConcurrentRuns: number;
+  estimatedWorkingRowBytes: number;
+  chunkMemoryBudgetPercent: number;
+  chunkRecommendationReasons: string[];
   recommendedMethod: 'copy' | 'multi-row-insert';
-  currentWriter: 'row-by-row';
+  currentWriter: 'copy-staging' | 'multi-row' | 'row-by-row';
+  recommendedConcurrentTables: number;
+  performanceTargetSeconds: number;
+  targetRowsPerSecond: number;
   limitingFactors: string[];
   recommendations: string[];
   limitations: string[];
 }
 
+export interface ChunkCapability {
+  recommendedBatchRows: number;
+  maxSafeBatchRows: number;
+  singleRunMaxChunkRows: number;
+  concurrencyAdjustedMaxChunkRows: number;
+  assumedConcurrentRuns: number;
+  estimatedWorkingRowBytes: number;
+  chunkMemoryBudgetPercent: number;
+  chunkRecommendationReasons: string[];
+}
+
 function mb(bytes: number): number { return Math.round(bytes / 1024 / 1024); }
+
+function estimatedColumnBytes(type: string): number {
+  const normalized = type.trim().toLowerCase();
+  const length = normalized.match(/(?:var)?char\s*\(\s*(\d+)\s*\)/)?.[1];
+  if (length) return Math.max(64, Math.min(2_048, Number(length) * 2));
+  if (/json|jsonb/.test(normalized)) return 2_048;
+  if (/bytea|blob|binary|image/.test(normalized)) return 4_096;
+  if (/text|xml/.test(normalized)) return 512;
+  if (/\[\]|array/.test(normalized)) return 2_048;
+  if (/uuid/.test(normalized)) return 48;
+  if (/timestamp|datetime|interval/.test(normalized)) return 32;
+  if (/date|time/.test(normalized)) return 24;
+  if (/numeric|decimal|double|real|float|money/.test(normalized)) return 32;
+  if (/bigint|integer|smallint|serial|boolean|bool/.test(normalized)) return 16;
+  return 256;
+}
+
+/**
+ * Estimates the live JS row footprint, including object/string conversion
+ * overhead. This deliberately favours a conservative chunk recommendation;
+ * it is not an estimate of the row's on-disk database size.
+ */
+export function estimateWorkingRowBytes(job: MigJob): number {
+  const included = job.tables.filter(table => table.include);
+  const largestRow = Math.max(0, ...included.map(table => table.columns
+    .filter(column => column.include)
+    .reduce((bytes, column) => bytes + estimatedColumnBytes(column.targetType) + 64, 256)));
+  return Math.max(512, Math.ceil(largestRow * 2.5));
+}
+
+export function calculateChunkCapability(
+  job: MigJob,
+  freeMemoryMb: number,
+  assumedConcurrentRuns = MAX_CONCURRENT_MIGRATIONS,
+): ChunkCapability {
+  const concurrency = Math.max(1, Math.floor(assumedConcurrentRuns));
+  const estimatedWorkingRowBytes = estimateWorkingRowBytes(job);
+  const memoryBudgetBytes = Math.max(0, freeMemoryMb) * 1024 * 1024 * (CHUNK_MEMORY_BUDGET_PERCENT / 100);
+  const rowsForMemory = (budget: number) => Math.max(MIN_CHUNK_ROWS, Math.floor(budget / estimatedWorkingRowBytes));
+  const singleRunMaxChunkRows = Math.min(SINGLE_RUN_CHUNK_LIMIT, rowsForMemory(memoryBudgetBytes));
+  const concurrencyAdjustedMaxChunkRows = Math.min(singleRunMaxChunkRows, rowsForMemory(memoryBudgetBytes / concurrency));
+  const recommendedBatchRows = Math.min(DEFAULT_CHUNK_ROWS, concurrencyAdjustedMaxChunkRows);
+  const chunkRecommendationReasons = [
+    `Auto-selection is capped at ${DEFAULT_CHUNK_ROWS.toLocaleString()} rows for predictable run behaviour.`,
+    `${CHUNK_MEMORY_BUDGET_PERCENT}% of currently free application memory is reserved for migration chunks.`,
+    `The memory budget is shared across up to ${concurrency} concurrent migration run${concurrency === 1 ? '' : 's'}.`,
+  ];
+  if (concurrencyAdjustedMaxChunkRows < singleRunMaxChunkRows) {
+    chunkRecommendationReasons.push(`Concurrency reduces the ceiling from ${singleRunMaxChunkRows.toLocaleString()} to ${concurrencyAdjustedMaxChunkRows.toLocaleString()} rows.`);
+  }
+  if (singleRunMaxChunkRows === SINGLE_RUN_CHUNK_LIMIT) {
+    chunkRecommendationReasons.push(`${SINGLE_RUN_CHUNK_LIMIT.toLocaleString()} rows is the product ceiling for a single run, not an automatic selection.`);
+  }
+  return {
+    recommendedBatchRows,
+    maxSafeBatchRows: concurrencyAdjustedMaxChunkRows,
+    singleRunMaxChunkRows,
+    concurrencyAdjustedMaxChunkRows,
+    assumedConcurrentRuns: concurrency,
+    estimatedWorkingRowBytes,
+    chunkMemoryBudgetPercent: CHUNK_MEMORY_BUDGET_PERCENT,
+    chunkRecommendationReasons,
+  };
+}
 
 function runtimeCapability(): RuntimeCapability {
   let workspaceFreeMb: number | null = null;
@@ -126,27 +218,42 @@ export async function inspectServerCapabilities(job: MigJob, source: MigConn, ta
   const [sourceCapability, targetCapability] = await Promise.all([
     databaseCapability(source), databaseCapability(target, targetSchemas),
   ]);
-  const maxColumns = Math.max(1, ...job.tables.filter(table => table.include).map(table => Math.max(1, table.columns.filter(column => column.include).length)));
   const hasIncremental = job.tables.some(table => table.include && table.syncMode === 'incremental');
-  const parameterSafeRows = Math.max(1, Math.floor(60_000 / maxColumns));
-  const maxSafeBatchRows = Math.min(5_000, parameterSafeRows);
-  const recommendedBatchRows = Math.min(1_000, maxSafeBatchRows);
+  const chunkCapability = calculateChunkCapability(job, runtime.freeMemoryMb);
   const limitingFactors: string[] = [];
   const recommendations: string[] = [];
   if (runtime.freeMemoryMb < 2_048) limitingFactors.push('Application server has less than 2 GB free memory.');
   if ((sourceCapability.latencyMs ?? 0) > 20) limitingFactors.push(`Source database latency is ${sourceCapability.latencyMs} ms.`);
   if ((targetCapability.latencyMs ?? 0) > 20) limitingFactors.push(`Target database latency is ${targetCapability.latencyMs} ms.`);
-  if (maxSafeBatchRows < 1_000) limitingFactors.push(`${maxColumns} mapped columns limit the safe PostgreSQL parameter budget.`);
+  if (chunkCapability.concurrencyAdjustedMaxChunkRows < chunkCapability.singleRunMaxChunkRows) {
+    limitingFactors.push(`Concurrent-run memory budget limits chunks to ${chunkCapability.concurrencyAdjustedMaxChunkRows.toLocaleString()} rows when up to ${chunkCapability.assumedConcurrentRuns} runs are active.`);
+  }
   limitingFactors.push(...sourceCapability.warnings, ...targetCapability.warnings);
-  recommendations.push('Use multi-row INSERT for incremental/upsert migrations.');
-  if (target.type === 'postgresql') recommendations.push('Use COPY FROM STDIN for full migrations into empty target tables.');
+  recommendations.push(target.type === 'postgresql'
+    ? 'Use COPY into a temporary staging table, then merge into the target for conflict-safe bulk writes.'
+    : 'Use multi-row INSERT for bulk writes.');
   recommendations.push('Keep source and target connections open for the duration of each run.');
   recommendations.push('Use indexed keyset pagination instead of OFFSET for large source tables.');
+  recommendations.push('After application memory, concurrency or database tuning changes, run Pre-flight again; existing run policies remain unchanged.');
+  const recommendedConcurrentTables = Math.max(1, Math.min(
+    MAX_CONCURRENT_TABLE_WORKERS,
+    job.tables.filter(table => table.include).length,
+    runtime.cpuCores || 1,
+  ));
   return {
     runtime, source: sourceCapability, target: targetCapability,
-    currentBatchRows: 1_000, recommendedBatchRows, maxSafeBatchRows,
+    currentBatchRows: DEFAULT_CHUNK_ROWS, ...chunkCapability,
     recommendedMethod: target.type === 'postgresql' && !hasIncremental ? 'copy' : 'multi-row-insert',
-    currentWriter: 'row-by-row', limitingFactors, recommendations,
-    limitations: ['Remote database CPU, RAM and free disk cannot be read without an OS-level agent or SSH access.', 'Capability values are advisory; temporary-table write benchmarking is not yet enabled.'],
+    currentWriter: target.type === 'postgresql' ? 'copy-staging' : 'multi-row',
+    recommendedConcurrentTables,
+    performanceTargetSeconds: 15 * 60,
+    targetRowsPerSecond: 1_400,
+    limitingFactors, recommendations,
+    limitations: [
+      'Remote database CPU, RAM and free disk cannot be read without an OS-level agent or SSH access.',
+      'Capability values are advisory; the 15-minute target must be verified with representative row width, constraints and conflict ratio.',
+      'The source read chunk and COPY staging batch share the current memory ceiling.',
+      'Concurrent migration jobs share the global five-table worker budget, so the 15-minute target assumes sufficient worker capacity is available to this job.',
+    ],
   };
 }

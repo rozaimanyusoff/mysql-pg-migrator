@@ -1,6 +1,6 @@
 import { advanceRun } from './runner';
 import { loadRun, saveRun } from './run-store';
-import { loadJob, saveJob } from './job-store';
+import { loadJob, saveJobRuntimeState } from './job-store';
 import { loadSchedule, saveSchedule } from './schedule-store';
 import { sendEmail } from '../mailer';
 import type { MigConn, MigRun } from './types';
@@ -17,7 +17,7 @@ function persistWatermarks(run: MigRun) {
     const jt = job.tables.find(t => t.id === ts.id);
     if (jt) { jt.lastSyncedValue = ts.newWatermark; jt.lastSyncedPk = ts.newWatermarkPk ?? null; updated = true; }
   }
-  if (updated) saveJob(job);
+  if (updated) saveJobRuntimeState(job);
 }
 
 function buildNotifyBody(run: MigRun): { subject: string; text: string } {

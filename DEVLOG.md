@@ -2,6 +2,86 @@
 
 ---
 
+## 2026-07-16
+
+- **implement / performance architecture** — COPY staging writer and five-table migration SLO.
+  - Performance objective: five average tables × 200,000 rows (1,000,000 rows total) should complete in under 15 minutes. The planning baseline is 1,400 aggregate rows/s, giving margin above the mathematical minimum of 1,112 rows/s; the engineering target remains 2,000–2,500 rows/s on representative infrastructure.
+  - PostgreSQL writes now use `COPY FROM STDIN` into transaction-scoped temporary staging tables, followed by conflict-safe `INSERT … SELECT` merge into the target. This supports source-clone, existing-target and upsert paths while retaining per-column NULL/default transformations. A failed COPY batch is rolled back and retried row-by-row so reject evidence remains attributable.
+  - Full and incremental reads use keyset pagination whenever a mapped source key/tracking key is available; OFFSET remains only as a compatibility fallback for mappings without a usable key. In-run source cursors are separate from persisted recurring watermarks and survive pause/resume.
+  - Added a process-wide five-table worker budget shared by all migration runs. Each run executes up to its Pre-flight-recommended worker count. Logical and discovered physical FK references form dependency-safe waves so parent tables complete before dependent children; users do not manually select concurrency.
+  - Execution telemetry records writer method, read/write duration, table rows/s and final run performance against the 15-minute target. Scheduler Pre-flight shows required throughput, planning baseline, projected duration and `expected`/`at risk` reasons based on row count, estimated row width, target type and worker capacity.
+  - Added `pg-copy-streams` plus TypeScript definitions. The generated standalone migration script remains on its existing writer and is not included in this web-runner performance claim.
+  - Verification: TypeScript, 29 integration tests and diff checks pass. The under-15-minute SLO still requires a representative live benchmark because network latency, row width, triggers, indexes, conflict ratio and database I/O cannot be proven by unit tests.
+  - Files: `src/lib/migv2/{runner,types,execution-policy,server-capabilities,preflight,table-worker-pool}.ts`, `src/pages/{scheduler,migration}.tsx`, `package.json`, `tests/scheduler-hardening.test.ts`.
+  - Status: implemented; representative 1M-row benchmark pending.
+
+- **refactor / implement** — Explicit target ownership, per-column data policy, and migration integrity visibility.
+  - Mapping now persists `Existing target` versus `Source clone`. Existing-target mappings treat the live Drizzle/app schema as authoritative; source-clone mappings retain translated source-schema ownership and are excluded from existing-target compatibility drift prompts.
+  - Replaced the unsafe global `Skip NULL` run control with durable per-column handling for required target columns: fail the table, use the target default, use a configured fallback, or reject the row. Empty strings can independently remain values or be treated as NULL. Saved jobs from older versions are normalized to conservative defaults.
+  - Runner no longer drops `NOT NULL` constraints. Target defaults are activated by omitting that column from the row insert; inserts now support row-specific column sets. Policy rejects and DB insertion errors retain capped, sanitized evidence with source PK where available.
+  - Added a post-run integrity report for rejected rows/database errors and logical FK mappings that are not backed by a physical target FK constraint.
+  - Added `Mapping Design` in Migration: table cards show source-to-target ownership, mapped types, logical UUID references, and whether the target database actually enforces each FK.
+  - Recurring readiness validates fallback/default policy configuration, while operational Pre-flight only applies target schema compatibility checks to existing-target mappings.
+  - Files: `src/lib/migv2/{types,job-store,recurring-validation,preflight,runner}.ts`, `src/pages/migration.tsx`.
+  - Status: implemented; verification recorded below after test pass.
+
+## 2026-07-15
+
+- **enhance** — Make Pre-flight chunk recommendations concurrency-aware and auditable.
+  - `5,000 rows` is now a single-run product ceiling, not an automatically selected chunk. Auto mode remains capped at `1,000 rows` and may choose less for wide rows or constrained application memory.
+  - Pre-flight estimates the largest included table's in-memory row footprint, reserves a conservative share of currently free application memory, and divides that budget across the system limit of five concurrent migration runs. Tables remain sequential within each run, so this models at most one active table per run.
+  - The capability report distinguishes the auto-selected chunk, concurrency-adjusted ceiling, single-run ceiling, assumed concurrency, estimated row memory, current row-by-row writer, and the reasons for the recommendation. The execution policy snapshots the effective concurrent ceiling; manual overrides are clamped to it. Run Now overrides apply to that immediate run only, while recurring overrides are stored explicitly on the schedule; Auto remains the default for both.
+  - PostgreSQL parameter limits are intentionally not used to clamp the current source-read chunk because writes are still row-by-row. Multi-row/COPY will receive a separate writer batch policy when implemented. Infrastructure or tuning changes only affect later runs after Pre-flight is run again.
+  - Pre-flight engine version advanced to invalidate reports created before the concurrency-aware fields existed.
+
+- **decision / revision** — Remove Scheduler table selection instead of adding `Run Selected`.
+  - Removed table-row checkboxes and the unused `selectedTableKeys` state. The checkboxes implied a bulk action even though `Run Now` correctly executes the entire saved job.
+  - Scheduler now has two explicit execution scopes only: `Run Now` for the complete saved job, and the row action for running/resuming/restarting one table individually.
+  - Run-history selection remains separate because it is used for run-level history/export operations, not migration table execution.
+  - Status: done
+
+- **refactor** — Consolidate Migration readiness and separate execution concerns.
+  - Added one assessment engine with distinct `oneOffReady` and `recurringReady` results. Migration Run Once, Prepare Schedule, saved-job summaries, Scheduler schedule creation, and Pre-flight now consume the same configuration rules instead of maintaining separate blocker definitions.
+  - Removed the manual `Set` gate and its badges. Mapping readiness is derived from the current source/target/column configuration, so editing a mapping cannot leave a stale human-confirmed ready state behind.
+  - Mapping now contains the recurring policy, while `Truncate`, `Skip Constraints`, and `Skip NULL` are session-only Run Once options. These switches are stripped when jobs are saved and forcibly disabled for unattended Scheduler runs, including legacy saved jobs.
+  - Run Once now performs a full one-off scan with insert-missing semantics and does not consume the saved incremental watermark. `Prepare Schedule` accurately describes the validate-save-continue flow; ordinary Save no longer pushes every job toward Scheduler.
+  - Added API enforcement for one-off readiness and regression coverage for derived readiness plus non-persistence of bypass options.
+
+- **refactor** — Complete runtime-state, Scheduler-contract, and operational Pre-flight separation.
+  - Item 4: incremental cursors now live under `data/migv2/runtime` instead of editable job JSON. Job loading hydrates runtime state, legacy embedded cursors migrate once, cursor writes do not change job version, and changing the tracking definition automatically resets the affected cursor. Explicit cursor reset and Run Once with truncate also reset runtime safely.
+  - Portable saved-job export excludes cursors. Saving a job strips cursor and one-off fields from configuration while retaining compatible runtime state for unrelated mapping edits.
+  - Item 5: Scheduler now loads `/api/scheduler/jobs`, whose contract contains only identity, readiness counts, and source/target execution references. Raw column mappings, sync flags, bypass controls, and watermarks are no longer sent to or interpreted by Scheduler UI.
+  - Item 6: FK ordering and sync-strategy notices are owned and displayed by Migration assessment. Operational Pre-flight now checks live connectivity, source readability/row counts, target-schema compatibility, server capacity, and ETA only; invalid configuration is rejected before a report is created.
+  - Pre-flight engine version advanced so reports created under the old mapping-check semantics are re-run instead of remaining misleadingly current.
+
+- **implement** — Target schema compatibility decisions and runner-owned chunk policy.
+  - Renamed schema drift detection to `Target schema compatibility` and made authority explicit. `Apply compatibility update` treats the live target as authoritative: removed columns leave the mapping, target types replace saved types, safe new columns are excluded, and required additions without defaults remain blockers for manual mapping. `Ignore for now` keeps the saved mapping authoritative, allowing the runner to recreate missing columns while warning that type/constraint incompatibilities may still fail.
+  - Scheduler operational Pre-flight identifies compatibility warnings separately and offers `Apply in Migration` or `Ignore for now`, with the execution impact included in the warning instead of presenting a context-free drift flag.
+  - Added `RunExecutionPolicy` snapshots to every new web run. Scheduler and cron runs capture the latest Pre-flight recommended chunk and safe ceiling; Migration Run Once uses the system default; restarted runs retain the original snapshot. Legacy runs fall back safely to 1,000 rows.
+  - The runner no longer uses a hard-coded chunk directly. It clamps and consumes `run.executionPolicy.chunkRows`, records the selected policy in run logs, and keeps target writes row-by-row until the separate multi-row/COPY writer enhancement is implemented.
+
+- **fix** — Scheduler Pre-flight failures now retain the actual diagnostic reason.
+  - The API identifies whether failure happened while loading the job, resolving saved connections, running database/mapping checks, or saving the report; unexpected failures are logged and returned with a diagnostic ID.
+  - The Scheduler modal now shows the server detail and diagnostic metadata, and distinguishes HTTP errors, timeouts, and requests where the server returned no response instead of collapsing all of them to `Pre-flight failed`.
+  - Added integration coverage for structured API diagnostics and network failures.
+- **fix** — Preserve completed Pre-flight state when checks find blockers.
+  - Failed reports remain reviewable after the modal closes and the Scheduler now distinguishes not checked, passed, expired, outdated, and checked-with-blockers states.
+  - Blocking reports show the issue count, completion time, and `View result`; Run Now stays disabled because error-level checks can cause incorrect or failed migrations.
+- **implement** — Recurring-sync remediation for tables without tracking columns.
+  - Migration now offers explicit `Full scan · insert missing`, `Full scan · upsert`, and `Incremental · tracking column` strategies instead of an ambiguous Full/Incremental toggle. A job-level banner can convert all untracked incremental tables to Full scan + upsert before saving and re-running Pre-flight.
+  - Full scan + upsert scans the source on every run and inserts/updates by the mapped target key; it intentionally does not remove target rows deleted from source. Pre-flight validates that an upsert key exists and explains the strategy trade-off.
+  - Upserted PKs are not registered for delete-based rollback because the runner cannot distinguish inserts from updates without retaining before-images; deleting them could remove rows that existed before the run.
+  - Runtime watermark writes no longer bump the saved-job configuration version, so a successful recurring run does not invalidate its own Pre-flight approval. A stale 24-hour capability/ETA report is advisory and no longer stops an unchanged recurring schedule.
+- **update** — Clarify one-off and operational execution labels.
+  - Migration `Run now` is now `Run Once` for an immediate interactive migration during mapping/setup.
+  - Scheduler `Run Job` is now `Run Now`; it immediately executes the entire saved job with or without a configured schedule. Active-run actions use `Pause Run`, `Resume Run`, and `Stop Run`.
+  - Pre-flight guidance now states that it gates Scheduler `Run Now` and schedule activation, not saving or running a one-off migration from the Migration workspace.
+- **refactor** — Restore the Migration/Scheduler ownership boundary.
+  - Added reusable recurring-job configuration validation owned by Migration. `Save & Schedule` is blocked until column mapping, target, sync strategy, tracking/tie-breaker requirements, and full-upsert key requirements are clean; ordinary Save and Run Once remain available for drafts and one-off work.
+  - Job summaries expose only `scheduleReady` plus an issue count. Scheduler no longer renders mapping flags, truncate/incremental details, or a `Fix in Migration` action inside Pre-flight.
+  - Unscheduled jobs no longer show a persistent Pre-flight button/result/banner. Clicking `Run Now` or `Add Schedule` invokes operational Pre-flight just in time; a configured schedule retains its operational Pre-flight status.
+  - Scheduler `Run Now` always uses the standalone saved-job endpoint, even when a schedule exists, so it executes immediately without depending on whether cron is enabled.
+
 ## 2026-07-14
 - **fix** — Keep Scheduler row progress polling alive during migration
   - Fixed `src/pages/scheduler.tsx` polling lifecycle: replacing the schedules/runs arrays no longer clears the interval while leaving a stale timer reference that blocks subsequent refreshes.

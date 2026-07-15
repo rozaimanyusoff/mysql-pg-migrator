@@ -26,6 +26,11 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     if (patch.enabled === true && !preflightStatus.ready) {
       return res.status(428).json({ error: preflightRequiredMessage(preflightStatus), preflightRequired: true });
     }
+    const nextChunkMode = patch.chunkMode ?? s.chunkMode ?? 'auto';
+    const nextChunkRows = patch.chunkRows !== undefined ? patch.chunkRows : s.chunkRows;
+    if (nextChunkMode === 'fixed' && (nextChunkRows == null || !Number.isFinite(nextChunkRows) || nextChunkRows <= 0)) {
+      return res.status(400).json({ error: 'A positive chunkRows value is required for fixed chunk mode' });
+    }
     const jobChangedWithoutPreflight = nextJobId !== s.jobId && !preflightStatus.ready;
     const updated: CronSchedule = {
       ...s,
@@ -38,6 +43,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       ...(patch.lastRunStatus !== undefined && { lastRunStatus: patch.lastRunStatus }),
       ...(patch.lastRunId !== undefined && { lastRunId: patch.lastRunId }),
       ...(patch.notifyEmail !== undefined && { notifyEmail: patch.notifyEmail }),
+      ...((patch.chunkMode !== undefined || patch.chunkRows !== undefined) && {
+        chunkMode: nextChunkMode,
+        chunkRows: nextChunkMode === 'fixed' ? nextChunkRows : null,
+      }),
       updatedAt: new Date().toISOString(),
     };
     saveSchedule(updated);

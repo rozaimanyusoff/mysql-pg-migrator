@@ -1,6 +1,6 @@
 import { Client as PgClient } from 'pg';
 import mysql from 'mysql2/promise';
-import type { MigConn, MigJob, TableMap, ColumnMap } from './types';
+import type { MigConn, MigJob, TableMap } from './types';
 import { inspectServerCapabilities, type TransferCapabilityReport } from './server-capabilities';
 
 // Conservative throughput assumption for ETA (rows/sec written, single-threaded).
@@ -10,6 +10,7 @@ const ASSUMED_ROWS_PER_SEC = 2000;
 export interface PreflightIssue {
   level: 'error' | 'warning' | 'info';
   message: string;
+  code?: 'target_schema_compatibility';
 }
 
 export interface PreflightTableCheck {
@@ -30,6 +31,14 @@ export interface PreflightReport {
   source: { reachable: boolean; error?: string };
   target: { reachable: boolean; error?: string };
   capabilities: TransferCapabilityReport;
+  performanceTarget?: {
+    targetSeconds: number;
+    requiredRowsPerSecond: number;
+    planningRowsPerSecond: number;
+    projectedSeconds: number;
+    status: 'expected' | 'at_risk';
+    reasons: string[];
+  };
   globalIssues: PreflightIssue[];
   tables: PreflightTableCheck[];
 }
@@ -113,6 +122,25 @@ async function tableExists(conn: MigConn, schema: string, table: string): Promis
   });
 }
 
+async function columnNames(conn: MigConn, schema: string, table: string): Promise<Set<string>> {
+  if (conn.type === 'postgresql') {
+    return withPg(conn, async c => {
+      const { rows } = await c.query<{ column_name: string }>(
+        'SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
+        [schema, table]
+      );
+      return new Set(rows.map(row => row.column_name.toLowerCase()));
+    });
+  }
+  return withMysql(conn, async c => {
+    const [rows] = await c.query<any[]>(
+      'SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ?',
+      [schema, table]
+    );
+    return new Set((rows as Array<{ column_name: string }>).map(row => row.column_name.toLowerCase()));
+  });
+}
+
 async function ping(conn: MigConn): Promise<{ reachable: boolean; error?: string }> {
   try {
     if (conn.type === 'postgresql') await withPg(conn, c => c.query('SELECT 1'));
@@ -123,64 +151,8 @@ async function ping(conn: MigConn): Promise<{ reachable: boolean; error?: string
   }
 }
 
-// ── static per-table sanity checks (no DB round-trip) ─────────────────────────
-
 function targetTableName(tm: TableMap): string {
   return tm.targetAlias?.trim() || tm.target.table;
-}
-
-function staticColumnIssues(tm: TableMap): PreflightIssue[] {
-  const issues: PreflightIssue[] = [];
-  const included = tm.columns.filter(c => c.include);
-
-  if (!included.length) {
-    issues.push({ level: 'error', message: 'No columns included — nothing to migrate.' });
-  }
-
-  for (const c of included) {
-    // serial_to_uuid must target a uuid column
-    if (c.conversion === 'serial_to_uuid' && c.targetType.toLowerCase() !== 'uuid') {
-      issues.push({ level: 'warning', message: `Column "${c.targetCol}" uses serial→uuid but target type is "${c.targetType}", not uuid.` });
-    }
-    // target-only NOT NULL column with no default → every insert fails
-    if (c.sourceCol === null && !c.nullable && (c.defaultValue == null || c.defaultValue === '')) {
-      issues.push({ level: 'error', message: `Target-only column "${c.targetCol}" is NOT NULL with no default — inserts will fail.` });
-    }
-  }
-
-  // FK columns referencing tables: handled at job level (ordering); here flag fkRef without conversion
-  return issues;
-}
-
-// FK-ordering: a column with fkRef points at a parent table. If the parent is in
-// the job but ordered AFTER this table, the deterministic UUID still resolves, but
-// the parent rows won't exist yet if a real FK constraint is enforced at the target.
-function fkOrderingIssues(job: MigJob): PreflightIssue[] {
-  const issues: PreflightIssue[] = [];
-  const included = job.tables.filter(t => t.include);
-  const indexByKey = new Map<string, number>();
-  included.forEach((t, i) => {
-    indexByKey.set(`${t.source.schema}.${t.source.table}`.toLowerCase(), i);
-    indexByKey.set(`${t.target.schema}.${targetTableName(t)}`.toLowerCase(), i);
-  });
-
-  included.forEach((t, childIdx) => {
-    const refs = new Set<string>();
-    for (const c of t.columns.filter(c => c.include && c.fkRef)) {
-      refs.add(c.fkRef!.split('.').slice(-2).join('.').toLowerCase());
-    }
-    for (const ref of refs) {
-      const parentIdx = indexByKey.get(ref);
-      if (parentIdx === undefined) continue; // parent not in job — deterministic UUID still resolves
-      if (parentIdx > childIdx) {
-        issues.push({
-          level: 'warning',
-          message: `"${t.source.schema}.${t.source.table}" references "${ref}" which migrates later — reorder parent first if the target enforces FK constraints.`,
-        });
-      }
-    }
-  });
-  return issues;
 }
 
 // ── main entry ────────────────────────────────────────────────────────────────
@@ -195,19 +167,7 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
   let totalRows = 0;
 
   for (const tm of included) {
-    const issues = staticColumnIssues(tm);
-    if (tm.syncMode === 'incremental' && !tm.incrementalCol) {
-      issues.push({ level: 'error', message: 'Incremental sync requires a tracking column to identify new data.' });
-    }
-    if (tm.syncMode === 'incremental' && tm.truncateBeforeMigrate) {
-      issues.push({ level: 'warning', message: 'Incremental sync conflicts with truncate-before-migrate. Truncate is ignored for scheduled/manual sync runs and should be disabled in the mapping.' });
-    }
-    if (tm.syncMode === 'incremental' && tm.incrementalStrategy === 'timestamp') {
-      const inferredTie = tm.columns.find(c => c.include && c.sourceCol && (c.conversion === 'serial_to_uuid' || c.sourceCol.toLowerCase() === 'id' || c.targetCol.toLowerCase() === 'id'))?.sourceCol;
-      if (!tm.incrementalTieCol && !inferredTie) {
-        issues.push({ level: 'error', message: 'Timestamp incremental sync requires a unique tie-breaker column to prevent equal-timestamp rows being skipped.' });
-      }
-    }
+    const issues: PreflightIssue[] = [];
     const tableSource: MigConn = tm.sourceDatabase && tm.sourceDatabase !== source.database
       ? { ...source, database: tm.sourceDatabase }
       : source;
@@ -227,11 +187,24 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
     if (tgtPing.reachable) {
       try {
         targetExists = await tableExists(target, tm.target.schema, targetTableName(tm));
-        if (targetExists && tm.syncMode !== 'incremental' && !tm.truncateBeforeMigrate) {
-          issues.push({ level: 'warning', message: 'Target table already exists and truncate is off — existing rows kept; PK conflicts will be skipped.' });
+        const targetMode = tm.targetMode ?? (tm.target.table === tm.source.table ? 'source_clone' : 'existing');
+        if (targetExists && targetMode === 'existing') {
+          const actualColumns = await columnNames(target, tm.target.schema, targetTableName(tm));
+          const expectedColumns = tm.columns.filter(column => column.include).flatMap(column => [
+            (column.targetName?.trim() || column.targetCol).toLowerCase(),
+            ...(column.keepLegacyAs ? [column.keepLegacyAs.toLowerCase()] : []),
+          ]);
+          const missing = expectedColumns.filter(column => !actualColumns.has(column));
+          if (missing.length) {
+            issues.push({
+              level: 'warning',
+              code: 'target_schema_compatibility',
+              message: `Target schema compatibility: ${missing.length} mapped column${missing.length !== 1 ? 's are' : ' is'} missing (${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', …' : ''}). The existing target schema is authoritative; update the mapping in Migration before scheduling.`,
+            });
+          }
         }
-      } catch {
-        // information_schema query failure is non-fatal
+      } catch (err) {
+        issues.push({ level: 'warning', message: `Target schema inspection incomplete: ${err instanceof Error ? err.message : String(err)}` });
       }
     }
 
@@ -245,8 +218,6 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
     });
   }
 
-  globalIssues.push(...fkOrderingIssues(job));
-  if (!included.length) globalIssues.push({ level: 'error', message: 'No tables included in this job.' });
   if (!srcPing.reachable) globalIssues.push({ level: 'error', message: `Source unreachable: ${srcPing.error ?? 'unknown error'}` });
   if (!tgtPing.reachable) globalIssues.push({ level: 'error', message: `Target unreachable: ${tgtPing.error ?? 'unknown error'}` });
 
@@ -255,15 +226,31 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
   if (capabilities.source.error) globalIssues.push({ level: 'warning', message: `Source capability check incomplete: ${capabilities.source.error}` });
   if (capabilities.target.error) globalIssues.push({ level: 'warning', message: `Target capability check incomplete: ${capabilities.target.error}` });
 
+  const targetSeconds = capabilities.performanceTargetSeconds;
+  const requiredRowsPerSecond = targetSeconds > 0 ? totalRows / targetSeconds : 0;
+  const planningRowsPerSecond = capabilities.targetRowsPerSecond;
+  const performanceReasons: string[] = [];
+  if (target.type !== 'postgresql') performanceReasons.push('COPY staging is available only for PostgreSQL targets.');
+  if (requiredRowsPerSecond > planningRowsPerSecond) performanceReasons.push(`Workload needs ${Math.ceil(requiredRowsPerSecond).toLocaleString()} rows/s, above the ${planningRowsPerSecond.toLocaleString()} rows/s planning baseline.`);
+  if (capabilities.estimatedWorkingRowBytes > 5 * 1024) performanceReasons.push('Estimated working row width exceeds 5 KB; large JSON, text or binary values can reduce throughput.');
+  if (capabilities.recommendedConcurrentTables < Math.min(5, included.length)) performanceReasons.push(`Application capacity recommends ${capabilities.recommendedConcurrentTables} concurrent table worker${capabilities.recommendedConcurrentTables === 1 ? '' : 's'}, below the requested five.`);
+  const projectedSeconds = totalRows ? Math.ceil(totalRows / Math.max(1, planningRowsPerSecond)) : 0;
+
   return {
     ok: !hasError,
     generatedAt: new Date().toISOString(),
     tableCount: included.length,
     totalRows,
-    estimatedSeconds: Math.ceil(totalRows / ASSUMED_ROWS_PER_SEC),
+    estimatedSeconds: projectedSeconds || Math.ceil(totalRows / ASSUMED_ROWS_PER_SEC),
     source: srcPing,
     target: tgtPing,
     capabilities,
+    performanceTarget: {
+      targetSeconds, requiredRowsPerSecond: Number(requiredRowsPerSecond.toFixed(1)),
+      planningRowsPerSecond, projectedSeconds,
+      status: performanceReasons.length ? 'at_risk' : 'expected',
+      reasons: performanceReasons,
+    },
     globalIssues,
     tables,
   };

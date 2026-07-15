@@ -9,6 +9,7 @@ import { prepareRunTables } from '../../../../lib/migv2/run-tables';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
 import { getPreflightStatus, preflightRequiredMessage } from '../../../../lib/migv2/preflight-store';
+import { createRunExecutionPolicy } from '../../../../lib/migv2/execution-policy';
 
 // POST { runId, truncate? } — restart a run from offset 0 for all tables.
 // Creates a new run ID (original run is preserved for audit).
@@ -54,6 +55,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     constraintBypassMode: 'transaction',
     heartbeatAt: now,
     restartedFromRunId: runId,
+    executionPolicy: sourceRun.executionPolicy ?? createRunExecutionPolicy(),
     sourceMeta: sourceRun.sourceMeta,
     targetMeta: sourceRun.targetMeta,
     tables,

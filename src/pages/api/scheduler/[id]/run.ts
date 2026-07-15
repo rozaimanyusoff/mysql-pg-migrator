@@ -8,7 +8,8 @@ import { driveRun } from '../../../../lib/migv2/run-driver';
 import { prepareRunTables } from '../../../../lib/migv2/run-tables';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
-import { getPreflightStatus, preflightRequiredMessage } from '../../../../lib/migv2/preflight-store';
+import { getPreflightResult, getPreflightStatus, preflightRequiredMessage } from '../../../../lib/migv2/preflight-store';
+import { createRunExecutionPolicy } from '../../../../lib/migv2/execution-policy';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -60,6 +61,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     completedAt: null,
     constraintBypassMode: 'transaction',
     heartbeatAt: now,
+    executionPolicy: createRunExecutionPolicy(
+      getPreflightResult(job).report?.capabilities,
+      schedule.chunkMode === 'fixed' ? schedule.chunkRows : null,
+    ),
     sourceMeta: job.sourceMeta,
     targetMeta: job.targetMeta,
     tables: includedTables,

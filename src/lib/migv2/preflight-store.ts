@@ -5,11 +5,13 @@ import type { PreflightReport } from './preflight';
 
 const PREFLIGHT_DIR = path.join(process.cwd(), 'data', 'migv2', 'preflight');
 export const PREFLIGHT_VALID_MS = 24 * 60 * 60 * 1000;
+export const PREFLIGHT_ENGINE_VERSION = 3;
 
 export interface PreflightRecord {
   jobId: string;
   jobVersion: number;
   jobUpdatedAt: string;
+  engineVersion: number;
   completedAt: string;
   expiresAt: string;
   ok: boolean;
@@ -21,6 +23,11 @@ export interface PreflightStatus {
   reason: 'ready' | 'missing' | 'failed' | 'expired' | 'job_changed';
   completedAt: string | null;
   expiresAt: string | null;
+}
+
+export interface PreflightResult {
+  status: PreflightStatus;
+  report: PreflightReport | null;
 }
 
 function ensureDir(): void { fs.mkdirSync(PREFLIGHT_DIR, { recursive: true }); }
@@ -35,6 +42,7 @@ export function savePreflightRecord(job: MigJob, report: PreflightReport): Prefl
     jobId: job.id,
     jobVersion: job.version,
     jobUpdatedAt: job.updatedAt,
+    engineVersion: PREFLIGHT_ENGINE_VERSION,
     completedAt,
     expiresAt: new Date(Date.now() + PREFLIGHT_VALID_MS).toISOString(),
     ok: report.ok,
@@ -53,18 +61,27 @@ export function loadPreflightRecord(jobId: string): PreflightRecord | null {
 export function getPreflightStatus(job: MigJob): PreflightStatus {
   const record = loadPreflightRecord(job.id);
   if (!record) return { ready: false, reason: 'missing', completedAt: null, expiresAt: null };
-  if (record.jobVersion !== job.version || record.jobUpdatedAt !== job.updatedAt) {
+  if (record.engineVersion !== PREFLIGHT_ENGINE_VERSION || record.jobVersion !== job.version || record.jobUpdatedAt !== job.updatedAt) {
     return { ready: false, reason: 'job_changed', completedAt: record.completedAt, expiresAt: record.expiresAt };
   }
   if (!record.ok) return { ready: false, reason: 'failed', completedAt: record.completedAt, expiresAt: record.expiresAt };
   if (Date.now() >= new Date(record.expiresAt).getTime()) {
-    return { ready: false, reason: 'expired', completedAt: record.completedAt, expiresAt: record.expiresAt };
+    // The capability/ETA snapshot is stale, but unchanged saved configuration remains
+    // approved. Otherwise every recurring schedule would stop after 24 hours.
+    return { ready: true, reason: 'expired', completedAt: record.completedAt, expiresAt: record.expiresAt };
   }
   return { ready: true, reason: 'ready', completedAt: record.completedAt, expiresAt: record.expiresAt };
 }
 
+export function getPreflightResult(job: MigJob): PreflightResult {
+  const status = getPreflightStatus(job);
+  const record = loadPreflightRecord(job.id);
+  const belongsToCurrentJob = record?.engineVersion === PREFLIGHT_ENGINE_VERSION && record.jobVersion === job.version && record.jobUpdatedAt === job.updatedAt;
+  return { status, report: belongsToCurrentJob ? record.report : null };
+}
+
 export function preflightRequiredMessage(status: PreflightStatus): string {
-  if (status.reason === 'failed') return 'Pre-flight found blocking issues. Fix them and run Pre-flight again.';
+  if (status.reason === 'failed') return 'Operational Pre-flight found blocking issues. Review them and run Pre-flight again.';
   if (status.reason === 'expired') return 'Pre-flight has expired. Run Pre-flight again before starting migration.';
   if (status.reason === 'job_changed') return 'The saved job changed after its last Pre-flight. Run Pre-flight again.';
   return 'Pre-flight is required before enabling or starting this migration.';

@@ -56,6 +56,12 @@ function isTableMap(value: unknown): value is TableMap {
 }
 
 export function createPortableJob(job: MigJob): PortableMigJob {
+  const tables = job.tables.map(table => {
+    const portable = { ...table };
+    delete portable.lastSyncedValue;
+    delete portable.lastSyncedPk;
+    return portable;
+  });
   return {
     format: PORTABLE_JOB_FORMAT,
     formatVersion: PORTABLE_JOB_VERSION,
@@ -63,6 +69,7 @@ export function createPortableJob(job: MigJob): PortableMigJob {
     credentialsIncluded: false,
     job: {
       ...job,
+      tables,
       sourceMeta: {
         type: job.sourceMeta.type,
         host: job.sourceMeta.host,
@@ -125,7 +132,12 @@ export function parsePortableJob(value: unknown): MigJob {
       database: targetMeta.database as string,
       username: targetMeta.username as string,
     },
-    tables: job.tables as TableMap[],
+    tables: (job.tables as TableMap[]).map(table => {
+      const portable = { ...table };
+      delete portable.lastSyncedValue;
+      delete portable.lastSyncedPk;
+      return portable;
+    }),
     ...(isStringOrNull(job.filterCol) && { filterCol: job.filterCol }),
     ...(isStringOrNull(job.filterFrom) && { filterFrom: job.filterFrom }),
     ...(isStringOrNull(job.filterTo) && { filterTo: job.filterTo }),

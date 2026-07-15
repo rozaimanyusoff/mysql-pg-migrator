@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { advanceRun } from '../../../../lib/migv2/runner';
 import { loadRun, saveRun } from '../../../../lib/migv2/run-store';
-import { loadJob, saveJob } from '../../../../lib/migv2/job-store';
+import { loadJob, saveJobRuntimeState } from '../../../../lib/migv2/job-store';
 import type { MigConn } from '../../../../lib/migv2/types';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -21,7 +21,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     advanced.heartbeatAt = new Date().toISOString();
     saveRun(advanced);
 
-    // Persist incremental watermarks back to the saved job so next run picks them up
+    // Persist incremental watermarks to the separate runtime store.
     if (advanced.jobId) {
       const job = loadJob(advanced.jobId);
       if (job) {
@@ -31,7 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const jt = job.tables.find(t => t.id === ts.id);
           if (jt) { jt.lastSyncedValue = ts.newWatermark; jt.lastSyncedPk = ts.newWatermarkPk ?? null; jobUpdated = true; }
         }
-        if (jobUpdated) saveJob(job);
+        if (jobUpdated) saveJobRuntimeState(job);
       }
     }
 

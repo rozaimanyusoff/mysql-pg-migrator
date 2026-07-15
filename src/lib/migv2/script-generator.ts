@@ -94,6 +94,7 @@ interface GenTable {
   targetTable: string;
   truncate: boolean;
   syncMode: string;
+  fullSyncStrategy: string;
   incrementalCol: string | null;
   incrementalStrategy: string;
   lastSyncedValue: string | null;
@@ -130,6 +131,7 @@ function serializeTables(job: MigJob): GenTable[] {
         targetTable: resolveTargetTable(t),
         truncate: t.truncateBeforeMigrate,
         syncMode: t.syncMode ?? 'full',
+        fullSyncStrategy: t.fullSyncStrategy ?? 'insert_missing',
         incrementalCol: t.incrementalCol ?? null,
         incrementalStrategy: t.incrementalStrategy ?? 'id',
         lastSyncedValue: t.lastSyncedValue ?? null,
@@ -492,7 +494,7 @@ async function main() {
 
     const isInc = table.syncMode === 'incremental' && table.incrementalCol;
     const inc = isInc && table.lastSyncedValue ? { col: table.incrementalCol, gt: table.lastSyncedValue } : undefined;
-    const useUpsert = isInc && table.incrementalStrategy === 'timestamp';
+    const useUpsert = (isInc && table.incrementalStrategy === 'timestamp') || (!isInc && table.fullSyncStrategy === 'upsert');
 
     try {
       const total = await countRows(table, inc, rangeFilter);

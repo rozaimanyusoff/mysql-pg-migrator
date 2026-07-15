@@ -6,6 +6,7 @@ import type { CronSchedule } from '../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../lib/scheduler-security';
 import { loadJob } from '../../../lib/migv2/job-store';
 import { getPreflightStatus } from '../../../lib/migv2/preflight-store';
+import { assessMigrationTables } from '../../../lib/migv2/recurring-validation';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
@@ -29,12 +30,22 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   if (req.method === 'POST') {
     if (!requireSchedulerMutationAuth(req, res)) return;
-    const { jobId, jobName, cronExpr, notifyEmail } = req.body as Partial<CronSchedule>;
+    const { jobId, jobName, cronExpr, notifyEmail, chunkMode, chunkRows } = req.body as Partial<CronSchedule>;
     if (!jobId || !jobName || !cronExpr) {
       return res.status(400).json({ error: 'jobId, jobName, cronExpr required' });
     }
+    if (chunkMode === 'fixed' && (chunkRows == null || !Number.isFinite(chunkRows) || chunkRows <= 0)) {
+      return res.status(400).json({ error: 'A positive chunkRows value is required for fixed chunk mode' });
+    }
     const job = loadJob(jobId);
     if (!job) return res.status(404).json({ error: 'Job not found' });
+    const setupIssues = assessMigrationTables(job.tables).recurringIssues;
+    if (setupIssues.length) {
+      return res.status(422).json({
+        error: `This job has ${setupIssues.length} Migration setup issue${setupIssues.length !== 1 ? 's' : ''}. Resolve them before adding a schedule.`,
+        setupRequired: true,
+      });
+    }
     const preflightStatus = getPreflightStatus(job);
     const now = new Date().toISOString();
     const schedule: CronSchedule = {
@@ -46,6 +57,8 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       createdAt: now, updatedAt: now,
       lastRunAt: null, lastRunStatus: null, lastRunId: null,
       notifyEmail: notifyEmail ?? null,
+      chunkMode: chunkMode === 'fixed' ? 'fixed' : 'auto',
+      chunkRows: chunkMode === 'fixed' ? chunkRows : null,
     };
     saveSchedule(schedule);
     return res.status(201).json({ schedule, preflightRequired: !preflightStatus.ready });

@@ -25,6 +25,10 @@ export type IdConversion =
   | 'to_date'
   | 'to_jsonb';
 
+export type TargetMode = 'existing' | 'source_clone';
+export type NullPolicy = 'fail' | 'target_default' | 'fallback' | 'skip_row';
+export type EmptyPolicy = 'keep' | 'as_null';
+
 export interface ColumnMap {
   sourceCol: string | null;  // null = target-only (new column not in source)
   targetCol: string;
@@ -32,11 +36,21 @@ export interface ColumnMap {
   targetType: string;        // target DB type string
   nullable: boolean;
   defaultValue: string | null;
+  /** Source/target nullability are kept separately for existing-target mappings. */
+  sourceNullable?: boolean;
+  targetNullable?: boolean;
+  targetDefaultValue?: string | null;
+  /** Durable row handling used by both Run Once and recurring execution. */
+  nullPolicy?: NullPolicy;
+  emptyPolicy?: EmptyPolicy;
+  nullFallback?: string | null;
   include: boolean;
   conversion: IdConversion;
   // For FK columns that point to a UUID-converted PK:
   // e.g. "public.users" means "look up seqToUUID('public.users', fk_value)"
   fkRef: string | null;
+  /** Physical target FK discovered from the existing target schema. */
+  targetFkRef?: string | null;
   // When conversion is serial_to_uuid: also write the original integer into this extra
   // BIGINT column (e.g. "legacy_id"). Useful when other tables still FK via the old serial.
   keepLegacyAs?: string | null;
@@ -48,6 +62,8 @@ export interface TableMap {
   source: { schema: string; table: string };
   sourceDatabase?: string; // which source DB this table was added from (multi-DB support)
   target: { schema: string; table: string };
+  /** Existing app schema is authoritative; source_clone creates a translated source table. */
+  targetMode?: TargetMode;
   columns: ColumnMap[];
   truncateBeforeMigrate: boolean;
   skipConstraints?: boolean;     // transaction-scoped PG constraint bypass during insert
@@ -56,11 +72,14 @@ export interface TableMap {
   isSet?: boolean;             // user confirmed mapping is ready to run
   // Incremental sync
   syncMode?: 'full' | 'incremental';
+  fullSyncStrategy?: 'insert_missing' | 'upsert'; // full scan: keep existing rows or update them by target key
   incrementalCol?: string | null;            // source column used as high-water mark
   incrementalStrategy?: 'id' | 'timestamp'; // id = append-only insert; timestamp = upsert
   incrementalTieCol?: string | null;         // unique source key for equal timestamp watermarks
-  lastSyncedValue?: string | null;          // high-water mark from last completed run
-  lastSyncedPk?: string | null;             // tie-breaker for equal timestamp watermarks
+  // Runtime-only cursor fields hydrated from data/migv2/runtime; never persisted
+  // as editable saved-job configuration.
+  lastSyncedValue?: string | null;
+  lastSyncedPk?: string | null;
 }
 
 // ── Scheduler ────────────────────────────────────────────────────────────────
@@ -77,6 +96,8 @@ export interface CronSchedule {
   lastRunStatus: 'completed' | 'failed' | 'running' | 'paused' | null;
   lastRunId: string | null;
   notifyEmail?: string | null;   // email to notify on completion/failure (optional)
+  chunkMode?: 'auto' | 'fixed';
+  chunkRows?: number | null;     // requested rows; runtime policy clamps to current Pre-flight ceiling
 }
 
 // ── Job ───────────────────────────────────────────────────────────────────────
@@ -106,6 +127,7 @@ export interface MigJobTableSummary {
   target: { schema: string; table: string };
   targetAlias?: string | null;
   syncMode?: 'full' | 'incremental';
+  fullSyncStrategy?: 'insert_missing' | 'upsert';
   incrementalCol?: string | null;
   lastSyncedValue?: string | null;
   truncateBeforeMigrate?: boolean;
@@ -120,12 +142,45 @@ export interface MigJobSummary {
   updatedAt: string;
   tableCount: number;
   tables: MigJobTableSummary[];
+  scheduleReady: boolean;
+  scheduleIssues: number;
+}
+
+export interface SchedulerJobSummary {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  updatedAt: string;
+  tableCount: number;
+  scheduleReady: boolean;
+  scheduleIssues: number;
+  executionTables: Array<{
+    id: string;
+    sourceKey: string;
+    targetKey: string;
+  }>;
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
 export type RunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
 export type TableRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
+
+export interface RunExecutionPolicy {
+  mode: 'auto' | 'fixed';
+  chunkRows: number;
+  recommendedChunkRows: number;
+  safeCeilingRows: number;
+  /** Audit context captured from Pre-flight; absent on legacy run files. */
+  singleRunCeilingRows?: number;
+  assumedConcurrentRuns?: number;
+  maxConcurrentTables?: number;
+  writerMethod?: 'copy-staging' | 'multi-row' | 'row-by-row';
+  performanceTargetSeconds?: number;
+  source: 'preflight' | 'system_default';
+  capturedAt: string;
+}
 
 export interface MigRunTableState {
   id: string;           // = tableMap.id
@@ -136,6 +191,7 @@ export interface MigRunTableState {
   rowsMigrated: number;  // rows actually written to target
   rowsSkipped: number;   // rows skipped by ON CONFLICT DO NOTHING (already exist)
   rowsErrored: number;   // rows that failed with a DB error (type mismatch, FK violation, etc.)
+  rowsRejected?: number; // rows rejected by an explicit per-column data policy
   offset: number;
   hasMore: boolean;
   error: string | null;
@@ -146,6 +202,35 @@ export interface MigRunTableState {
   // incremental sync
   newWatermark?: string | null; // max value of incrementalCol seen after this run
   newWatermarkPk?: string | null;
+  /** In-run source pagination checkpoint; separate from the saved recurring watermark. */
+  sourceCursorValue?: string | null;
+  sourceCursorPk?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  readDurationMs?: number;
+  writeDurationMs?: number;
+  writerMethod?: 'copy-staging' | 'multi-row' | 'row-by-row';
+  rowsPerSecond?: number | null;
+}
+
+export interface MigRunReject {
+  tableId: string;
+  sourceKey: string;
+  targetKey: string;
+  sourcePk: string | null;
+  column: string | null;
+  reason: 'null_not_allowed' | 'fallback_invalid' | 'row_skipped' | 'db_error';
+  message: string;
+  valuePreview: string | null;
+  createdAt: string;
+}
+
+export interface MigRunIntegrityIssue {
+  tableId: string;
+  targetKey: string;
+  kind: 'rejected_rows' | 'database_errors' | 'logical_fk_not_enforced';
+  level: 'warning' | 'error';
+  message: string;
 }
 
 export interface MigRun {
@@ -166,6 +251,9 @@ export interface MigRun {
   // true when a 'running' run was reconciled as orphaned (stale heartbeat).
   // Such runs are marked 'failed' but remain resumable from saved offsets.
   interrupted?: boolean;
+  // Immutable execution controls captured when the run is created. Optional
+  // only for backward compatibility with run files created before this field.
+  executionPolicy?: RunExecutionPolicy;
   // store source/target meta (no passwords) for display
   sourceMeta: Omit<MigConn, 'password'>;
   targetMeta: Omit<MigConn, 'password'>;
@@ -179,4 +267,14 @@ export interface MigRun {
   filterFrom?: string | null;
   filterTo?: string | null;
   errors: string[];
+  /** Capped evidence, suitable for UI/export without persisting full source rows. */
+  rejects?: MigRunReject[];
+  integrityIssues?: MigRunIntegrityIssue[];
+  performance?: {
+    targetSeconds: number;
+    requiredRowsPerSecond: number;
+    actualRowsPerSecond: number | null;
+    elapsedSeconds: number | null;
+    meetsTarget: boolean | null;
+  };
 }
