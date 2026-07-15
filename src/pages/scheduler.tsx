@@ -5,10 +5,11 @@ import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   Calendar, Check, CheckCircle2,
-  Clock, Copy, Loader2, Pause, Pencil, Play,
+  Clock, Copy, Loader2, Pause, Pencil, Play, Timer,
   Plus, Terminal, Trash2, X,
   AlertTriangle, CircleDot, ListChecks, RotateCcw, Mail, Info,
   FileSpreadsheet, FileText, MoreVertical, Search, Square, RefreshCw,
+  ChevronDown, ChevronLeft, ChevronRight, Download,
 } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import { useAlert } from '../lib/alert-context';
@@ -124,11 +125,11 @@ export default function SchedulerPage() {
   const [schedules, setSchedules] = useState<CronSchedule[]>([]);
   const [jobs, setJobs] = useState<MigJobSummary[]>([]);
   const [runs, setRuns] = useState<MigRun[]>([]);
+  const [activeRunJobIds, setActiveRunJobIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState<CronSchedule | null>(null);
-  const [triggering, setTriggering] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [runLogSelection, setRunLogSelection] = useState<{ runId: string; tableId: string | null } | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
@@ -144,7 +145,10 @@ export default function SchedulerPage() {
   const [hideCompletedRunIds, setHideCompletedRunIds] = useState<Set<string>>(new Set());
   const [preflight, setPreflight] = useState<{ jobName: string; loading: boolean; report: PreflightReport | null; error: string | null } | null>(null);
   const [preflightStatus, setPreflightStatus] = useState<PreflightStatus | null>(null);
+  const [jobsPanelCollapsed, setJobsPanelCollapsed] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const highlightHandledRef = useRef(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // ── Form state ───────────────────────────────────────────────────────────────
   const [formJobId, setFormJobId] = useState('');
@@ -171,23 +175,41 @@ export default function SchedulerPage() {
       } satisfies MigRunTableState))
     : [];
   const isCurrentRunRunning = selectedHistoryRun?.status === 'running' || selectedSchedule?.lastRunStatus === 'running';
-  const hasPausableTables = selectedHistoryTableStates.some(t => t.status === 'running' || t.status === 'pending');
+  const hasPausableJobTables = selectedHistoryTableStates.some(t => t.status === 'running' || t.status === 'pending');
+  const hasActiveJobRun = Boolean(
+    selectedHistoryRun &&
+    (selectedHistoryRun.status === 'running' || selectedHistoryRun.status === 'pending' || selectedHistoryRun.status === 'paused') &&
+    selectedHistoryTableStates.some(t => t.status === 'running' || t.status === 'pending' || t.status === 'paused')
+  );
   const canResumePausedRun = Boolean(
     selectedHistoryRun &&
     (selectedHistoryRun.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') &&
     selectedHistoryTableStates.some(t => t.status === 'pending' || t.status === 'paused')
   );
-  const runAllLabel = canResumePausedRun ? 'Resume All' : 'Run All';
+  const runJobLabel = canResumePausedRun ? 'Resume Job' : 'Run Job';
+  const primaryJobAction = isCurrentRunRunning ? 'pause' : 'run';
+  const primaryJobLabel = isCurrentRunRunning ? 'Pause Job' : runJobLabel;
+  const primaryJobDisabled = Boolean(
+    bulkTableAction ||
+    (primaryJobAction === 'pause'
+      ? !hasPausableJobTables
+      : (!selectedJob || (!canResumePausedRun && !preflightStatus?.ready) ||
+        ((selectedHistoryRun?.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') && !canResumePausedRun)))
+  );
 
   // ── Data fetching ─────────────────────────────────────────────────────────────
   const loadAll = async () => {
     try {
-      const [schRes, jobRes] = await Promise.all([
+      const [schRes, jobRes, activeRunRes] = await Promise.all([
         axios.get<{ schedules: CronSchedule[] }>('/api/scheduler'),
         axios.get<{ jobs: MigJobSummary[] }>('/api/migv2/jobs'),
+        axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { compact: 1, limit: 100 } }),
       ]);
       setSchedules(schRes.data.schedules);
       setJobs(jobRes.data.jobs);
+      setActiveRunJobIds(new Set(activeRunRes.data.runs
+        .filter(run => (run.status === 'running' || run.status === 'pending') && run.jobId)
+        .map(run => run.jobId as string)));
     } catch { /* ignore */ } finally { setLoading(false); }
   };
 
@@ -200,19 +222,31 @@ export default function SchedulerPage() {
 
   const pollRuns = async () => {
     try {
-      const [schRes, runRes] = await Promise.all([
+      const [schRes, runRes, activeRunRes] = await Promise.all([
         axios.get<{ schedules: CronSchedule[] }>('/api/scheduler'),
         selectedId
           ? axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { jobId: selectedId, limit: 10, compact: 1 } })
           : Promise.resolve(null),
+        axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { compact: 1, limit: 100 } }),
       ]);
       setSchedules(schRes.data.schedules);
       if (runRes) setRuns(runRes.data.runs);
+      setActiveRunJobIds(new Set(activeRunRes.data.runs
+        .filter(run => (run.status === 'running' || run.status === 'pending') && run.jobId)
+        .map(run => run.jobId as string)));
     } catch { /* ignore */ }
   };
 
   useEffect(() => { void loadAll(); }, []);
   useEffect(() => { if (selectedId) void loadRunsForJob(selectedId); }, [selectedId]);
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) setShowExportMenu(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, [showExportMenu]);
   useEffect(() => {
     setPreflightStatus(null);
     if (!selectedId) return;
@@ -238,15 +272,12 @@ export default function SchedulerPage() {
   }, [loading, jobs, schedules, router.isReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasActiveRun = schedules.some(s => s.lastRunStatus === 'running') ||
-    runs.some(r => r.status === 'running' || r.status === 'pending');
+    runs.some(r => r.status === 'running' || r.status === 'pending') || activeRunJobIds.size > 0;
 
-  // Poll every 3s while work is active. Keep the interval independent from the
-  // schedules/runs arrays: each poll replaces those arrays, and the previous
-  // ref-based cleanup left a cleared timer reference that prevented polling
-  // from starting again after the first refresh.
+  // Poll quickly while work is active, and periodically while idle so runs
+  // started from another tab or cron still update the job-row spinner.
   useEffect(() => {
-    if (!hasActiveRun) return;
-    const interval = setInterval(() => void pollRuns(), 3000);
+    const interval = setInterval(() => void pollRuns(), hasActiveRun ? 3000 : 10000);
     return () => clearInterval(interval);
   }, [hasActiveRun, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -261,25 +292,6 @@ export default function SchedulerPage() {
       const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Could not update schedule') : 'Could not update schedule';
       showError('Schedule update failed', msg);
     }
-  };
-
-  const handleHeaderPauseOrToggle = (s: CronSchedule) => {
-    if (isCurrentRunRunning) {
-      void handleBulkTableAction('pause');
-      return;
-    }
-    handleToggleEnabled(s);
-  };
-
-  const handleRunNow = async (s: CronSchedule) => {
-    setTriggering(s.id);
-    try {
-      await axios.post(`/api/scheduler/${s.id}/run`);
-      await pollRuns();
-    } catch (err) {
-      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Failed to trigger') : 'Failed to trigger';
-      showError('Run failed', msg);
-    } finally { setTriggering(null); }
   };
 
   const handlePreflight = async (jobId: string, jobName: string) => {
@@ -359,7 +371,7 @@ export default function SchedulerPage() {
       setBulkTableAction(action);
       try {
         if (resumePausedRun) {
-          await axios.post('/api/migv2/run/control-tables', { runId: selectedHistoryRun.id, tableIds, action });
+          await axios.post('/api/migv2/run/control-tables', { jobId: selectedJob.id, runId: selectedHistoryRun.id, tableIds, action });
         } else if (selectedSchedule) {
           await axios.post(`/api/scheduler/${selectedSchedule.id}/run`);
         } else {
@@ -367,12 +379,12 @@ export default function SchedulerPage() {
         }
         await pollRuns();
       } catch (err) {
-        const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Run All failed') : 'Run All failed';
-        showError('Run All failed', msg);
+        const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Run job failed') : 'Run job failed';
+        showError('Run job failed', msg);
       } finally { setBulkTableAction(null); }
       return;
     }
-    if (!selectedHistoryRun) return;
+    if (!selectedJob || !selectedHistoryRun || selectedHistoryRun.jobId !== selectedJob.id) return;
     const tableIds = selectedHistoryTableStates
       .filter(table => action === 'pause'
         ? (table.status === 'running' || table.status === 'pending')
@@ -381,12 +393,22 @@ export default function SchedulerPage() {
     if (!tableIds.length) return;
     setBulkTableAction(action);
     try {
-      await axios.post('/api/migv2/run/control-tables', { runId: selectedHistoryRun.id, tableIds, action });
+      await axios.post('/api/migv2/run/control-tables', { jobId: selectedJob.id, runId: selectedHistoryRun.id, tableIds, action });
       await pollRuns();
     } catch (err) {
       const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? `${action} failed`) : `${action} failed`;
       showError(`Bulk ${action} failed`, msg);
     } finally { setBulkTableAction(null); }
+  };
+
+  const handleStopSelectedJob = () => {
+    if (!selectedJob || !selectedHistoryRun) return;
+    showConfirm({
+      title: `Stop ${selectedJob.name}?`,
+      description: `Only the active run for “${selectedJob.name}” will be stopped. Other migration jobs will continue running.`,
+      confirmLabel: 'Stop Job',
+      onConfirm: async () => { await handleBulkTableAction('stop'); },
+    });
   };
 
   const handleDelete = (s: CronSchedule) => {
@@ -460,24 +482,30 @@ export default function SchedulerPage() {
   return (
     <>
       <Head><title>Scheduler — DB Maintenance</title></Head>
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 pt-12">
+      <div className="bg-gray-50 dark:bg-slate-950">
 
         {/* Body */}
-        <div className="flex h-[calc(100vh-3rem)] overflow-hidden">
+        <div className="flex h-[calc(100vh-6rem)] overflow-hidden">
 
-          {/* Left — all jobs list */}
-          <div className="w-72 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
-            <div className="px-3 py-2 border-b border-gray-100 dark:border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 flex items-center justify-between">
-              <span>MIGRATION JOBS</span>
+          {/* Right — collapsible migration jobs list */}
+          <aside className={`${jobsPanelCollapsed ? 'w-10' : 'w-72'} order-2 shrink-0 border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden transition-[width] duration-200`}>
+            <div className={`${jobsPanelCollapsed ? 'justify-center px-1' : 'justify-between px-3'} flex items-center py-2 border-b border-gray-100 dark:border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500`}>
+              {!jobsPanelCollapsed && <span>MIGRATION JOBS</span>}
               <div className="flex items-center gap-2">
-                <span>{jobs.length}</span>
-                <button onClick={() => void loadAll()} title="Refresh"
+                {!jobsPanelCollapsed && <span>{jobs.length}</span>}
+                {!jobsPanelCollapsed && <button onClick={() => void loadAll()} title="Refresh migration jobs"
                   className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
                   <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-              </button>
+                </button>}
+                <button type="button" onClick={() => setJobsPanelCollapsed(value => !value)}
+                  title={jobsPanelCollapsed ? 'Expand migration jobs' : 'Collapse migration jobs'}
+                  aria-label={jobsPanelCollapsed ? 'Expand migration jobs' : 'Collapse migration jobs'}
+                  className="rounded p-0.5 text-slate-400 transition-colors hover:bg-gray-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+                  {jobsPanelCollapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+                </button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto">
+            {!jobsPanelCollapsed && <div className="flex-1 overflow-y-auto">
               {loading ? (
                 <div className="flex items-center justify-center h-32 gap-2 text-[13px] text-gray-400">
                   <Loader2 size={14} className="animate-spin" />Loading…
@@ -491,6 +519,7 @@ export default function SchedulerPage() {
               ) : jobs.map(job => {
                 const sched = schedules.find(s => s.jobId === job.id);
                 const isSelected = selectedId === job.id;
+                const isJobRunning = activeRunJobIds.has(job.id) || sched?.lastRunStatus === 'running';
                 const truncateCount = job.tables.filter(t => t.include && t.truncateBeforeMigrate).length;
                 return (
                   <div key={job.id}
@@ -501,6 +530,11 @@ export default function SchedulerPage() {
                       <span className={`text-[13px] font-medium truncate flex-1 ${isSelected ? 'text-violet-700 dark:text-violet-300' : 'text-gray-800 dark:text-slate-200'}`}>
                         {job.name}
                       </span>
+                      {isJobRunning && (
+                        <Tooltip content="Migration job is running" side="left">
+                          <Loader2 size={11} className="shrink-0 animate-spin text-violet-500" aria-label="Migration job running" />
+                        </Tooltip>
+                      )}
                       {truncateCount > 0 && (
                         <Tooltip content={`${truncateCount} included table mapping(s) have truncate enabled`} side="right">
                           <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
@@ -514,8 +548,7 @@ export default function SchedulerPage() {
                     {sched ? (
                       <>
                         <div className="flex items-center gap-1.5 mt-1 pl-0">
-                          <CircleDot size={9} className={sched.enabled ? 'text-violet-400 shrink-0' : 'text-gray-300 dark:text-slate-600 shrink-0'} />
-                          <Clock size={9} className="text-slate-400 shrink-0" />
+                          <Timer size={10} className={sched.enabled ? 'shrink-0 text-blue-500 dark:text-blue-400' : 'shrink-0 text-gray-300 dark:text-slate-600'} />
                           <span className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{describeCron(sched.cronExpr)}</span>
                         </div>
                         <div className="flex items-center gap-2 mt-0.5 pl-4">
@@ -538,11 +571,11 @@ export default function SchedulerPage() {
                   </div>
                 );
               })}
-            </div>
-          </div>
+            </div>}
+          </aside>
 
-          {/* Right — detail panel */}
-          <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-950">
+          {/* Main — selected job detail */}
+          <div className="order-1 flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-950">
             {!selectedJob ? (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-8">
                 <Calendar size={36} className="text-slate-300 dark:text-slate-700" />
@@ -553,13 +586,16 @@ export default function SchedulerPage() {
 
                 {/* Job + schedule header */}
                 <div className="bg-white dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-slate-800 p-4 space-y-3">
+                  <div className="-mx-4 -mt-4 flex items-center border-b border-gray-100 px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:border-slate-800 dark:text-slate-500">
+                    Selected Migration Job
+                  </div>
                   <div className="flex items-start gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[15px] font-semibold text-gray-800 dark:text-slate-100">{selectedJob.name}</span>
                         <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{selectedJob.tableCount} tables</span>
                         {selectedTruncateTables.length > 0 && (
-                          <Tooltip content={`${selectedTruncateTables.length} saved mapping(s) have truncate enabled. Run All ignores this; explicit truncate actions still truncate.`} side="bottom">
+                          <Tooltip content={`${selectedTruncateTables.length} saved mapping(s) have truncate enabled. Run Job ignores this; explicit truncate actions still truncate.`} side="bottom">
                             <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
                               <AlertTriangle size={10} />Truncate flags: {selectedTruncateTables.length}
                             </span>
@@ -581,19 +617,40 @@ export default function SchedulerPage() {
                         <p className="text-[12px] text-gray-400 dark:text-slate-500 italic mt-0.5">No schedule configured</p>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <Tooltip content="Export all scheduler runs and table-level logs to an Excel workbook" side="bottom">
-                        <a href={`/api/scheduler/export-logs?jobId=${encodeURIComponent(selectedJob.id)}`}
-                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-[12px] font-medium hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
-                          <FileSpreadsheet size={13} />Logs XLSX
-                        </a>
+                    <div className="flex max-w-[72%] shrink-0 flex-wrap items-center justify-end gap-1.5">
+                      <Tooltip content={primaryJobAction === 'pause' ? 'Pause this migration job only' : canResumePausedRun ? 'Resume pending or paused tables for this job only' : 'Start this migration job only'} side="bottom">
+                        <button type="button" onClick={() => void handleBulkTableAction(primaryJobAction)}
+                          disabled={primaryJobDisabled}
+                          className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-[11px] font-medium disabled:opacity-40 ${primaryJobAction === 'pause' ? 'border-amber-300 text-amber-600 hover:bg-amber-50 dark:border-amber-800 dark:hover:bg-amber-950/30' : 'border-emerald-300 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-800 dark:hover:bg-emerald-950/30'}`}>
+                          {bulkTableAction === primaryJobAction ? <Loader2 size={11} className="animate-spin" /> : primaryJobAction === 'pause' ? <Pause size={11} /> : <Play size={11} />}{primaryJobLabel}
+                        </button>
                       </Tooltip>
-                      <Tooltip content="Export the live migrated target schema as ORM-ready Markdown" side="bottom">
-                        <a href={`/api/scheduler/export-schema-md?jobId=${encodeURIComponent(selectedJob.id)}`}
-                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400 text-[12px] font-medium hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
-                          <FileText size={13} />Schema MD
-                        </a>
-                      </Tooltip>
+                      <button type="button" onClick={handleStopSelectedJob}
+                        disabled={!!bulkTableAction || !hasActiveJobRun}
+                        className="inline-flex items-center gap-1 rounded-md border border-rose-300 px-2.5 py-1.5 text-[11px] font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-35 dark:border-rose-800 dark:hover:bg-rose-950/30" title={hasActiveJobRun ? 'Stop the active run for this migration job only' : 'Stop is available only while this job has an active run'}>
+                        {bulkTableAction === 'stop' ? <Loader2 size={11} className="animate-spin" /> : <Square size={10} />}Stop Job
+                      </button>
+                      <div ref={exportMenuRef} className="relative">
+                        <button type="button" onClick={() => setShowExportMenu(value => !value)}
+                          aria-expanded={showExportMenu} aria-haspopup="menu"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-blue-300 px-2.5 py-1.5 text-[11px] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-950/30">
+                          <Download size={11} />Export<ChevronDown size={11} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+                        </button>
+                        {showExportMenu && (
+                          <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-44 overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                            <a role="menuitem" href={`/api/scheduler/export-logs?jobId=${encodeURIComponent(selectedJob.id)}`}
+                              onClick={() => setShowExportMenu(false)}
+                              className="flex items-center gap-2 px-3 py-2 text-[11px] text-gray-600 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800">
+                              <FileSpreadsheet size={12} className="text-emerald-500" />Logs XLSX
+                            </a>
+                            <a role="menuitem" href={`/api/scheduler/export-schema-md?jobId=${encodeURIComponent(selectedJob.id)}`}
+                              onClick={() => setShowExportMenu(false)}
+                              className="flex items-center gap-2 px-3 py-2 text-[11px] text-gray-600 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800">
+                              <FileText size={12} className="text-blue-500" />Schema Markdown
+                            </a>
+                          </div>
+                        )}
+                      </div>
                       <Tooltip content="Validate connectivity, row counts, type/FK issues and estimate duration before running" side="bottom">
                         <button onClick={() => void handlePreflight(selectedJob.id, selectedJob.name)}
                           className={`flex items-center gap-1.5 px-3 py-1.5 rounded border text-[12px] font-medium transition-colors ${preflightStatus?.ready ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300'}`}>
@@ -602,15 +659,9 @@ export default function SchedulerPage() {
                       </Tooltip>
                       {selectedSchedule ? (
                         <>
-                          <button onClick={() => void handleRunNow(selectedSchedule)}
-                            disabled={!!triggering || selectedSchedule.lastRunStatus === 'running' || !preflightStatus?.ready}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-violet-300 dark:border-violet-600 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 text-[12px] font-medium hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-40 transition-colors">
-                            {triggering === selectedSchedule.id ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-                            Run Now
-                          </button>
-                          <button onClick={() => handleHeaderPauseOrToggle(selectedSchedule)}
-                            disabled={(isCurrentRunRunning && !hasPausableTables) || (!selectedSchedule.enabled && !preflightStatus?.ready)}
-                            title={isCurrentRunRunning ? 'Pause current run' : selectedSchedule.enabled ? 'Disable schedule' : 'Enable schedule'}
+                          <button onClick={() => handleToggleEnabled(selectedSchedule)}
+                            disabled={!selectedSchedule.enabled && !preflightStatus?.ready}
+                            title={selectedSchedule.enabled ? 'Disable schedule' : 'Enable schedule'}
                             className="p-1.5 rounded border border-gray-200 dark:border-slate-700 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors">
                             {selectedSchedule.enabled ? <Pause size={13} /> : <Play size={13} />}
                           </button>
@@ -709,7 +760,7 @@ export default function SchedulerPage() {
                         </button>
                       </div>
                       <p className="mt-1 pl-5 text-[11px] text-slate-500 dark:text-slate-400">
-                        {selectedTruncateTables.length > 0 && 'Run All ignores saved truncate flags; explicit truncate/restart actions remain destructive. '}
+                        {selectedTruncateTables.length > 0 && 'Run Job ignores saved truncate flags; explicit truncate/restart actions remain destructive. '}
                         {incTables.length > 0 && (missingWatermark.length > 0
                           ? `${missingWatermark.length} incremental table${missingWatermark.length !== 1 ? 's' : ''} still need a tracking column before incremental sync can run correctly.`
                           : `Incremental runs continue from the last successfully synced position${withWatermark.length > 0 ? ` (${withWatermark.length} table${withWatermark.length !== 1 ? 's' : ''} have a saved position).` : ' once the first run is completed.'}`)}
@@ -748,23 +799,6 @@ export default function SchedulerPage() {
                       <input value={tableSearch} onChange={e => setTableSearch(e.target.value)} placeholder="Search tables…"
                         className="w-full rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-[11px] text-gray-700 outline-none focus:border-violet-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" />
                     </div>
-                    <Tooltip content={canResumePausedRun ? 'Resume all pending or paused tables in the current run' : selectedSchedule ? 'Create a new audited run and process included table chunks sequentially' : 'Create a manual audited run for this unscheduled job'} side="bottom">
-                      <button type="button" onClick={() => void handleBulkTableAction('run')}
-                        disabled={!!bulkTableAction || !selectedJob || isCurrentRunRunning || (!canResumePausedRun && !preflightStatus?.ready) || ((selectedHistoryRun?.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') && !canResumePausedRun)}
-                        className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 dark:border-emerald-800 dark:hover:bg-emerald-950/30">
-                        {bulkTableAction === 'run' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}{runAllLabel}
-                      </button>
-                    </Tooltip>
-                    <button type="button" onClick={() => void handleBulkTableAction('pause')}
-                      disabled={!!bulkTableAction || !selectedHistoryTableStates.some(t => t.status === 'running' || t.status === 'pending')}
-                      className="inline-flex items-center gap-1 rounded-md border border-amber-300 px-2 py-1.5 text-[11px] font-medium text-amber-600 hover:bg-amber-50 disabled:opacity-40 dark:border-amber-800 dark:hover:bg-amber-950/30" title="Pause all currently running tables">
-                      {bulkTableAction === 'pause' ? <Loader2 size={11} className="animate-spin" /> : <Pause size={11} />}Pause All
-                    </button>
-                    <button type="button" onClick={() => void handleBulkTableAction('stop')}
-                      disabled={!!bulkTableAction || !selectedHistoryTableStates.some(t => t.status === 'running' || t.status === 'pending' || t.status === 'paused')}
-                      className="inline-flex items-center gap-1 rounded-md border border-rose-300 px-2 py-1.5 text-[11px] font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-800 dark:hover:bg-rose-950/30" title="Stop all currently running tables">
-                      {bulkTableAction === 'stop' ? <Loader2 size={11} className="animate-spin" /> : <Square size={10} />}Stop All
-                    </button>
                     <div className="relative">
                       <button type="button" onClick={() => setShowStatusFilter(v => !v)} title="Filter table status"
                         className={`rounded-md border p-1.5 ${tableStatusFilter !== 'all' ? 'border-violet-400 text-violet-500' : 'border-gray-200 text-slate-400 dark:border-slate-700'}`}>
@@ -805,7 +839,7 @@ export default function SchedulerPage() {
                   </div>
                   {selectedRuns.length === 0 ? (
                     <div className="flex items-center justify-center py-10 text-[13px] text-gray-400 dark:text-slate-500 italic">
-                      {selectedSchedule ? 'No runs yet — click "Run Now" or wait for the cron schedule.' : 'Add a schedule to start running this job.'}
+                      {selectedSchedule ? 'No runs yet — click "Run Job" or wait for the cron schedule.' : 'Click "Run Job" to start this unscheduled job.'}
                     </div>
                   ) : selectedRuns.filter(run => run.id === selectedHistoryRun?.id).map(run => {
                     const totalRows = run.tableStates.reduce((s, ts) => s + ts.rowsMigrated + ts.rowsSkipped, 0);

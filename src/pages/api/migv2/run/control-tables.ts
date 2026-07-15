@@ -12,9 +12,9 @@ type BulkAction = 'run' | 'pause' | 'stop';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
   if (!requireSchedulerMutationAuth(req, res)) return;
-  const { runId, tableIds, action } = req.body as { runId?: string; tableIds?: string[]; action?: BulkAction };
-  if (!runId || !Array.isArray(tableIds) || !tableIds.length || !action) {
-    return res.status(400).json({ error: 'runId, tableIds and action are required' });
+  const { jobId, runId, tableIds, action } = req.body as { jobId?: string; runId?: string; tableIds?: string[]; action?: BulkAction };
+  if (!jobId || !runId || !Array.isArray(tableIds) || !tableIds.length || !action) {
+    return res.status(400).json({ error: 'jobId, runId, tableIds and action are required' });
   }
 
   const release = await acquireRunLock(runId);
@@ -23,6 +23,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const run = loadRun(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
   if (!run.jobId) return res.status(400).json({ error: 'Run has no job' });
+  if (run.jobId !== jobId) return res.status(409).json({ error: 'The selected run does not belong to this migration job.' });
   const job = loadJob(run.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found' });
 

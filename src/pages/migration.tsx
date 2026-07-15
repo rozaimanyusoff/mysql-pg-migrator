@@ -10,7 +10,7 @@ import {
   Database, Download, FileCode, FileText, Layers, Loader2,
   Pause, Pencil, Play, Plus, Undo2, Save, Search, Sparkles, Square,
   Table2, Terminal, Trash2, X, AlertTriangle, CheckCircle2, Clock, Eye, RotateCcw,
-  Calendar, Info, Upload,
+  Calendar, Info, Timer, Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
@@ -237,6 +237,7 @@ export default function Migration() {
   // ── Jobs ──────────────────────────────────────────────────────────────────────
   const [jobs, setJobs] = useState<MigJobSummary[]>([]);
   const [schedules, setSchedules] = useState<CronSchedule[]>([]);
+  const [activeRunJobIds, setActiveRunJobIds] = useState<Set<string>>(new Set());
   const [unmappingScheduleId, setUnmappingScheduleId] = useState<string | null>(null);
   const [importingJob, setImportingJob] = useState(false);
   const importJobInputRef = useRef<HTMLInputElement>(null);
@@ -850,6 +851,16 @@ export default function Migration() {
       setSchedules(data.schedules);
     } catch { /* ignore */ }
   };
+  const loadActiveRunJobs = async () => {
+    try {
+      const { data } = await axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { compact: 1, limit: 100 } });
+      setActiveRunJobIds(new Set(
+        data.runs
+          .filter(run => (run.status === 'running' || run.status === 'pending') && run.jobId)
+          .map(run => run.jobId as string)
+      ));
+    } catch { /* ignore */ }
+  };
   const loadTableRefs = async () => {
     try {
       const { data } = await axios.get<{ refs: { targetKey: string; sourceKey: string }[] }>(
@@ -864,11 +875,16 @@ export default function Migration() {
     void loadJobs();
     void loadTableRefs();
     void loadSchedules();
+    void loadActiveRunJobs();
 
-    // Scheduled jobs can start outside this page (cron or the Scheduler module),
-    // so keep card indicators current even when no migration was started here.
-    const interval = window.setInterval(() => void loadSchedules(), 3000);
-    const refreshOnFocus = () => void loadSchedules();
+    // Jobs can start outside this page (cron or the Scheduler module), so keep
+    // both schedule and live-run indicators current while Migration is open.
+    const refreshJobIndicators = () => {
+      void loadSchedules();
+      void loadActiveRunJobs();
+    };
+    const interval = window.setInterval(refreshJobIndicators, 3000);
+    const refreshOnFocus = () => refreshJobIndicators();
     window.addEventListener('focus', refreshOnFocus);
     return () => {
       window.clearInterval(interval);
@@ -3383,11 +3399,11 @@ export default function Migration() {
           </div>{/* end main workspace wrapper */}
 
           {/* ── JOBS PANEL (collapsible) ────────────────────────────────── */}
-          <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${jobsOpen ? 'w-96' : 'w-9'}`}>
+          <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${jobsOpen ? 'w-80' : 'w-9'}`}>
             <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
               {jobsOpen && <Save size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />}
               {jobsOpen && (
-                <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">Saved Jobs</span>
+                <span className="flex-1 truncate text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Migration Jobs</span>
               )}
               {jobsOpen && jobs.length > 0 && (
                 <span className="text-[12px] text-gray-400 shrink-0">{jobs.length}</span>
@@ -3437,7 +3453,7 @@ export default function Migration() {
             </div>
 
             {jobsOpen ? (
-              <div className="flex-1 overflow-auto panel-scroll p-2 space-y-1.5">
+              <div className="flex-1 overflow-auto panel-scroll">
                 {jobs.length === 0 ? (
                   <div className="py-8 text-center">
                     <Save size={24} className="mx-auto text-slate-400 dark:text-slate-500 mb-2" />
@@ -3445,12 +3461,12 @@ export default function Migration() {
                   </div>
                 ) : jobs.map(job => {
                   const schedule = scheduleByJobId.get(job.id);
-                  const isScheduledRunActive = schedule?.lastRunStatus === 'running';
+                  const isJobRunning = activeRunJobIds.has(job.id) || (polling && activeJobId === job.id) || schedule?.lastRunStatus === 'running';
                   const isUnmapping = schedule?.id === unmappingScheduleId;
                   return (
                   <div key={job.id}
-                    className={`rounded-lg border p-2 transition-colors ${activeJobId === job.id ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'}`}>
-                    <div className="flex items-start gap-1 mb-0.5">
+                    className={`border-b border-gray-100 px-3 py-2.5 transition-colors dark:border-slate-800/70 ${activeJobId === job.id ? 'bg-violet-50 dark:bg-violet-950/25' : 'hover:bg-gray-50 dark:hover:bg-slate-800/30'}`}>
+                    <div className="mb-1 flex items-center gap-2">
                       {renamingJobId === job.id ? (
                         <input
                           autoFocus
@@ -3463,7 +3479,7 @@ export default function Migration() {
                           className="flex-1 text-[13px] font-medium bg-white dark:bg-slate-700 border border-blue-400 rounded px-1 py-0.5 text-gray-800 dark:text-slate-200 outline-none"
                         />
                       ) : (
-                        <p className="text-[13px] font-medium text-gray-800 dark:text-slate-200 flex-1 truncate">{job.name}</p>
+                        <p className={`flex-1 truncate text-[13px] font-semibold ${activeJobId === job.id ? 'text-violet-700 dark:text-violet-300' : 'text-gray-800 dark:text-slate-200'}`}>{job.name}</p>
                       )}
                       {renamingJobId === job.id ? (
                         <div className="flex items-center gap-0.5 shrink-0">
@@ -3477,51 +3493,64 @@ export default function Migration() {
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-0.5 shrink-0">
-                          {schedule && (
-                            <Tooltip
-                              content={`${schedule.enabled ? 'Scheduled' : 'Schedule disabled'}: ${schedule.cronExpr}. Click to unassign from Scheduler.`}
-                              side="top"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => handleUnmapSchedule(schedule)}
-                                disabled={isUnmapping}
-                                aria-label={`Unassign ${job.name} from Scheduler`}
-                                className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 transition-colors disabled:opacity-50 ${isScheduledRunActive ? 'bg-violet-50 text-violet-600 hover:bg-violet-100 dark:bg-violet-950/40 dark:text-violet-400' : schedule.enabled ? 'text-blue-500 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/30' : 'text-gray-400 hover:bg-gray-100 dark:text-slate-500 dark:hover:bg-slate-700'}`}
-                              >
-                                <Calendar size={12} />
-                                {isScheduledRunActive && <Loader2 size={11} className="animate-spin" aria-label="Scheduled job running" />}
-                              </button>
+                        <>
+                          {isJobRunning && (
+                            <Tooltip content="Migration job is running" side="top">
+                              <Loader2 size={12} className="shrink-0 animate-spin text-violet-500" aria-label="Migration job running" />
                             </Tooltip>
                           )}
-                          <Tooltip content="Rename job" side="top">
-                            <button onClick={() => { setRenamingJobId(job.id); setRenameJobVal(job.name); }}
-                              className="p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
-                              <Pencil size={12} />
-                            </button>
-                          </Tooltip>
-                          <Tooltip content="Delete job" side="top">
-                            <button onClick={() => handleDeleteJob(job.id, job.name)}
-                              className="p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
-                              <Trash2 size={12} />
-                            </button>
-                          </Tooltip>
-                        </div>
+                          <span className="shrink-0 text-[11px] text-gray-400 dark:text-slate-500">{job.tableCount} tables</span>
+                          <button
+                            onClick={() => setExpandedJobId(expandedJobId === job.id ? null : job.id)}
+                            title={expandedJobId === job.id ? 'Collapse job details' : 'Expand job details'}
+                            className="rounded p-0.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-slate-300"
+                          >
+                            {expandedJobId === job.id ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                          </button>
+                        </>
                       )}
                     </div>
-                    {job.description && (
-                      <p className="text-[12px] text-gray-400 dark:text-slate-500 truncate mb-1">{job.description}</p>
-                    )}
-                    <div className="flex items-center gap-1 mb-1.5">
-                      <p className="text-[12px] text-gray-400 flex-1">{job.tableCount} tables · {new Date(job.updatedAt).toLocaleDateString()}</p>
-                      <button
-                        onClick={() => setExpandedJobId(expandedJobId === job.id ? null : job.id)}
-                        className="flex items-center gap-0.5 text-[12px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
-                      >
-                        {expandedJobId === job.id ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                      </button>
+                    <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
+                      {schedule ? (
+                        <Tooltip content={`${schedule.enabled ? 'Scheduled' : 'Schedule disabled'}: ${schedule.cronExpr}. Click to unassign from Scheduler.`} side="top">
+                          <button
+                            type="button"
+                            onClick={() => handleUnmapSchedule(schedule)}
+                            disabled={isUnmapping}
+                            aria-label={`Unassign ${job.name} from Scheduler`}
+                            className={`inline-flex min-w-0 items-center gap-1 text-[11px] transition-colors disabled:opacity-50 ${schedule.enabled ? 'text-blue-500 hover:text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-slate-500'}`}
+                          >
+                            {isUnmapping ? <Loader2 size={11} className="shrink-0 animate-spin" /> : <Timer size={11} className="shrink-0" />}
+                            <span className="truncate font-mono">{schedule.cronExpr}</span>
+                          </button>
+                        </Tooltip>
+                      ) : (
+                        <>
+                          <span className="text-[11px] italic text-gray-300 dark:text-slate-600">not scheduled</span>
+                          <button type="button" onClick={() => void router.push(`/scheduler?highlight=${encodeURIComponent(job.id)}`)}
+                            className="text-[11px] text-violet-500 transition-colors hover:text-violet-600 hover:underline dark:text-violet-400">
+                            + Add schedule
+                          </button>
+                        </>
+                      )}
+                      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                        <Tooltip content="Rename job" side="top">
+                          <button onClick={() => { setRenamingJobId(job.id); setRenameJobVal(job.name); }}
+                            className="rounded p-0.5 text-gray-300 transition-colors hover:bg-blue-50 hover:text-blue-500 dark:text-slate-600 dark:hover:bg-blue-950/30">
+                            <Pencil size={12} />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="Delete job" side="top">
+                          <button onClick={() => handleDeleteJob(job.id, job.name)}
+                            className="rounded p-0.5 text-gray-300 transition-colors hover:bg-rose-50 hover:text-rose-500 dark:text-slate-600 dark:hover:bg-rose-950/30">
+                            <Trash2 size={12} />
+                          </button>
+                        </Tooltip>
+                      </div>
                     </div>
+                    {expandedJobId === job.id && job.description && (
+                      <p className="mb-1.5 truncate text-[11px] text-gray-400 dark:text-slate-500">{job.description}</p>
+                    )}
                     {expandedJobId === job.id && (
                       <div className="mb-1.5 border border-gray-100 dark:border-slate-700 rounded overflow-hidden">
                         {job.tables.length === 0 ? (
