@@ -9,10 +9,14 @@ import { buildWhere } from '../src/lib/migv2/cursor-query.ts';
 import { prepareRunTables } from '../src/lib/migv2/run-tables.ts';
 import { runSequentially } from '../src/lib/migv2/sequential-executor.ts';
 import { saveJob } from '../src/lib/migv2/job-store.ts';
+import { createPortableJob, parsePortableJob } from '../src/lib/migv2/job-portability.ts';
+import { getPreflightStatus, savePreflightRecord } from '../src/lib/migv2/preflight-store.ts';
+import type { PreflightReport } from '../src/lib/migv2/preflight.ts';
 import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
 
 const runFiles: string[] = [];
 const jobFiles: string[] = [];
+const preflightFiles: string[] = [];
 
 function makeRun(id: string, jobId: string): MigRun {
   return {
@@ -30,6 +34,9 @@ test.after(() => {
     try { fs.unlinkSync(`${file}.lock`); } catch { /* cleaned */ }
   }
   for (const file of jobFiles) {
+    try { fs.unlinkSync(file); } catch { /* cleaned */ }
+  }
+  for (const file of preflightFiles) {
     try { fs.unlinkSync(file); } catch { /* cleaned */ }
   }
 });
@@ -148,4 +155,64 @@ test('saving incremental jobs clears truncate-before-migrate conflicts', () => {
     tables: [table],
   };
   assert.equal(saveJob(job).tables[0].truncateBeforeMigrate, false);
+});
+
+test('portable saved jobs round-trip mappings without carrying credentials', () => {
+  const job: MigJob = {
+    id: 'portable-job',
+    name: 'Portable migration',
+    description: 'Move this setup to another computer',
+    version: 3,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    sourceMeta: { type: 'mysql', host: 'source.local', port: 3306, database: 'source', username: 'operator' },
+    targetMeta: { type: 'postgresql', host: 'target.local', port: 5432, database: 'target', username: 'operator' },
+    tables: [{
+      id: 'table-1', include: true,
+      source: { schema: 'legacy', table: 'items' },
+      target: { schema: 'public', table: 'items' },
+      columns: [], truncateBeforeMigrate: false,
+      syncMode: 'incremental', incrementalCol: 'updated_at', lastSyncedValue: '2026-01-01',
+    }],
+    filterCol: 'created_at', filterFrom: '2025-01-01', filterTo: null,
+  };
+  const payload = JSON.parse(JSON.stringify(createPortableJob(job))) as {
+    job: { sourceMeta: Record<string, unknown>; targetMeta: Record<string, unknown> };
+  };
+  payload.job.sourceMeta.password = 'must-not-be-imported';
+  payload.job.targetMeta.password = 'must-not-be-imported';
+
+  const imported = parsePortableJob(payload);
+  assert.equal(imported.name, job.name);
+  assert.deepEqual(imported.tables, job.tables);
+  assert.equal(imported.filterFrom, '2025-01-01');
+  assert.equal('password' in imported.sourceMeta, false);
+  assert.equal('password' in imported.targetMeta, false);
+});
+
+test('portable saved-job import rejects unrelated JSON', () => {
+  assert.throws(
+    () => parsePortableJob({ format: 'some-other-app', formatVersion: 1, job: {} }),
+    /not a DB Migration saved-job export/,
+  );
+});
+
+test('pre-flight approval is tied to the exact saved-job version', () => {
+  const id = `test-${randomUUID()}`;
+  preflightFiles.push(path.join(process.cwd(), 'data', 'migv2', 'preflight', `${id}.json`));
+  const job: MigJob = {
+    id, name: 'Pre-flight job', description: '', version: 4,
+    createdAt: '2026-07-15T00:00:00.000Z', updatedAt: '2026-07-15T00:00:00.000Z',
+    sourceMeta: { type: 'mysql', host: 'source', port: 3306, database: 'source', username: 'test' },
+    targetMeta: { type: 'postgresql', host: 'target', port: 5432, database: 'target', username: 'test' },
+    tables: [],
+  };
+  savePreflightRecord(job, { ok: true } as PreflightReport);
+  assert.equal(getPreflightStatus(job).ready, true);
+  assert.deepEqual(getPreflightStatus({ ...job, version: 5 }), {
+    ready: false,
+    reason: 'job_changed',
+    completedAt: getPreflightStatus(job).completedAt,
+    expiresAt: getPreflightStatus(job).expiresAt,
+  });
 });

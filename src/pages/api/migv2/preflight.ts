@@ -2,11 +2,19 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { loadJob } from '../../../lib/migv2/job-store';
 import { resolveJobConns } from '../../../lib/migv2/resolve-conns';
 import { runPreflight } from '../../../lib/migv2/preflight';
+import { getPreflightStatus, savePreflightRecord } from '../../../lib/migv2/preflight-store';
 
 // POST { jobId } → PreflightReport
 // Validates a saved job before a (potentially long) run: connectivity, real
 // source row counts, target-table existence, type/FK sanity, and a duration ETA.
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'GET') {
+    const jobId = typeof req.query.jobId === 'string' ? req.query.jobId : '';
+    if (!jobId) return res.status(400).json({ error: 'jobId is required' });
+    const job = loadJob(jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    return res.status(200).json({ status: getPreflightStatus(job) });
+  }
   if (req.method !== 'POST') return res.status(405).end();
 
   const { jobId } = req.body as { jobId?: string };
@@ -18,7 +26,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const { source, target } = await resolveJobConns(job);
     const report = await runPreflight(job, source, target);
-    return res.status(200).json({ report });
+    const record = savePreflightRecord(job, report);
+    return res.status(200).json({ report, status: getPreflightStatus(job), expiresAt: record.expiresAt });
   } catch (err) {
     return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

@@ -1,9 +1,10 @@
 import { Client as PgClient } from 'pg';
 import mysql from 'mysql2/promise';
 import type { MigConn, MigJob, TableMap, ColumnMap } from './types';
+import { inspectServerCapabilities, type TransferCapabilityReport } from './server-capabilities';
 
 // Conservative throughput assumption for ETA (rows/sec written, single-threaded).
-// Real runner does ~500-row chunks with per-row INSERT; 2000 rows/s is a safe lower bound.
+// Temporary fallback until capability-based write benchmarking is available.
 const ASSUMED_ROWS_PER_SEC = 2000;
 
 export interface PreflightIssue {
@@ -28,6 +29,7 @@ export interface PreflightReport {
   estimatedSeconds: number;
   source: { reachable: boolean; error?: string };
   target: { reachable: boolean; error?: string };
+  capabilities: TransferCapabilityReport;
   globalIssues: PreflightIssue[];
   tables: PreflightTableCheck[];
 }
@@ -195,7 +197,7 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
   for (const tm of included) {
     const issues = staticColumnIssues(tm);
     if (tm.syncMode === 'incremental' && !tm.incrementalCol) {
-      issues.push({ level: 'error', message: 'Incremental sync requires a watermark column.' });
+      issues.push({ level: 'error', message: 'Incremental sync requires a tracking column to identify new data.' });
     }
     if (tm.syncMode === 'incremental' && tm.truncateBeforeMigrate) {
       issues.push({ level: 'warning', message: 'Incremental sync conflicts with truncate-before-migrate. Truncate is ignored for scheduled/manual sync runs and should be disabled in the mapping.' });
@@ -249,6 +251,9 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
   if (!tgtPing.reachable) globalIssues.push({ level: 'error', message: `Target unreachable: ${tgtPing.error ?? 'unknown error'}` });
 
   const hasError = globalIssues.some(i => i.level === 'error') || tables.some(t => t.issues.some(i => i.level === 'error'));
+  const capabilities = await inspectServerCapabilities(job, source, target);
+  if (capabilities.source.error) globalIssues.push({ level: 'warning', message: `Source capability check incomplete: ${capabilities.source.error}` });
+  if (capabilities.target.error) globalIssues.push({ level: 'warning', message: `Target capability check incomplete: ${capabilities.target.error}` });
 
   return {
     ok: !hasError,
@@ -258,6 +263,7 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
     estimatedSeconds: Math.ceil(totalRows / ASSUMED_ROWS_PER_SEC),
     source: srcPing,
     target: tgtPing,
+    capabilities,
     globalIssues,
     tables,
   };

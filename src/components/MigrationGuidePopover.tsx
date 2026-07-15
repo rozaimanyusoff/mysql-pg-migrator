@@ -9,7 +9,7 @@ const MIGRATION_GUIDE_SECTIONS = [
     body: [
       'This module maps and migrates tables between any two databases (MySQL → PostgreSQL or reverse). It auto-creates the target database, schema, and table if they do not exist.',
       'Serial/auto-increment primary keys are converted to deterministic UUIDs. The original integer is preserved in a separate BIGINT column (e.g. old_id) so parent-table FK references stay intact.',
-      'Migration runs in chunks of 500 rows. Each run can be rolled back by deleting inserted PKs, or by TRUNCATE if more than 5,000 rows were inserted.',
+      'Migration runs in chunks of 1,000 rows. Each run can be rolled back by deleting inserted PKs, or by TRUNCATE if more than 5,000 rows were inserted.',
     ],
   },
   {
@@ -73,7 +73,7 @@ const MIGRATION_GUIDE_SECTIONS = [
     color: 'text-rose-600 dark:text-rose-400',
     body: [
       'Click Run All to start. The run console appears at the bottom showing per-table progress, row counts, and logs.',
-      'The runner processes tables sequentially in chunks of 500 rows. INSERT ON CONFLICT DO NOTHING prevents duplicate row errors on re-runs.',
+      'The runner processes tables sequentially in chunks of 1,000 rows. INSERT ON CONFLICT DO NOTHING prevents duplicate row errors on re-runs.',
       'Rollback — deletes inserted rows by their PK list (tracked up to 5,000 rows). If more than 5,000 rows were inserted, rollback falls back to TRUNCATE CASCADE. The rollback SQL is included in the Export MD report.',
       'After a completed run the target table list refreshes automatically and migrated source tables are marked with strikethrough.',
     ],
@@ -84,11 +84,11 @@ const MIGRATION_GUIDE_SECTIONS = [
     color: 'text-cyan-600 dark:text-cyan-400',
     body: [
       'Incremental sync lets you keep the target in sync with the source while your app is still running on the old DB — so the final cutover window is seconds, not hours.',
-      'Enable it per-table: click the ⟳ Full toggle on any table row to switch to ⟳ Incremental. Pick a watermark column (e.g. id or updated_at) and a strategy — "by ID" for append-only tables, "by Timestamp" for tables with an updated_at column (uses UPSERT instead of INSERT).',
+      'Enable it per-table: click the ⟳ Full toggle on any table row to switch to ⟳ Incremental. Pick a tracking column (e.g. id or updated_at) so the app can identify new data, then choose "by ID" for append-only tables or "by Timestamp" for tables that can be updated.',
       'Phase 1 — Full migration: run a normal full migration to copy all existing rows to the target. Save the job once done.',
-      'Phase 2 — Delta syncs: with Incremental mode on, every subsequent run only fetches rows WHERE watermark_col > last_synced_value. The watermark advances automatically after each run. Repeat this as often as needed while the source DB is live.',
+      'Phase 2 — Update syncs: with Incremental mode on, each later run only fetches data added or changed after the last successful sync. The saved sync position updates automatically after every run.',
       'Phase 3 — Cutover: stop writes to the source (put app in maintenance mode or pause writes), run one final incremental sync to capture the last few rows, verify row counts match, then switch the app connection to PostgreSQL.',
-      'Reset watermark — click the ✕ next to the watermark value to force a full re-sync on the next run. Use this if rows were updated retroactively and the timestamp strategy may have missed them.',
+      'Clear the last synced position — click the ✕ next to the saved value to sync all rows again on the next run. Use this if older rows were changed and may have been missed.',
       'Strategy choice — use "by ID" when rows are only ever inserted (never updated). Use "by Timestamp" when rows can be updated after insert; this will UPSERT on conflict using the target PK.',
     ],
   },
@@ -102,7 +102,7 @@ const MIGRATION_GUIDE_SECTIONS = [
       'Install dependencies (once): pip install psycopg2-binary mysql-connector-python',
       'Run — supply passwords via env vars to avoid interactive prompts: SRC_PASSWORD=... TGT_PASSWORD=... python3 migrate_myjob.py',
       '--batch START-END — process only a slice of tables (1-based). Split a 1000-table job into manageable runs: --batch 1-100, then --batch 101-200, etc. Each batch runs independently and can be parallelised across machines.',
-      '--chunk-size N — rows per INSERT batch. Default is 500 (same as the web runner). Raise to 1000–5000 for CLI runs on fast networks to improve throughput.',
+      '--chunk-size N — rows processed per cycle. Default is 1,000 (same as the web runner). Use the Pre-flight capability report before selecting a larger value.',
       '--dry-run — counts source rows and applies all transforms but writes nothing to the target. Use to verify connectivity and estimate run time before committing.',
       '--reset — ignores the saved state file and restarts all tables from offset 0.',
       'Resume — after every chunk, progress is written to <jobId>_state.json. If the script is interrupted, re-running it skips completed tables and resumes from the last saved offset. Keep this file alongside the script.',

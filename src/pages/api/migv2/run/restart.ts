@@ -8,6 +8,7 @@ import { driveRun } from '../../../../lib/migv2/run-driver';
 import { prepareRunTables } from '../../../../lib/migv2/run-tables';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
+import { getPreflightStatus, preflightRequiredMessage } from '../../../../lib/migv2/preflight-store';
 
 // POST { runId, truncate? } — restart a run from offset 0 for all tables.
 // Creates a new run ID (original run is preserved for audit).
@@ -28,6 +29,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const job = loadJob(sourceRun.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found — cannot resolve connections' });
+  const preflightStatus = getPreflightStatus(job);
+  if (!preflightStatus.ready) return res.status(428).json({ error: preflightRequiredMessage(preflightStatus), preflightRequired: true });
 
   let conns;
   try {

@@ -142,7 +142,7 @@ function buildJobMd(job: ReturnType<typeof loadJob>, schema: TargetSchema | null
     if (map.skipNullViolations) flags.push('Skip NULL violations (DROP NOT NULL → restore)');
     if (flags.length) lines.push(`> ⚠ ${flags.join(' · ')}`);
     if (map.syncMode === 'incremental') {
-      lines.push(`> ⟳ Incremental — ${map.incrementalStrategy ?? 'id'} on \`${map.incrementalCol ?? '—'}\`${map.lastSyncedValue ? ` · last synced: \`${map.lastSyncedValue}\`` : ''}`);
+      lines.push(`> ⟳ Incremental — ${map.incrementalStrategy ?? 'id'} using \`${map.incrementalCol ?? '—'}\`${map.lastSyncedValue ? ` · data last synced through: \`${map.lastSyncedValue}\`` : ''}`);
     }
     lines.push('');
 

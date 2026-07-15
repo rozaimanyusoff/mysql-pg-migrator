@@ -6,7 +6,7 @@ import { suggestTargetType } from './type-map';
 import { runSequentially } from './sequential-executor';
 import { buildWhere, cursorValue, type IncrementalFilter, type RangeFilter } from './cursor-query';
 
-const CHUNK_SIZE = 500;
+const CHUNK_SIZE = 1_000;
 const MAX_ADVANCE_MS = 8_000;
 const MAX_ROLLBACK_PKS = 5_000;
 
@@ -792,7 +792,7 @@ export async function advanceRun(
           const lastRow = chunk[chunk.length - 1];
           ts.newWatermark = cursorValue(lastRow[tableMap.incrementalCol]);
           ts.newWatermarkPk = useCompositeCursor && sourcePkCol ? cursorValue(lastRow[sourcePkCol]) : null;
-          if (ts.newWatermark) log(`[${ts.sourceKey}] watermark updated → ${ts.newWatermark}${ts.newWatermarkPk ? ` / PK ${ts.newWatermarkPk}` : ''}`);
+          if (ts.newWatermark) log(`[${ts.sourceKey}] last synced position updated → ${ts.newWatermark}${ts.newWatermarkPk ? ` / PK ${ts.newWatermarkPk}` : ''}`);
         }
       } else {
         ts.hasMore = true;

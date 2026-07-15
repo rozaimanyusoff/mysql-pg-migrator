@@ -7,10 +7,10 @@ import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
   ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
-  Database, FileCode, FileText, Layers, Loader2,
+  Database, Download, FileCode, FileText, Layers, Loader2,
   Pause, Pencil, Play, Plus, Undo2, Save, Search, Sparkles, Square,
   Table2, Terminal, Trash2, X, AlertTriangle, CheckCircle2, Clock, Eye, RotateCcw,
-  Calendar, Info,
+  Calendar, Info, Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
@@ -18,7 +18,7 @@ import { Tooltip } from '../components/Tooltip';
 import { useAlert } from '../lib/alert-context';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { suggestTargetType, isPkLikeSerial } from '../lib/migv2/type-map';
-import type { MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigJobTableSummary, MigRun, MigRunTableState, IdConversion } from '../lib/migv2/types';
+import type { CronSchedule, MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigJobTableSummary, MigRun, MigRunTableState, IdConversion } from '../lib/migv2/types';
 import type { DiagnoseResult } from './api/ai/diagnose';
 import type { MigTableInfo } from './api/migv2/tables';
 import type { MigColumnInfo } from './api/migv2/columns';
@@ -236,6 +236,10 @@ export default function Migration() {
 
   // ── Jobs ──────────────────────────────────────────────────────────────────────
   const [jobs, setJobs] = useState<MigJobSummary[]>([]);
+  const [schedules, setSchedules] = useState<CronSchedule[]>([]);
+  const [unmappingScheduleId, setUnmappingScheduleId] = useState<string | null>(null);
+  const [importingJob, setImportingJob] = useState(false);
+  const importJobInputRef = useRef<HTMLInputElement>(null);
   const [tgtToSrcRef, setTgtToSrcRef] = useState<Record<string, string>>({});
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [saveJobName, setSaveJobName] = useState('');
@@ -840,6 +844,12 @@ export default function Migration() {
       setJobs(data.jobs);
     } catch { /* ignore */ }
   };
+  const loadSchedules = async () => {
+    try {
+      const { data } = await axios.get<{ schedules: CronSchedule[] }>('/api/scheduler');
+      setSchedules(data.schedules);
+    } catch { /* ignore */ }
+  };
   const loadTableRefs = async () => {
     try {
       const { data } = await axios.get<{ refs: { targetKey: string; sourceKey: string }[] }>(
@@ -850,7 +860,50 @@ export default function Migration() {
       setTgtToSrcRef(map);
     } catch { /* ignore */ }
   };
-  useEffect(() => { void loadJobs(); void loadTableRefs(); }, []);
+  useEffect(() => {
+    void loadJobs();
+    void loadTableRefs();
+    void loadSchedules();
+
+    // Scheduled jobs can start outside this page (cron or the Scheduler module),
+    // so keep card indicators current even when no migration was started here.
+    const interval = window.setInterval(() => void loadSchedules(), 3000);
+    const refreshOnFocus = () => void loadSchedules();
+    window.addEventListener('focus', refreshOnFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshOnFocus);
+    };
+  }, []);
+
+  const scheduleByJobId = useMemo(() => {
+    const result = new Map<string, CronSchedule>();
+    for (const schedule of schedules) result.set(schedule.jobId, schedule);
+    return result;
+  }, [schedules]);
+
+  const handleUnmapSchedule = (schedule: CronSchedule) => {
+    showConfirm({
+      title: 'Unassign from Scheduler?',
+      description: `The schedule "${schedule.cronExpr}" will be removed from "${schedule.jobName}". The saved migration job and its run history will not be deleted.`,
+      confirmLabel: 'Unassign',
+      onConfirm: async () => {
+        setUnmappingScheduleId(schedule.id);
+        try {
+          await axios.delete(`/api/scheduler/${schedule.id}`);
+          setSchedules(prev => prev.filter(item => item.id !== schedule.id));
+          toast.success(`"${schedule.jobName}" unassigned from Scheduler.`);
+        } catch (err) {
+          const message = axios.isAxiosError(err)
+            ? (err.response?.data?.error ?? 'Could not remove the schedule.')
+            : 'Could not remove the schedule.';
+          showError('Unassign failed', message);
+        } finally {
+          setUnmappingScheduleId(null);
+        }
+      },
+    });
+  };
 
   // Persist accumulated pending states to localStorage whenever they change.
   // This lets multiple runs accumulate across page reloads and route navigations.
@@ -1193,6 +1246,60 @@ export default function Migration() {
     } catch { showError('Failed to export job MD'); }
   };
 
+  const handleExportPortableJob = async (jobId: string) => {
+    try {
+      const res = await fetch(`/api/migv2/jobs/portable?id=${encodeURIComponent(jobId)}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        showError('Saved job export failed', data?.error ?? 'Could not export this saved job.');
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match?.[1] ?? `migration-job-${jobId.slice(0, 8)}.migjob.json`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      showError('Saved job export failed', 'Could not download the portable saved-job file.');
+    }
+  };
+
+  const handleImportPortableJob = async (file: File) => {
+    setImportingJob(true);
+    try {
+      if (file.size > 5 * 1024 * 1024) throw new Error('Saved-job files must be smaller than 5 MB.');
+      let payload: unknown;
+      try {
+        payload = JSON.parse(await file.text());
+      } catch {
+        throw new Error('The selected file is not valid JSON.');
+      }
+
+      const { data } = await axios.post<{ job: MigJob; credentialsRequired: boolean }>(
+        '/api/migv2/jobs/portable',
+        payload,
+      );
+      await loadJobs();
+      void loadTableRefs();
+      toast.success(`Job "${data.job.name}" imported.`, {
+        description: 'Connection passwords are not included. Add matching source and target connections before running it.',
+      });
+    } catch (err) {
+      const message = axios.isAxiosError(err)
+        ? (err.response?.data?.error ?? 'Could not import the saved job.')
+        : err instanceof Error ? err.message : 'Could not import the saved job.';
+      showError('Saved job import failed', message);
+    } finally {
+      setImportingJob(false);
+      if (importJobInputRef.current) importJobInputRef.current.value = '';
+    }
+  };
+
   const _handleExportJobMdLegacy = async (jobId: string) => {
     try {
       const { data } = await axios.get<{ job: MigJob }>(`/api/migv2/jobs/${jobId}`);
@@ -1251,7 +1358,7 @@ export default function Migration() {
         if (flags.length) lines.push(`> ⚠ ${flags.join(' · ')}`);
 
         if (map.syncMode === 'incremental') {
-          lines.push(`> ⟳ Incremental — ${map.incrementalStrategy ?? 'id'} on \`${map.incrementalCol ?? '—'}\`${map.lastSyncedValue ? ` · last synced: \`${map.lastSyncedValue}\`` : ''}`);
+      lines.push(`> ⟳ Incremental — ${map.incrementalStrategy ?? 'id'} using \`${map.incrementalCol ?? '—'}\`${map.lastSyncedValue ? ` · data last synced through: \`${map.lastSyncedValue}\`` : ''}`);
         }
         lines.push('');
 
@@ -2361,12 +2468,12 @@ export default function Migration() {
                                 <Tooltip
                                   content={
                                     mapping.incrementalCol
-                                      ? `Incremental ${mapping.incrementalStrategy ?? 'id'} sync on "${mapping.incrementalCol}"${mapping.lastSyncedValue ? ` — synced through ${mapping.lastSyncedValue}` : ' — first run migrates all rows'}`
-                                      : 'Incremental sync — set a watermark column in the column mapping header'
+                                      ? `Incremental ${mapping.incrementalStrategy ?? 'id'} sync using "${mapping.incrementalCol}"${mapping.lastSyncedValue ? ` — data last synced through ${mapping.lastSyncedValue}` : ' — first run migrates all rows'}`
+                                      : 'Incremental sync — choose a tracking column in the column mapping header'
                                   }
                                   side="top">
                                   <span className="inline-flex items-center gap-0.5 text-[11px] px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold shrink-0">
-                                    ⟳ Inc{mapping.lastSyncedValue ? <span className="font-normal opacity-80">· since {mapping.lastSyncedValue}</span> : null}
+                                    ⟳ Inc{mapping.lastSyncedValue ? <span className="font-normal opacity-80">· last synced {mapping.lastSyncedValue}</span> : null}
                                   </span>
                                 </Tooltip>
                               )}
@@ -2721,7 +2828,7 @@ export default function Migration() {
                             onChange={e => updateTableMap(selectedMap.id, { incrementalCol: e.target.value || null })}
                             className="px-1.5 py-0.5 text-[12px] rounded border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 max-w-[120px]"
                           >
-                            <option value="">— watermark col —</option>
+                            <option value="">— tracking column —</option>
                             {srcColsForSelected.map(c => (
                               <option key={c.name} value={c.name}>{c.name}</option>
                             ))}
@@ -2749,19 +2856,19 @@ export default function Migration() {
                           )}
                           {selectedMap.lastSyncedValue ? (
                             <span className="inline-flex items-center gap-0.5 text-[12px] text-violet-600 dark:text-violet-400 font-mono">
-                              ↑ {selectedMap.lastSyncedValue.length > 20
+                              Last synced: {selectedMap.lastSyncedValue.length > 20
                                 ? selectedMap.lastSyncedValue.slice(0, 20) + '…'
                                 : selectedMap.lastSyncedValue}
                               <button
                                 onClick={() => updateTableMap(selectedMap.id, { lastSyncedValue: null, lastSyncedPk: null })}
-                                title="Reset watermark — next run will re-sync all rows"
+                                title="Clear the last synced position — the next run will sync all rows again"
                                 className="text-gray-300 dark:text-slate-600 hover:text-rose-500 transition-colors ml-0.5"
                               >
                                 <X size={11} />
                               </button>
                             </span>
                           ) : (
-                            <span className="text-[12px] text-gray-300 dark:text-slate-600 italic">no watermark</span>
+                            <span className="text-[12px] text-gray-300 dark:text-slate-600 italic">not synced yet</span>
                           )}
                         </>
                       )}
@@ -3286,6 +3393,29 @@ export default function Migration() {
                 <span className="text-[12px] text-gray-400 shrink-0">{jobs.length}</span>
               )}
               {jobsOpen && (
+                <>
+                  <input
+                    ref={importJobInputRef}
+                    type="file"
+                    accept=".json,.migjob.json,application/json"
+                    className="hidden"
+                    onChange={event => {
+                      const file = event.target.files?.[0];
+                      if (file) void handleImportPortableJob(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => importJobInputRef.current?.click()}
+                    disabled={importingJob}
+                    title="Import a portable saved job"
+                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded text-[12px] font-medium border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:border-blue-400 hover:text-blue-500 disabled:opacity-50 transition-colors"
+                  >
+                    {importingJob ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} Import
+                  </button>
+                </>
+              )}
+              {jobsOpen && (
                 <button
                   onClick={handleReset}
                   className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded text-[12px] font-medium border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 bg-white dark:bg-slate-800 hover:border-rose-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors">
@@ -3313,7 +3443,11 @@ export default function Migration() {
                     <Save size={24} className="mx-auto text-slate-400 dark:text-slate-500 mb-2" />
                     <p className="text-[13px] text-gray-400 dark:text-slate-500">No saved jobs</p>
                   </div>
-                ) : jobs.map(job => (
+                ) : jobs.map(job => {
+                  const schedule = scheduleByJobId.get(job.id);
+                  const isScheduledRunActive = schedule?.lastRunStatus === 'running';
+                  const isUnmapping = schedule?.id === unmappingScheduleId;
+                  return (
                   <div key={job.id}
                     className={`rounded-lg border p-2 transition-colors ${activeJobId === job.id ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'}`}>
                     <div className="flex items-start gap-1 mb-0.5">
@@ -3344,6 +3478,23 @@ export default function Migration() {
                         </div>
                       ) : (
                         <div className="flex items-center gap-0.5 shrink-0">
+                          {schedule && (
+                            <Tooltip
+                              content={`${schedule.enabled ? 'Scheduled' : 'Schedule disabled'}: ${schedule.cronExpr}. Click to unassign from Scheduler.`}
+                              side="top"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleUnmapSchedule(schedule)}
+                                disabled={isUnmapping}
+                                aria-label={`Unassign ${job.name} from Scheduler`}
+                                className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 transition-colors disabled:opacity-50 ${isScheduledRunActive ? 'bg-violet-50 text-violet-600 hover:bg-violet-100 dark:bg-violet-950/40 dark:text-violet-400' : schedule.enabled ? 'text-blue-500 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/30' : 'text-gray-400 hover:bg-gray-100 dark:text-slate-500 dark:hover:bg-slate-700'}`}
+                              >
+                                <Calendar size={12} />
+                                {isScheduledRunActive && <Loader2 size={11} className="animate-spin" aria-label="Scheduled job running" />}
+                              </button>
+                            </Tooltip>
+                          )}
                           <Tooltip content="Rename job" side="top">
                             <button onClick={() => { setRenamingJobId(job.id); setRenameJobVal(job.name); }}
                               className="p-0.5 rounded text-gray-300 dark:text-slate-600 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
@@ -3430,6 +3581,12 @@ export default function Migration() {
                         </button>
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
+                        <Tooltip content="Export portable saved job (.migjob.json)" side="top">
+                          <button onClick={() => void handleExportPortableJob(job.id)}
+                            className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors">
+                            <Download size={14} />
+                          </button>
+                        </Tooltip>
                         <Tooltip content="Export CLI script (.mjs) — run from terminal" side="top">
                           <button onClick={() => void handleExportJobScript(job.id)}
                             className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
@@ -3451,7 +3608,8 @@ export default function Migration() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
 
                 {/* ── Pending Save Log ────────────────────────── */}
                 {completedMigratedStates.length > 0 && (

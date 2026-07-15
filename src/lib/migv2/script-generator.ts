@@ -528,7 +528,7 @@ async function main() {
       if (isInc && table.incrementalCol) { newWatermark = await getMaxValue(table, table.incrementalCol); }
       state[key] = { done: true, offset, migratedRows: migrated, watermark: newWatermark };
       saveState(state);
-      console.log('[' + key + '] ✓ completed (' + migrated.toLocaleString() + ' rows)' + (newWatermark ? '  watermark → ' + newWatermark : ''));
+      console.log('[' + key + '] ✓ completed (' + migrated.toLocaleString() + ' rows)' + (newWatermark ? '  last synced → ' + newWatermark : ''));
     } catch (e) {
       failures++;
       console.error('[' + key + '] ✗ FAILED: ' + (e.message || String(e)));
@@ -616,7 +616,7 @@ const TARGET = {
   password: process.env.TARGET_PASSWORD || 'YOUR_TARGET_PASSWORD',
   database: ${JSON.stringify(job.targetMeta.database)},
 };
-const CHUNK_SIZE = 500;
+const CHUNK_SIZE = 1000;
 const STATE_FILE = ${JSON.stringify(`migration-state-${job.id}.json`)};
 const SCRIPT_NAME = ${JSON.stringify(scriptName)};
 

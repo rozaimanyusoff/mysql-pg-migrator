@@ -14,6 +14,7 @@ import { Tooltip } from '../components/Tooltip';
 import { useAlert } from '../lib/alert-context';
 import type { CronSchedule, MigJobSummary, MigRun, MigRunTableState } from '../lib/migv2/types';
 import type { PreflightReport } from '../lib/migv2/preflight';
+import type { PreflightStatus } from '../lib/migv2/preflight-store';
 
 function fmtDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -142,6 +143,7 @@ export default function SchedulerPage() {
   const [runMenuId, setRunMenuId] = useState<string | null>(null);
   const [hideCompletedRunIds, setHideCompletedRunIds] = useState<Set<string>>(new Set());
   const [preflight, setPreflight] = useState<{ jobName: string; loading: boolean; report: PreflightReport | null; error: string | null } | null>(null);
+  const [preflightStatus, setPreflightStatus] = useState<PreflightStatus | null>(null);
   const highlightHandledRef = useRef(false);
 
   // ── Form state ───────────────────────────────────────────────────────────────
@@ -211,6 +213,13 @@ export default function SchedulerPage() {
 
   useEffect(() => { void loadAll(); }, []);
   useEffect(() => { if (selectedId) void loadRunsForJob(selectedId); }, [selectedId]);
+  useEffect(() => {
+    setPreflightStatus(null);
+    if (!selectedId) return;
+    void axios.get<{ status: PreflightStatus }>('/api/migv2/preflight', { params: { jobId: selectedId } })
+      .then(({ data }) => setPreflightStatus(data.status))
+      .catch(() => setPreflightStatus({ ready: false, reason: 'missing', completedAt: null, expiresAt: null }));
+  }, [selectedId, selectedJob?.version]);
 
   // Deep-link: ?highlight=<jobId> — auto-select the job and open the Add Schedule
   // form when it has no schedule yet. Fires once after jobs have loaded.
@@ -247,8 +256,10 @@ export default function SchedulerPage() {
     setSchedules(prev => prev.map(x => x.id === s.id ? updated : x));
     try {
       await axios.patch(`/api/scheduler/${s.id}`, { enabled: !s.enabled });
-    } catch {
+    } catch (err) {
       setSchedules(prev => prev.map(x => x.id === s.id ? s : x));
+      const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Could not update schedule') : 'Could not update schedule';
+      showError('Schedule update failed', msg);
     }
   };
 
@@ -274,8 +285,9 @@ export default function SchedulerPage() {
   const handlePreflight = async (jobId: string, jobName: string) => {
     setPreflight({ jobName, loading: true, report: null, error: null });
     try {
-      const { data } = await axios.post<{ report: PreflightReport }>('/api/migv2/preflight', { jobId });
+      const { data } = await axios.post<{ report: PreflightReport; status: PreflightStatus }>('/api/migv2/preflight', { jobId });
       setPreflight({ jobName, loading: false, report: data.report, error: null });
+      setPreflightStatus(data.status);
     } catch (err) {
       const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Pre-flight failed') : 'Pre-flight failed';
       setPreflight({ jobName, loading: false, report: null, error: msg });
@@ -584,20 +596,20 @@ export default function SchedulerPage() {
                       </Tooltip>
                       <Tooltip content="Validate connectivity, row counts, type/FK issues and estimate duration before running" side="bottom">
                         <button onClick={() => void handlePreflight(selectedJob.id, selectedJob.name)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 text-[12px] font-medium hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                          <ListChecks size={13} />Pre-flight
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded border text-[12px] font-medium transition-colors ${preflightStatus?.ready ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300'}`}>
+                          {preflightStatus?.ready ? <CheckCircle2 size={13} /> : <ListChecks size={13} />}Pre-flight
                         </button>
                       </Tooltip>
                       {selectedSchedule ? (
                         <>
                           <button onClick={() => void handleRunNow(selectedSchedule)}
-                            disabled={!!triggering || selectedSchedule.lastRunStatus === 'running'}
+                            disabled={!!triggering || selectedSchedule.lastRunStatus === 'running' || !preflightStatus?.ready}
                             className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-violet-300 dark:border-violet-600 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 text-[12px] font-medium hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-40 transition-colors">
                             {triggering === selectedSchedule.id ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
                             Run Now
                           </button>
                           <button onClick={() => handleHeaderPauseOrToggle(selectedSchedule)}
-                            disabled={isCurrentRunRunning && !hasPausableTables}
+                            disabled={(isCurrentRunRunning && !hasPausableTables) || (!selectedSchedule.enabled && !preflightStatus?.ready)}
                             title={isCurrentRunRunning ? 'Pause current run' : selectedSchedule.enabled ? 'Disable schedule' : 'Enable schedule'}
                             className="p-1.5 rounded border border-gray-200 dark:border-slate-700 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors">
                             {selectedSchedule.enabled ? <Pause size={13} /> : <Play size={13} />}
@@ -619,6 +631,22 @@ export default function SchedulerPage() {
                       )}
                     </div>
                   </div>
+
+                  {!preflightStatus?.ready && (
+                    <div className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 dark:border-amber-800 dark:bg-amber-950/25">
+                      <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Pre-flight required before migration can run</p>
+                        <p className="mt-0.5 text-[11px] leading-4 text-amber-700 dark:text-amber-400">
+                          {preflightStatus?.reason === 'job_changed' ? 'This saved job changed after the previous check.' : preflightStatus?.reason === 'expired' ? 'The previous result has expired.' : preflightStatus?.reason === 'failed' ? 'The previous check found blocking issues.' : 'Check source, target and server capacity first.'} Run Pre-flight, review the capability report, then enable the schedule or start the migration.
+                        </p>
+                      </div>
+                      <button type="button" onClick={() => void handlePreflight(selectedJob.id, selectedJob.name)}
+                        className="shrink-0 rounded-md border border-amber-400 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300">
+                        Run Pre-flight
+                      </button>
+                    </div>
+                  )}
 
                   {/* Crontab command — only when schedule exists */}
                   {selectedSchedule && (
@@ -672,7 +700,7 @@ export default function SchedulerPage() {
                         )}
                         {missingWatermark.length > 0 && (
                           <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-                            <AlertTriangle size={10} />{missingWatermark.length} no watermark
+                            <AlertTriangle size={10} />{missingWatermark.length} no tracking column
                           </span>
                         )}
                         <button type="button" onClick={() => void router.push(`/migration?job=${encodeURIComponent(selectedJob.id)}`)}
@@ -683,8 +711,8 @@ export default function SchedulerPage() {
                       <p className="mt-1 pl-5 text-[11px] text-slate-500 dark:text-slate-400">
                         {selectedTruncateTables.length > 0 && 'Run All ignores saved truncate flags; explicit truncate/restart actions remain destructive. '}
                         {incTables.length > 0 && (missingWatermark.length > 0
-                          ? `${missingWatermark.length} incremental table${missingWatermark.length !== 1 ? 's' : ''} still need a watermark column before true incremental filtering can run.`
-                          : `Incremental runs use saved watermarks${withWatermark.length > 0 ? ` (${withWatermark.length} table${withWatermark.length !== 1 ? 's' : ''} already have one).` : ' after the first completed run.'}`)}
+                          ? `${missingWatermark.length} incremental table${missingWatermark.length !== 1 ? 's' : ''} still need a tracking column before incremental sync can run correctly.`
+                          : `Incremental runs continue from the last successfully synced position${withWatermark.length > 0 ? ` (${withWatermark.length} table${withWatermark.length !== 1 ? 's' : ''} have a saved position).` : ' once the first run is completed.'}`)}
                       </p>
                       <div className="mt-2 pl-5 space-y-0.5">
                         {previewTables.map(t => (
@@ -695,10 +723,10 @@ export default function SchedulerPage() {
                             )}
                             {t.syncMode === 'incremental' && (
                               <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-                                inc {t.incrementalCol ? `on ${t.incrementalCol}` : 'no watermark'}
+                                inc {t.incrementalCol ? `tracking ${t.incrementalCol}` : 'no tracking column'}
                               </span>
                             )}
-                            {t.lastSyncedValue && <span className="text-blue-500/80 dark:text-blue-400/80">since {t.lastSyncedValue}</span>}
+                            {t.lastSyncedValue && <span className="text-blue-500/80 dark:text-blue-400/80">last synced {t.lastSyncedValue}</span>}
                           </div>
                         ))}
                         {selectedJob.tables.filter(t => t.include && (t.truncateBeforeMigrate || t.syncMode === 'incremental')).length > previewTables.length && (
@@ -722,7 +750,7 @@ export default function SchedulerPage() {
                     </div>
                     <Tooltip content={canResumePausedRun ? 'Resume all pending or paused tables in the current run' : selectedSchedule ? 'Create a new audited run and process included table chunks sequentially' : 'Create a manual audited run for this unscheduled job'} side="bottom">
                       <button type="button" onClick={() => void handleBulkTableAction('run')}
-                        disabled={!!bulkTableAction || !selectedJob || isCurrentRunRunning || ((selectedHistoryRun?.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') && !canResumePausedRun)}
+                        disabled={!!bulkTableAction || !selectedJob || isCurrentRunRunning || (!canResumePausedRun && !preflightStatus?.ready) || ((selectedHistoryRun?.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') && !canResumePausedRun)}
                         className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 dark:border-emerald-800 dark:hover:bg-emerald-950/30">
                         {bulkTableAction === 'run' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}{runAllLabel}
                       </button>
@@ -917,7 +945,7 @@ export default function SchedulerPage() {
                                       </Tooltip>
                                     )}
                                     {tableMap?.syncMode === 'incremental' && (
-                                      <Tooltip content={tableMap.incrementalCol ? `Incremental sync on ${tableMap.incrementalCol}` : 'Incremental sync enabled but no watermark column selected'} side="top">
+                                      <Tooltip content={tableMap.incrementalCol ? `Incremental sync tracks new data using ${tableMap.incrementalCol}` : 'Incremental sync is enabled but no tracking column is selected'} side="top">
                                         <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${tableMap.incrementalCol ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' : 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'}`}>
                                           {tableMap.incrementalCol ? 'inc' : 'inc?'}
                                         </span>
@@ -1011,7 +1039,7 @@ export default function SchedulerPage() {
               <div className="overflow-y-auto px-5 py-4 space-y-4">
                 {preflight.loading ? (
                   <div className="flex items-center justify-center py-12 gap-2 text-[13px] text-gray-400">
-                    <Loader2 size={16} className="animate-spin" />Checking connections, counting rows…
+                    <Loader2 size={16} className="animate-spin" />Checking connections, rows and server capabilities…
                   </div>
                 ) : preflight.error ? (
                   <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 text-[13px] text-rose-600 dark:text-rose-400">
@@ -1049,6 +1077,72 @@ export default function SchedulerPage() {
                             <p className="text-[14px] font-semibold text-gray-800 dark:text-slate-200">{s.value}</p>
                           </div>
                         ))}
+                      </div>
+
+                      {/* Server and database capability report for IT/developers */}
+                      <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-3 dark:border-blue-900/60 dark:bg-blue-950/20 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Info size={13} className="text-blue-500" />
+                          <p className="text-[12px] font-semibold text-blue-800 dark:text-blue-300">Transfer capability</p>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                          {[
+                            { label: 'Default batch', value: `${r.capabilities.currentBatchRows.toLocaleString()} rows` },
+                            { label: 'Recommended', value: `${r.capabilities.recommendedBatchRows.toLocaleString()} rows` },
+                            { label: 'Safe ceiling', value: `${r.capabilities.maxSafeBatchRows.toLocaleString()} rows` },
+                            { label: 'Target method', value: r.capabilities.recommendedMethod === 'copy' ? 'COPY' : 'Multi-row' },
+                          ].map(item => (
+                            <div key={item.label} className="rounded border border-blue-100 bg-white/80 px-2 py-1.5 dark:border-blue-900/50 dark:bg-slate-900/60">
+                              <p className="text-[9px] uppercase tracking-wide text-blue-500">{item.label}</p>
+                              <p className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">{item.value}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-[10px]">
+                          <div className="rounded border border-blue-100 bg-white/70 p-2 dark:border-blue-900/50 dark:bg-slate-900/50">
+                            <p className="font-semibold text-slate-600 dark:text-slate-300">Application server</p>
+                            <p className="text-slate-500">{r.capabilities.runtime.cpuCores} CPU · {r.capabilities.runtime.freeMemoryMb.toLocaleString()} MB free</p>
+                            <p className="truncate text-slate-400" title={r.capabilities.runtime.platform}>{r.capabilities.runtime.platform}</p>
+                          </div>
+                          {([['Source', r.capabilities.source], ['Target', r.capabilities.target]] as const).map(([label, capability]) => (
+                            <div key={label} className="rounded border border-blue-100 bg-white/70 p-2 dark:border-blue-900/50 dark:bg-slate-900/50">
+                              <p className="font-semibold text-slate-600 dark:text-slate-300">{label} · {capability.type}</p>
+                              <p className="text-slate-500">Latency: {capability.latencyMs == null ? '—' : `${capability.latencyMs} ms`}</p>
+                              <p className="truncate text-slate-400" title={capability.version ?? ''}>{capability.version ?? 'Version unavailable'}</p>
+                            </div>
+                          ))}
+                        </div>
+                        {r.capabilities.currentWriter === 'row-by-row' && (
+                          <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-400">
+                            Current web runner writes rows individually. The batch recommendation is a server-capacity guide until multi-row/COPY writing is enabled.
+                          </p>
+                        )}
+                        {r.capabilities.limitingFactors.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">Limiting factors</p>
+                            {r.capabilities.limitingFactors.map((item, index) => <p key={index} className="text-[10px] text-amber-700 dark:text-amber-400">• {item}</p>)}
+                          </div>
+                        )}
+                        <details className="text-[10px] text-slate-500 dark:text-slate-400">
+                          <summary className="cursor-pointer font-semibold text-blue-600 dark:text-blue-400">Server configuration and IT recommendations</summary>
+                          <div className="mt-2 grid grid-cols-2 gap-3">
+                            {([['Source', r.capabilities.source], ['Target', r.capabilities.target]] as const).map(([label, capability]) => (
+                              <div key={label}>
+                                <p className="mb-1 font-semibold text-slate-600 dark:text-slate-300">{label} configuration</p>
+                                {Object.entries(capability.settings).length === 0 && <p className="italic text-slate-400">Settings unavailable</p>}
+                                {Object.entries(capability.settings).map(([name, value]) => (
+                                  <div key={name} className="flex justify-between gap-2 border-b border-blue-100/70 py-0.5 dark:border-blue-900/30">
+                                    <code>{name}</code><span className="font-mono text-slate-700 dark:text-slate-300">{value}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-2 space-y-0.5">
+                            {r.capabilities.recommendations.map((item, index) => <p key={index}>• {item}</p>)}
+                            {r.capabilities.limitations.map((item, index) => <p key={`limit-${index}`} className="italic text-slate-400">• {item}</p>)}
+                          </div>
+                        </details>
                       </div>
 
                       {/* Connectivity detail when failing */}
@@ -1095,7 +1189,7 @@ export default function SchedulerPage() {
                         </div>
                       </div>
                       <p className="text-[11px] text-gray-400 dark:text-slate-500">
-                        Duration is a rough estimate at ~2,000 rows/s and varies with row width, indexes and network.
+                        Duration remains a conservative estimate until write benchmarking and the batched writer are enabled.
                       </p>
                     </>
                   );
@@ -1149,7 +1243,7 @@ export default function SchedulerPage() {
                       <div className="min-w-0 flex-1">
                         <p className="text-[12px] font-semibold text-blue-700 dark:text-blue-300">Need continuous appended-data sync?</p>
                         <p className="mt-1 text-[11px] leading-4 text-blue-600/90 dark:text-blue-400">
-                          A schedule only controls when this saved job runs. Return to the Migration module and set each live-source table to <strong>Incremental (⟳Inc)</strong>, then choose its watermark column and ID/Timestamp strategy.
+                          A schedule only controls when this saved job runs. Return to the Migration module and set each live-source table to <strong>Incremental (⟳Inc)</strong>, then choose the column used to track new data and an ID/Timestamp strategy.
                         </p>
                         {job && <p className="mt-1.5 text-[10px] font-medium text-blue-500 dark:text-blue-500">
                           {incremental.length} of {included.length} included tables currently have incremental sync configured.

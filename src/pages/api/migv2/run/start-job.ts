@@ -7,6 +7,7 @@ import { driveRun } from '../../../../lib/migv2/run-driver';
 import { prepareRunTables } from '../../../../lib/migv2/run-tables';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
+import { getPreflightStatus, preflightRequiredMessage } from '../../../../lib/migv2/preflight-store';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -17,6 +18,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const job = loadJob(jobId);
   if (!job) return res.status(404).json({ error: 'Job not found' });
+  const preflightStatus = getPreflightStatus(job);
+  if (!preflightStatus.ready) return res.status(428).json({ error: preflightRequiredMessage(preflightStatus), preflightRequired: true });
   const includedTables = prepareRunTables(job.tables);
   if (!includedTables.length) return res.status(400).json({ error: 'Job has no included tables' });
 
