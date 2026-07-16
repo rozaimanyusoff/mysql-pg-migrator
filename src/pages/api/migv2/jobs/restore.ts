@@ -14,7 +14,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const job = loadJob(id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
 
-  const runs = listRunsForJob(id).filter(r => r.status === 'completed');
+  const runs = listRunsForJob(id).filter(r => r.status === 'completed' || r.status === 'completed_with_issues');
   if (runs.length === 0) return res.status(422).json({ error: 'No completed runs found for this job' });
 
   // Collect unique tables by source key, preferring the most recent run's version

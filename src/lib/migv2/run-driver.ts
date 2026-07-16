@@ -4,8 +4,9 @@ import { loadJob, saveJobRuntimeState } from './job-store';
 import { loadSchedule, saveSchedule } from './schedule-store';
 import { sendEmail } from '../mailer';
 import type { MigConn, MigRun } from './types';
+import { canPersistWatermark } from './run-outcome';
 
-const TERMINAL = new Set(['completed', 'failed', 'aborted', 'rolled_back']);
+const TERMINAL = new Set(['completed', 'completed_with_issues', 'failed', 'aborted', 'rolled_back']);
 
 function persistWatermarks(run: MigRun) {
   if (!run.jobId) return;
@@ -13,7 +14,7 @@ function persistWatermarks(run: MigRun) {
   if (!job) return;
   let updated = false;
   for (const ts of run.tableStates) {
-    if (ts.newWatermark == null) continue;
+    if (!canPersistWatermark(ts)) continue;
     const jt = job.tables.find(t => t.id === ts.id);
     if (jt) { jt.lastSyncedValue = ts.newWatermark; jt.lastSyncedPk = ts.newWatermarkPk ?? null; updated = true; }
   }
@@ -22,7 +23,7 @@ function persistWatermarks(run: MigRun) {
 
 function buildNotifyBody(run: MigRun): { subject: string; text: string } {
   const ok = run.status === 'completed';
-  const icon = ok ? '✓' : '✗';
+  const icon = ok ? '✓' : run.status === 'completed_with_issues' ? '⚠' : '✗';
   const lines = [
     `${icon} Migration "${run.jobName}" ${run.status}`,
     ``,
@@ -33,7 +34,7 @@ function buildNotifyBody(run: MigRun): { subject: string; text: string } {
     ``,
     `Tables:`,
     ...run.tableStates.map(ts => {
-      const mark = ts.status === 'completed' ? '✓' : ts.status === 'failed' ? '✗' : '·';
+      const mark = ts.status === 'completed' ? '✓' : ts.status === 'completed_with_issues' ? '⚠' : ts.status === 'failed' ? '✗' : '·';
       return `  ${mark} ${ts.sourceKey} → ${ts.targetKey} (${ts.rowsMigrated} written${ts.rowsErrored ? `, ${ts.rowsErrored} errors` : ''})`;
     }),
   ];
@@ -83,7 +84,8 @@ export async function driveRun(
         const hasPaused = run.tableStates.some(t => t.status === 'paused');
         if (!hasPaused) {
           run.status = run.tableStates.some(t => t.status === 'failed') ? 'failed'
-            : run.tableStates.some(t => t.status === 'aborted') ? 'aborted' : 'completed';
+            : run.tableStates.some(t => t.status === 'aborted') ? 'aborted'
+              : run.tableStates.some(t => t.status === 'completed_with_issues') ? 'completed_with_issues' : 'completed';
           run.completedAt = new Date().toISOString();
           saveRun(run);
           break;
@@ -129,7 +131,7 @@ export async function driveRun(
       saveSchedule({
         ...schedule,
         lastRunAt: new Date().toISOString(),
-        lastRunStatus: run.status === 'completed' ? 'completed' : 'failed',
+        lastRunStatus: run.status === 'completed' ? 'completed' : run.status === 'completed_with_issues' ? 'completed_with_issues' : 'failed',
         lastRunId: run.id,
         updatedAt: new Date().toISOString(),
       });

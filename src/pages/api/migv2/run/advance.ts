@@ -3,6 +3,7 @@ import { advanceRun } from '../../../../lib/migv2/runner';
 import { loadRun, saveRun } from '../../../../lib/migv2/run-store';
 import { loadJob, saveJobRuntimeState } from '../../../../lib/migv2/job-store';
 import type { MigConn } from '../../../../lib/migv2/types';
+import { canPersistWatermark } from '../../../../lib/migv2/run-outcome';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -12,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const run = loadRun(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (run.status === 'completed' || run.status === 'rolled_back' || run.status === 'aborted') {
+  if (run.status === 'completed' || run.status === 'completed_with_issues' || run.status === 'rolled_back' || run.status === 'aborted') {
     return res.status(200).json({ run });
   }
 
@@ -27,7 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (job) {
         let jobUpdated = false;
         for (const ts of advanced.tableStates) {
-          if (ts.newWatermark == null) continue;
+          if (!canPersistWatermark(ts)) continue;
           const jt = job.tables.find(t => t.id === ts.id);
           if (jt) { jt.lastSyncedValue = ts.newWatermark; jt.lastSyncedPk = ts.newWatermarkPk ?? null; jobUpdated = true; }
         }

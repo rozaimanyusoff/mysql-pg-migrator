@@ -10,7 +10,13 @@ const ASSUMED_ROWS_PER_SEC = 2000;
 export interface PreflightIssue {
   level: 'error' | 'warning' | 'info';
   message: string;
-  code?: 'target_schema_compatibility';
+  code?: 'target_schema_compatibility' | 'binding_missing';
+}
+
+export interface BindingValidationIssue {
+  tableId: string;
+  side: 'source' | 'target';
+  message: string;
 }
 
 export interface PreflightTableCheck {
@@ -155,6 +161,58 @@ function targetTableName(tm: TableMap): string {
   return tm.targetAlias?.trim() || tm.target.table;
 }
 
+/**
+ * Validate physical saved-job bindings immediately before execution. This is
+ * deliberately server-side so a stale browser view cannot bypass rename or
+ * deletion detection.
+ */
+export async function validateMigrationBindings(
+  tables: TableMap[],
+  source: MigConn,
+  target: MigConn,
+): Promise<BindingValidationIssue[]> {
+  const issues: BindingValidationIssue[] = [];
+  for (const tm of tables.filter(table => table.include)) {
+    const tableSource = tm.sourceDatabase && tm.sourceDatabase !== source.database
+      ? { ...source, database: tm.sourceDatabase }
+      : source;
+    try {
+      if (!await tableExists(tableSource, tm.source.schema, tm.source.table)) {
+        issues.push({
+          tableId: tm.id,
+          side: 'source',
+          message: `Source ${tableSource.database}.${tm.source.schema}.${tm.source.table} no longer exists. Rebind the saved job before running.`,
+        });
+      }
+    } catch (err) {
+      issues.push({
+        tableId: tm.id,
+        side: 'source',
+        message: `Source binding could not be verified: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+
+    const targetMode = tm.targetMode ?? (tm.target.table === tm.source.table ? 'source_clone' : 'existing');
+    if (targetMode !== 'existing') continue;
+    try {
+      if (!await tableExists(target, tm.target.schema, targetTableName(tm))) {
+        issues.push({
+          tableId: tm.id,
+          side: 'target',
+          message: `Existing target ${target.database}.${tm.target.schema}.${targetTableName(tm)} no longer exists. Rebind the saved job before running.`,
+        });
+      }
+    } catch (err) {
+      issues.push({
+        tableId: tm.id,
+        side: 'target',
+        message: `Target binding could not be verified: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+  return issues;
+}
+
 // ── main entry ────────────────────────────────────────────────────────────────
 
 export async function runPreflight(job: MigJob, source: MigConn, target: MigConn): Promise<PreflightReport> {
@@ -179,7 +237,7 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
         sourceRows = await countRows(tableSource, tm.source.schema, tm.source.table, where, params);
         totalRows += sourceRows;
       } catch (err) {
-        issues.push({ level: 'error', message: `Source unreadable: ${err instanceof Error ? err.message : String(err)}` });
+        issues.push({ level: 'error', code: 'binding_missing', message: `Source unreadable: ${err instanceof Error ? err.message : String(err)}` });
       }
     }
 
@@ -188,6 +246,13 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
       try {
         targetExists = await tableExists(target, tm.target.schema, targetTableName(tm));
         const targetMode = tm.targetMode ?? (tm.target.table === tm.source.table ? 'source_clone' : 'existing');
+        if (!targetExists && targetMode === 'existing') {
+          issues.push({
+            level: 'error',
+            code: 'binding_missing',
+            message: `Existing target ${target.database}.${tm.target.schema}.${targetTableName(tm)} no longer exists. Rebind the saved job before scheduling.`,
+          });
+        }
         if (targetExists && targetMode === 'existing') {
           const actualColumns = await columnNames(target, tm.target.schema, targetTableName(tm));
           const expectedColumns = tm.columns.filter(column => column.include).flatMap(column => [
@@ -204,7 +269,7 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
           }
         }
       } catch (err) {
-        issues.push({ level: 'warning', message: `Target schema inspection incomplete: ${err instanceof Error ? err.message : String(err)}` });
+        issues.push({ level: 'error', code: 'binding_missing', message: `Target binding could not be verified: ${err instanceof Error ? err.message : String(err)}` });
       }
     }
 

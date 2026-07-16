@@ -2,7 +2,34 @@
 
 ---
 
+## 2026-07-17
+
+- **fix / migration correctness** — Safe watermark outcomes, explicit completion issues, and exact-only rollback.
+  - Added `completed_with_issues` at table, run, schedule and notification levels. A finished table is clean `completed` only when it has no database errors or policy rejects; Migration and Scheduler render issue outcomes in amber and keep affected tables visible for review/restart.
+  - Incremental watermarks are no longer persisted when unresolved row/database errors exist. The old watermark is retained so a later restart reprocesses the pending window; explicit `skip_row` policy rejects remain auditable but may advance because that outcome was configured deliberately.
+  - The generated standalone migration script follows the same rule: row errors produce `completed with issues`, hold the watermark, reset the resumable window and exit with a distinct non-zero result.
+  - Rollback is now exact-key deletion only. It requires a complete recorded target PK for every inserted row; upserts/updates, missing keys and tracking overflow are blocked. The former silent TRUNCATE fallback and rollback-linked DROP controls were removed.
+  - Full-run rollback pre-validates every table and performs all target deletes inside one transaction. If any table is ineligible or any delete fails, no rollback state is committed and the operation reports the exact reason.
+  - Verification: TypeScript, 37 integration tests and diff checks pass.
+  - Files: `src/lib/migv2/{run-outcome,run-progress,run-driver,runner,script-generator,types}.ts`, `src/pages/{migration,scheduler}.tsx`, `src/pages/api/migv2/run/*`, `src/pages/api/scheduler/index.ts`, `tests/scheduler-hardening.test.ts`.
+  - Status: implemented.
+
 ## 2026-07-16
+
+- **refine / terminology** — Separate scheduling readiness from data sync strategy.
+  - Renamed `Recurring options` to `Sync strategy`; recurring remains a derived compliance status for Scheduler, not a selectable migration mode.
+  - User-facing choices are now `Incremental changes · live source`, `Full scan · Insert & update`, and `Full scan · Insert new only`. Internal persisted values remain unchanged for backward compatibility.
+  - Updated related table badges, remediation banners, validation messages and advisories to use the same behaviour-oriented wording.
+
+- **implement / critical UX** — Saved Job explicit rebind and rename-safe Pending Save.
+  - Loading a Saved Job now detects missing source databases/tables and missing existing-target databases/tables. A blocking Rebind dialog requires the user to choose each replacement explicitly; no database, schema or table rename is accepted silently.
+  - Rebinding marks the job dirty, clears affected recurring cursors, and saving bumps the job version so the previous Pre-flight approval becomes outdated. `source_clone` targets that have not been created remain valid; a missing `existing` target is a blocker.
+  - Run Once is blocked in both UI and API when physical bindings are missing or cannot be verified. Operational Pre-flight records these as error-level `binding_missing` issues, which also blocks Scheduler execution/activation.
+  - Pending Save results are immutable snapshots identified by `runId:tableId`, independent of later source/target display-name changes. Linking to a job matches stable table ID first and exact physical binding second; unmatched results require loading the destination job and completing rebind instead of appending a stale mapping.
+  - The active Saved Job card and workspace show binding-issue counters. The rebind panel explains the saved path, replacement choice, cursor reset and Pre-flight effect.
+  - Verification: TypeScript, 34 integration tests and diff checks pass.
+  - Files: `src/lib/migv2/{pending-result,preflight,types}.ts`, `src/pages/api/migv2/run/start.ts`, `src/pages/migration.tsx`, `tests/scheduler-hardening.test.ts`.
+  - Status: implemented.
 
 - **implement / performance architecture** — COPY staging writer and five-table migration SLO.
   - Performance objective: five average tables × 200,000 rows (1,000,000 rows total) should complete in under 15 minutes. The planning baseline is 1,400 aggregate rows/s, giving margin above the mathematical minimum of 1,112 rows/s; the engineering target remains 2,000–2,500 rows/s on representative infrastructure.

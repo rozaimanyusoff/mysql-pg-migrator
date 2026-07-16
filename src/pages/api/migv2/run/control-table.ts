@@ -53,7 +53,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     table.status = 'paused';
     table.error = null;
   } else if (action === 'stop') {
-    if (table.status === 'completed' || table.status === 'rolled_back') return res.status(409).json({ error: `Cannot stop a ${table.status} table` });
+    if (table.status === 'completed' || table.status === 'completed_with_issues' || table.status === 'rolled_back') return res.status(409).json({ error: `Cannot stop a ${table.status} table` });
     table.status = 'aborted';
     table.error = 'Stopped by user.';
   } else {
@@ -65,6 +65,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       table.rowsMigrated = 0;
       table.rowsSkipped = 0;
       table.rowsErrored = 0;
+      table.rowsRejected = 0;
       table.offset = 0;
       table.hasMore = true;
       table.insertedPks = [];
@@ -79,6 +80,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       table.writeDurationMs = 0;
       table.rowsPerSecond = null;
       table.writerMethod = undefined;
+      run.rejects = (run.rejects ?? []).filter(reject => reject.tableId !== table.id);
+      run.integrityIssues = (run.integrityIssues ?? []).filter(issue => issue.tableId !== table.id);
     } else if (action === 'run' && table.status !== 'pending') {
       return res.status(409).json({ error: `Cannot run a ${table.status} table; use resume or restart` });
     }

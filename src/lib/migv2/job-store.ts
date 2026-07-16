@@ -42,14 +42,15 @@ function listJobSummaries(includeRuntime: boolean): MigJobSummary[] {
       try {
         const config = normalizeJob(JSON.parse(fs.readFileSync(path.join(JOB_DIR, f), 'utf8')) as MigJob);
         const j = includeRuntime ? hydrateJobRuntime(config) : config;
-        const scheduleIssues = assessMigrationTables(j.tables).recurringIssues;
+        const assessment = assessMigrationTables(j.tables);
         return {
           id: j.id, name: j.name, description: j.description,
           version: j.version, createdAt: j.createdAt, updatedAt: j.updatedAt,
           tableCount: j.tables.length,
           tables: j.tables.map(t => ({ id: t.id, include: t.include, source: t.source, sourceDatabase: t.sourceDatabase, target: t.target, targetAlias: t.targetAlias, syncMode: t.syncMode, fullSyncStrategy: t.fullSyncStrategy, incrementalCol: t.incrementalCol, lastSyncedValue: t.lastSyncedValue, truncateBeforeMigrate: t.truncateBeforeMigrate })),
-          scheduleReady: scheduleIssues.length === 0,
-          scheduleIssues: scheduleIssues.length,
+          scheduleReady: assessment.recurringReady,
+          scheduleIssues: assessment.recurringIssues.length,
+          advisories: assessment.notices,
         };
       } catch { return null; }
     })

@@ -85,6 +85,11 @@ function StatusBadge({ status }: { status: CronSchedule['lastRunStatus'] }) {
       <CheckCircle2 size={9} />completed
     </span>
   );
+  if (status === 'completed_with_issues') return (
+    <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+      <AlertTriangle size={9} />completed with issues
+    </span>
+  );
   if (status === 'failed') return (
     <span className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-semibold">
       <AlertTriangle size={9} />failed
@@ -106,6 +111,7 @@ function StatusBadge({ status }: { status: CronSchedule['lastRunStatus'] }) {
 function RunStatusBadge({ status }: { status: MigRun['status'] }) {
   const map: Record<string, string> = {
     completed: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400',
+    completed_with_issues: 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400',
     failed: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400',
     running: 'bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400',
     pending: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400',
@@ -117,9 +123,10 @@ function RunStatusBadge({ status }: { status: MigRun['status'] }) {
     <span className={`inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${map[status] ?? map.pending}`}>
       {status === 'running' && <Loader2 size={9} className="animate-spin" />}
       {status === 'completed' && <CheckCircle2 size={9} />}
+      {status === 'completed_with_issues' && <AlertTriangle size={9} />}
       {status === 'failed' && <AlertTriangle size={9} />}
       {status === 'paused' && <Pause size={9} />}
-      {status}
+      {status === 'completed_with_issues' ? 'completed with issues' : status}
     </span>
   );
 }
@@ -829,19 +836,19 @@ export default function SchedulerPage() {
                         <MoreVertical size={13} />
                       </button>
                       {showStatusFilter && <div className="absolute right-0 top-8 z-20 w-56 rounded-md border border-gray-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
-                        {['all', 'completed', 'running', 'paused', 'aborted', 'pending'].map(status => (
+                        {['all', 'completed', 'completed_with_issues', 'failed', 'running', 'paused', 'aborted', 'pending'].map(status => (
                           <button key={status} type="button" onClick={() => { setTableStatusFilter(status); setShowStatusFilter(false); }}
                             className={`block w-full rounded px-2 py-1.5 text-left text-[11px] capitalize ${tableStatusFilter === status ? 'bg-violet-50 text-violet-600 dark:bg-violet-950/40' : 'text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
-                            {status === 'aborted' ? 'stopped' : status}
+                            {status === 'aborted' ? 'stopped' : status === 'completed_with_issues' ? 'completed with issues' : status}
                           </button>
                         ))}
                         {selectedHistoryRun && <>
                           <div className="my-2 border-t border-gray-100 dark:border-slate-800" />
                           <div className="space-y-1 px-1 text-[10px] text-slate-500">
-                            {(['completed', 'running', 'paused', 'aborted', 'pending'] as const).map(status => {
+                            {(['completed', 'completed_with_issues', 'failed', 'running', 'paused', 'aborted', 'pending'] as const).map(status => {
                               const count = selectedHistoryTableStates.filter(t => t.status === status).length;
                               const pct = selectedHistoryTableStates.length ? Math.round(count / selectedHistoryTableStates.length * 100) : 0;
-                              return <div key={status} className="flex justify-between capitalize"><span>{status === 'aborted' ? 'stopped' : status}</span><span>{pct}% ({count})</span></div>;
+                              return <div key={status} className="flex justify-between capitalize"><span>{status === 'aborted' ? 'stopped' : status === 'completed_with_issues' ? 'completed with issues' : status}</span><span>{pct}% ({count})</span></div>;
                             })}
                           </div>
                           <label className="mt-2 flex cursor-pointer items-center justify-between border-t border-gray-100 px-1 pt-2 text-[11px] text-slate-600 dark:border-slate-800 dark:text-slate-300">
@@ -867,7 +874,7 @@ export default function SchedulerPage() {
                     </div>
                   ) : selectedRuns.filter(run => run.id === selectedHistoryRun?.id).map(run => {
                     const totalRows = run.tableStates.reduce((s, ts) => s + ts.rowsMigrated + ts.rowsSkipped, 0);
-                    const completedPct = run.tableStates.length ? Math.round(run.tableStates.filter(t => t.status === 'completed').length / run.tableStates.length * 100) : 0;
+                    const completedPct = run.tableStates.length ? Math.round(run.tableStates.filter(t => t.status === 'completed' || t.status === 'completed_with_issues').length / run.tableStates.length * 100) : 0;
                     const hideCompleted = hideCompletedRunIds.has(run.id);
                     return (
                       <div key={run.id}>
@@ -909,7 +916,7 @@ export default function SchedulerPage() {
                               </button>
                             </Tooltip>
                           )}
-                          {(run.status === 'failed' || run.status === 'aborted' || run.status === 'completed') && (
+                          {(run.status === 'failed' || run.status === 'aborted' || run.status === 'completed' || run.status === 'completed_with_issues') && (
                             <>
                               <Tooltip content="Re-run all tables from row 0 — skips duplicates via ON CONFLICT" side="top">
                                 <button
@@ -941,7 +948,7 @@ export default function SchedulerPage() {
                                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Table summary</p>
                                 <div className="space-y-1.5">
                                   {([
-                                    ['completed', 'Completed', 'text-emerald-500'], ['running', 'Running', 'text-violet-500'],
+                                    ['completed', 'Completed', 'text-emerald-500'], ['completed_with_issues', 'Issues', 'text-amber-500'], ['failed', 'Failed', 'text-rose-500'], ['running', 'Running', 'text-violet-500'],
                                     ['paused', 'Paused', 'text-amber-500'], ['aborted', 'Stopped', 'text-rose-500'],
                                     ['pending', 'Pending', 'text-slate-400'],
                                   ] as const).map(([status, label, color]) => {
@@ -985,8 +992,8 @@ export default function SchedulerPage() {
                               return matchesText && (!hideCompleted || ts.status !== 'completed') && (tableStatusFilter === 'all' || ts.status === tableStatusFilter);
                             }).map(ts => {
                               const processed = Math.max(ts.offset, ts.rowsMigrated + ts.rowsSkipped + ts.rowsErrored);
-                              const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(processed / ts.rowsSource * 100)) : (ts.status === 'completed' ? 100 : 0);
-                              const barColor = ts.status === 'completed' ? 'bg-emerald-500' : ts.status === 'failed' ? 'bg-rose-500' : 'bg-violet-500';
+                              const pct = ts.rowsSource > 0 ? Math.min(100, Math.round(processed / ts.rowsSource * 100)) : (ts.status === 'completed' || ts.status === 'completed_with_issues' ? 100 : 0);
+                              const barColor = ts.status === 'completed' ? 'bg-emerald-500' : ts.status === 'completed_with_issues' ? 'bg-amber-500' : ts.status === 'failed' ? 'bg-rose-500' : 'bg-violet-500';
                               const isLogSelected = runLogSelection?.runId === run.id && runLogSelection.tableId === ts.id;
                               return (
                                 <div key={ts.id} className="w-full">
@@ -1012,8 +1019,8 @@ export default function SchedulerPage() {
                                     {ts.status === 'pending' && <button type="button" title="Run table" onClick={() => void handleTableAction(run.id, ts.id, 'run')} className="rounded p-1 text-emerald-500 hover:bg-emerald-50"><Play size={12} /></button>}
                                     {(ts.status === 'running' || ts.status === 'pending') && <button type="button" title="Pause table" onClick={() => void handleTableAction(run.id, ts.id, 'pause')} className="rounded p-1 text-amber-500 hover:bg-amber-50"><Pause size={12} /></button>}
                                     {ts.status === 'paused' && <button type="button" title="Resume table" onClick={() => void handleTableAction(run.id, ts.id, 'resume')} className="rounded p-1 text-violet-500 hover:bg-violet-50"><Play size={12} /></button>}
-                                    {!['completed', 'rolled_back', 'aborted'].includes(ts.status) && <button type="button" title="Stop table" onClick={() => void handleTableAction(run.id, ts.id, 'stop')} className="rounded p-1 text-rose-500 hover:bg-rose-50"><Square size={11} /></button>}
-                                    {['completed', 'failed', 'aborted'].includes(ts.status) && <button type="button" title="Restart table" onClick={() => void handleTableAction(run.id, ts.id, 'restart')} className="rounded p-1 text-blue-500 hover:bg-blue-50"><RefreshCw size={12} /></button>}
+                                    {!['completed', 'completed_with_issues', 'rolled_back', 'aborted'].includes(ts.status) && <button type="button" title="Stop table" onClick={() => void handleTableAction(run.id, ts.id, 'stop')} className="rounded p-1 text-rose-500 hover:bg-rose-50"><Square size={11} /></button>}
+                                    {['completed', 'completed_with_issues', 'failed', 'aborted'].includes(ts.status) && <button type="button" title={ts.status === 'completed_with_issues' ? 'Restart table to retry unresolved rows' : 'Restart table'} onClick={() => void handleTableAction(run.id, ts.id, 'restart')} className="rounded p-1 text-blue-500 hover:bg-blue-50"><RefreshCw size={12} /></button>}
                                     {tableActionKey?.startsWith(`${run.id}:${ts.id}:`) && <Loader2 size={11} className="animate-spin text-slate-400" />}
                                     <button type="button" onClick={() => setRunLogSelection(isLogSelected ? null : { runId: run.id, tableId: ts.id })}
                                       className={`rounded p-1 ${isLogSelected ? 'bg-violet-100 text-violet-600 dark:bg-violet-950/50' : ts.rowsErrored > 0 ? 'text-rose-500 hover:bg-rose-50' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`} title="View table run log">

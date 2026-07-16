@@ -486,6 +486,7 @@ async function main() {
 
   await tgtConnect();
   let failures = 0;
+  let issueTables = 0;
 
   for (const table of tables) {
     const key = table.sourceSchema + '.' + table.sourceTable;
@@ -505,6 +506,7 @@ async function main() {
       let offset = st.offset;
       let migrated = st.migratedRows;
       let chunkNo = Math.floor(offset / args.chunk);
+      let tableErrors = 0;
 
       while (true) {
         const rows = await readChunk(table, offset, args.chunk, inc, rangeFilter);
@@ -516,6 +518,7 @@ async function main() {
         const r = await insertRows(table, transformed, useUpsert);
         offset += rows.length;
         migrated += r.inserted;
+        tableErrors += r.errored;
         chunkNo++;
         state[key] = { done: false, offset, migratedRows: migrated };
         saveState(state);
@@ -524,6 +527,16 @@ async function main() {
         console.log('[' + key + '] ' + migrated.toLocaleString() + '/' + total.toLocaleString() + ' (' + fmtPct(offset, total) + ') — chunk ' + chunkNo + errPart);
 
         if (rows.length < args.chunk) break;
+      }
+
+      if (tableErrors > 0) {
+        issueTables++;
+        // Successful inserts are idempotent. Restarting the pending window is
+        // safer than committing a watermark past unresolved row errors.
+        state[key] = { done: false, offset: 0, migratedRows: 0, watermark: null, error: tableErrors + ' unresolved row error(s)' };
+        saveState(state);
+        console.warn('[' + key + '] ⚠ completed with issues (' + tableErrors + ' row errors) — watermark not advanced; resume will retry the full pending window');
+        continue;
       }
 
       let newWatermark = null;
@@ -544,6 +557,9 @@ async function main() {
   if (failures > 0) {
     console.log('Done with ' + failures + ' failed table(s). Re-run with --resume to retry from last chunk.');
     process.exit(1);
+  } else if (issueTables > 0) {
+    console.log('Completed with issues in ' + issueTables + ' table(s). Watermarks were held; re-run with --resume after fixing the row errors.');
+    process.exit(2);
   } else {
     console.log('All tables migrated successfully.');
     if (state && Object.keys(state).length) console.log('State saved to ' + STATE_FILE + ' (delete to start fresh).');

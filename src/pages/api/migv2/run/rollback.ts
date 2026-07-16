@@ -11,9 +11,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const run = loadRun(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
+  if (dropTable) return res.status(400).json({ error: 'Rollback never drops or truncates target tables. Use an explicit destructive maintenance action instead.' });
 
   try {
-    const rolled = await rollbackRun(run, target, dropTable ?? false);
+    const rolled = await rollbackRun(run, target);
     saveRun(rolled);
     return res.status(200).json({ run: rolled });
   } catch (err) {

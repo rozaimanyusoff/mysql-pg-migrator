@@ -21,7 +21,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const run = loadRun(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
   if (run.status === 'running') return res.status(400).json({ error: 'Run is already in progress' });
-  if (run.status === 'completed') return res.status(400).json({ error: 'Run already completed' });
+  if (run.status === 'completed' || run.status === 'completed_with_issues') return res.status(400).json({ error: 'Run already completed; restart the affected table to retry unresolved rows.' });
   if (activeRunCount(run.id) >= MAX_CONCURRENT_MIGRATIONS) return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
   if (!run.jobId) return res.status(400).json({ error: 'Run has no job to resolve connections from' });
 

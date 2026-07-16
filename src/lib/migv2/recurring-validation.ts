@@ -1,4 +1,4 @@
-import type { ColumnMap, TableMap } from './types';
+import type { ColumnMap, MigrationAdvisory, TableMap } from './types';
 
 export interface RecurringConfigIssue {
   tableId: string;
@@ -6,9 +6,7 @@ export interface RecurringConfigIssue {
   message: string;
 }
 
-export interface MigrationConfigNotice extends RecurringConfigIssue {
-  level: 'warning' | 'info';
-}
+export type MigrationConfigNotice = MigrationAdvisory;
 
 export interface MigrationAssessment {
   oneOffReady: boolean;
@@ -73,7 +71,7 @@ function validateRecurringTableOnly(table: TableMap): RecurringConfigIssue[] {
 
   if (table.syncMode === 'incremental') {
     if (!table.incrementalCol) {
-      issues.push(issue('Incremental sync needs a tracking column, or change the strategy to Full scan + upsert.'));
+    issues.push(issue('Incremental changes need a tracking column, or change the strategy to Full scan · Insert & update.'));
     } else if (includedColumns.length && !includedColumns.some(column => column.sourceCol === table.incrementalCol)) {
       issues.push(issue(`Tracking column "${table.incrementalCol}" is not included in the mapping.`));
     }
@@ -83,7 +81,7 @@ function validateRecurringTableOnly(table: TableMap): RecurringConfigIssue[] {
   }
 
   if ((table.syncMode ?? 'full') === 'full' && table.fullSyncStrategy === 'upsert' && !inferredKey(table)) {
-    issues.push(issue('Full scan + upsert needs a mapped key, normally the source/target id column.'));
+    issues.push(issue('Full scan · Insert & update needs a mapped key, normally the source/target id column.'));
   }
 
   return issues;
@@ -111,13 +109,32 @@ function configurationNotices(tables: TableMap[]): MigrationConfigNotice[] {
           sourceKey,
           level: 'warning',
           message: `References "${ref}" which is ordered later. Move the parent earlier if the target enforces foreign keys.`,
+          reason: `This table references "${ref}", but that parent is ordered later in the job.`,
+          impact: 'The recurring run may hit a foreign-key violation when the target enforces that relationship.',
+          action: 'Move the referenced parent table earlier than this table in the job order.',
         });
       }
     }
     if ((table.syncMode ?? 'full') === 'full') {
       notices.push(table.fullSyncStrategy === 'upsert'
-        ? { tableId: table.id, sourceKey, level: 'info', message: 'Full scan + upsert does not mirror source deletions.' }
-        : { tableId: table.id, sourceKey, level: 'warning', message: 'Full scan + insert missing does not copy updates to rows already present in the target.' });
+        ? {
+            tableId: table.id,
+            sourceKey,
+            level: 'info',
+            message: 'Full scan · Insert & update does not mirror source deletions.',
+            reason: 'Upsert inserts new rows and updates matching rows, but it does not remove target rows missing from the source.',
+            impact: 'Deleted source records can remain in the target after recurring runs.',
+            action: 'Accept this retention behaviour or manage target deletions through a separate reviewed process.',
+          }
+        : {
+            tableId: table.id,
+            sourceKey,
+            level: 'warning',
+            message: 'Full scan · Insert new only does not copy updates to rows already present in the target.',
+            reason: 'Insert missing only adds rows whose key is not already present in the target.',
+            impact: 'Changes to existing source records will not be reflected in the target.',
+            action: 'Use Full scan · Insert & update when a mapped key is available, or configure Incremental changes when appropriate.',
+          });
     }
   });
   return notices;

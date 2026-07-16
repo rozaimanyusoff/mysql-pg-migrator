@@ -1,7 +1,7 @@
 import type { MigRunTableState, TableRunStatus } from './types';
 
 const TERMINAL_TABLE_STATUSES = new Set<TableRunStatus>([
-  'completed', 'failed', 'rolled_back', 'aborted',
+  'completed', 'completed_with_issues', 'failed', 'rolled_back', 'aborted',
 ]);
 
 export function isEmptyTableResult(state: MigRunTableState): boolean {
@@ -9,7 +9,7 @@ export function isEmptyTableResult(state: MigRunTableState): boolean {
 }
 
 export function isMigratedTableResult(state: MigRunTableState): boolean {
-  return state.status === 'completed' && state.rowsSource > 0;
+  return (state.status === 'completed' || state.status === 'completed_with_issues') && state.rowsSource > 0;
 }
 
 export function displayTableStatus(state: MigRunTableState): TableRunStatus | 'empty' {
@@ -23,6 +23,7 @@ export interface RunTableProgress {
   completed: number;
   empty: number;
   failed: number;
+  issues: number;
 }
 
 export function summarizeRunTableProgress(states: MigRunTableState[]): RunTableProgress {
@@ -35,5 +36,6 @@ export function summarizeRunTableProgress(states: MigRunTableState[]): RunTableP
     completed: states.filter(isMigratedTableResult).length,
     empty: states.filter(isEmptyTableResult).length,
     failed: states.filter(state => state.status === 'failed').length,
+    issues: states.filter(state => state.status === 'completed_with_issues').length,
   };
 }

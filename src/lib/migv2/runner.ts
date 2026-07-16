@@ -10,6 +10,7 @@ import { runWithTableWorkerLimit } from './table-worker-pool';
 import { usesUpsertStrategy } from './sync-strategy';
 import { buildWhere, cursorValue, type IncrementalFilter, type RangeFilter } from './cursor-query';
 import { runChunkRows } from './execution-policy';
+import { completedTableStatus, rollbackAvailability } from './run-outcome';
 
 const MAX_ROLLBACK_PKS = 5_000;
 
@@ -852,7 +853,7 @@ export async function advanceRun(
         .map(c => c.sourceCol as string);
 
       if (!srcCols.length) {
-        ts.status = 'completed';
+        ts.status = completedTableStatus(ts);
         log(`[${ts.sourceKey}] no columns mapped, skipping`);
         return;
       }
@@ -873,7 +874,7 @@ export async function advanceRun(
 
       if (!chunk.length) {
         ts.hasMore = false;
-        ts.status = 'completed';
+          ts.status = completedTableStatus(ts);
         ts.completedAt = new Date().toISOString();
         const tableElapsed = ts.startedAt ? Math.max(0.001, (Date.parse(ts.completedAt) - Date.parse(ts.startedAt)) / 1000) : 0;
         ts.rowsPerSecond = tableElapsed ? Number((ts.rowsMigrated / tableElapsed).toFixed(1)) : null;
@@ -882,9 +883,13 @@ export async function advanceRun(
           : `[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
         // Record watermark even when no new rows (source max may have advanced)
-        if (isIncremental && tableMap.incrementalCol) {
+        if (isIncremental && tableMap.incrementalCol && ts.rowsErrored === 0) {
           ts.newWatermark = tableMap.lastSyncedValue ?? null;
           ts.newWatermarkPk = tableMap.lastSyncedPk ?? null;
+        } else if (isIncremental && ts.rowsErrored > 0) {
+          ts.newWatermark = null;
+          ts.newWatermarkPk = null;
+          log(`[${ts.sourceKey}] watermark held at ${tableMap.lastSyncedValue ?? 'beginning'} because ${ts.rowsErrored} row error${ts.rowsErrored === 1 ? '' : 's'} remain unresolved`);
         }
         return;
       }
@@ -986,17 +991,21 @@ export async function advanceRun(
 
       if (chunk.length < chunkSize) {
         ts.hasMore = false;
-        ts.status = 'completed';
+        ts.status = completedTableStatus(ts);
         ts.completedAt = new Date().toISOString();
         const tableElapsed = ts.startedAt ? Math.max(0.001, (Date.parse(ts.completedAt) - Date.parse(ts.startedAt)) / 1000) : 0;
         ts.rowsPerSecond = tableElapsed ? Number((ts.rowsMigrated / tableElapsed).toFixed(1)) : null;
         log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         // Record new high-water mark for incremental sync
-        if (isIncremental && tableMap.incrementalCol) {
+        if (isIncremental && tableMap.incrementalCol && ts.rowsErrored === 0) {
           const lastRow = chunk[chunk.length - 1];
           ts.newWatermark = cursorValue(lastRow[tableMap.incrementalCol]);
           ts.newWatermarkPk = useCompositeCursor && sourcePkCol ? cursorValue(lastRow[sourcePkCol]) : null;
           if (ts.newWatermark) log(`[${ts.sourceKey}] last synced position updated → ${ts.newWatermark}${ts.newWatermarkPk ? ` / PK ${ts.newWatermarkPk}` : ''}`);
+        } else if (isIncremental && ts.rowsErrored > 0) {
+          ts.newWatermark = null;
+          ts.newWatermarkPk = null;
+          log(`[${ts.sourceKey}] watermark held at ${tableMap.lastSyncedValue ?? 'beginning'} because ${ts.rowsErrored} row error${ts.rowsErrored === 1 ? '' : 's'} remain unresolved`);
         }
       } else {
         ts.hasMore = true;
@@ -1011,11 +1020,12 @@ export async function advanceRun(
   });
 
   // Check overall completion
-  const allDone = run.tableStates.every(t => t.status === 'completed' || t.status === 'failed' || t.status === 'rolled_back' || t.status === 'aborted');
+  const allDone = run.tableStates.every(t => t.status === 'completed' || t.status === 'completed_with_issues' || t.status === 'failed' || t.status === 'rolled_back' || t.status === 'aborted');
   const anyFailed = run.tableStates.some(t => t.status === 'failed');
   if (allDone) {
     const anyAborted = run.tableStates.some(t => t.status === 'aborted');
-    run.status = anyFailed ? 'failed' : anyAborted ? 'aborted' : 'completed';
+    const anyIssues = run.tableStates.some(t => t.status === 'completed_with_issues');
+    run.status = anyFailed ? 'failed' : anyAborted ? 'aborted' : anyIssues ? 'completed_with_issues' : 'completed';
     run.completedAt = new Date().toISOString();
     const elapsedSeconds = run.startedAt ? Math.max(0.001, (Date.parse(run.completedAt) - Date.parse(run.startedAt)) / 1000) : null;
     const targetSeconds = run.executionPolicy?.performanceTargetSeconds ?? 15 * 60;
@@ -1092,33 +1102,26 @@ export async function rollbackTable(
   run: MigRun,
   tableId: string,
   target: MigConn,
-  dropTable = false
 ): Promise<MigRun> {
   function log(msg: string) {
     run.logs.push(`[${new Date().toISOString()}] ROLLBACK: ${msg}`);
   }
 
   const ts = run.tableStates.find(t => t.id === tableId);
-  if (!ts) { log(`table ${tableId} not found in run`); return run; }
-  if (ts.status !== 'completed' && ts.status !== 'failed') {
-    log(`${ts.sourceKey}: cannot rollback — status is ${ts.status}`);
-    return run;
+  if (!ts) throw new Error(`Table ${tableId} was not found in this run.`);
+  if (ts.status !== 'completed' && ts.status !== 'completed_with_issues' && ts.status !== 'failed') {
+    throw new Error(`Cannot rollback ${ts.sourceKey} while its status is ${ts.status}.`);
   }
 
   const tableMap = run.tables.find(t => t.id === tableId);
-  if (!tableMap) { log(`tableMap ${tableId} missing`); return run; }
+  if (!tableMap) throw new Error(`Table mapping ${tableId} is missing from the run snapshot.`);
 
   const schema = tableMap.target.schema;
   const table = resolveTargetTable(tableMap);
+  const availability = rollbackAvailability(ts);
+  if (!availability.available) throw new Error(`Exact rollback unavailable for ${ts.targetKey}: ${availability.reason}`);
   try {
-    if (ts.pkOverflow || !ts.targetPkCol || !ts.insertedPks.length) {
-      if (target.type === 'postgresql') {
-        await withPg(target, c => c.query(`TRUNCATE "${schema}"."${table}" CASCADE`).then(() => undefined));
-      } else {
-        await withMysql(target, c => c.query(`TRUNCATE TABLE \`${schema}\`.\`${table}\``).then(() => undefined));
-      }
-      log(`${ts.targetKey}: truncated (${ts.pkOverflow ? 'pk list overflowed' : 'no pk tracked'})`);
-    } else {
+    if (ts.insertedPks.length > 0) {
       const pkCol = ts.targetPkCol;
       if (target.type === 'postgresql') {
         const phs = ts.insertedPks.map((_, i) => `$${i + 1}`).join(', ');
@@ -1134,16 +1137,10 @@ export async function rollbackTable(
       log(`${ts.targetKey}: deleted ${ts.insertedPks.length} rows`);
     }
     ts.status = 'rolled_back';
-    if (dropTable) {
-      if (target.type === 'postgresql') {
-        await withPg(target, c => c.query(`DROP TABLE IF EXISTS "${schema}"."${table}" CASCADE`).then(() => undefined));
-      } else {
-        await withMysql(target, c => c.query(`DROP TABLE IF EXISTS \`${schema}\`.\`${table}\``).then(() => undefined));
-      }
-      log(`${ts.targetKey}: table dropped`);
-    }
   } catch (err) {
-    log(`${ts.targetKey} rollback ERROR: ${err instanceof Error ? err.message : String(err)}`);
+    const message = err instanceof Error ? err.message : String(err);
+    log(`${ts.targetKey} rollback ERROR: ${message}`);
+    throw err;
   }
 
   return run;
@@ -1152,61 +1149,71 @@ export async function rollbackTable(
 export async function rollbackRun(
   run: MigRun,
   target: MigConn,
-  dropTable = false
 ): Promise<MigRun> {
   function log(msg: string) {
     run.logs.push(`[${new Date().toISOString()}] ROLLBACK: ${msg}`);
   }
 
-  for (const ts of run.tableStates) {
-    if (ts.status !== 'completed' && ts.status !== 'failed') continue;
-    const tableMap = run.tables.find(t => t.id === ts.id);
-    if (!tableMap) continue;
+  const candidates = run.tableStates.filter(ts => ts.status === 'completed' || ts.status === 'completed_with_issues' || ts.status === 'failed');
+  const unavailable = candidates.flatMap(ts => {
+    const availability = rollbackAvailability(ts);
+    return availability.available ? [] : [`${ts.targetKey}: ${availability.reason}`];
+  });
+  if (unavailable.length) {
+    throw new Error(`Exact rollback unavailable. No changes were made. ${unavailable.join(' ')}`);
+  }
 
-    const schema = tableMap.target.schema;
-    const table = resolveTargetTable(tableMap);
-
-    try {
-      if (ts.pkOverflow || !ts.targetPkCol || !ts.insertedPks.length) {
-        // Fallback: truncate (user accepted this risk)
-        if (target.type === 'postgresql') {
-          await withPg(target, c => c.query(`TRUNCATE "${schema}"."${table}" CASCADE`).then(() => undefined));
-        } else {
-          await withMysql(target, c => c.query(`TRUNCATE TABLE \`${schema}\`.\`${table}\``).then(() => undefined));
-        }
-        log(`${ts.targetKey}: truncated (${ts.pkOverflow ? 'pk list overflowed' : 'no pk tracked'})`);
-      } else {
-        const pkCol = ts.targetPkCol;
-        if (target.type === 'postgresql') {
-          const phs = ts.insertedPks.map((_, i) => `$${i + 1}`).join(', ');
-          await withPg(target, c =>
-            c.query(`DELETE FROM "${schema}"."${table}" WHERE "${pkCol}" IN (${phs})`, ts.insertedPks).then(() => undefined)
-          );
-        } else {
-          const phs = ts.insertedPks.map(() => '?').join(', ');
-          await withMysql(target, c =>
-            c.query(`DELETE FROM \`${schema}\`.\`${table}\` WHERE \`${pkCol}\` IN (${phs})`, ts.insertedPks).then(() => undefined)
-          );
-        }
-        log(`${ts.targetKey}: deleted ${ts.insertedPks.length} rows`);
-      }
-      ts.status = 'rolled_back';
-      if (dropTable) {
+  try {
+    if (target.type === 'postgresql') {
+      await withPg(target, async client => {
+        await client.query('BEGIN');
         try {
-          if (target.type === 'postgresql') {
-            await withPg(target, c => c.query(`DROP TABLE IF EXISTS "${schema}"."${table}" CASCADE`).then(() => undefined));
-          } else {
-            await withMysql(target, c => c.query(`DROP TABLE IF EXISTS \`${schema}\`.\`${table}\``).then(() => undefined));
+          for (const ts of candidates) {
+            if (!ts.insertedPks.length) continue;
+            const tableMap = run.tables.find(t => t.id === ts.id);
+            if (!tableMap) throw new Error(`Table mapping ${ts.id} is missing from the run snapshot.`);
+            const placeholders = ts.insertedPks.map((_, index) => `$${index + 1}`).join(', ');
+            await client.query(
+              `DELETE FROM "${tableMap.target.schema}"."${resolveTargetTable(tableMap)}" WHERE "${ts.targetPkCol!}" IN (${placeholders})`,
+              ts.insertedPks,
+            );
           }
-          log(`${ts.targetKey}: table dropped`);
-        } catch (dropErr) {
-          log(`${ts.targetKey} DROP ERROR: ${dropErr instanceof Error ? dropErr.message : String(dropErr)}`);
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
         }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`${ts.targetKey} rollback ERROR: ${msg}`);
+      });
+    } else {
+      await withMysql(target, async connection => {
+        await connection.beginTransaction();
+        try {
+          for (const ts of candidates) {
+            if (!ts.insertedPks.length) continue;
+            const tableMap = run.tables.find(t => t.id === ts.id);
+            if (!tableMap) throw new Error(`Table mapping ${ts.id} is missing from the run snapshot.`);
+            const placeholders = ts.insertedPks.map(() => '?').join(', ');
+            await connection.query(
+              `DELETE FROM \`${tableMap.target.schema}\`.\`${resolveTargetTable(tableMap)}\` WHERE \`${ts.targetPkCol!}\` IN (${placeholders})`,
+              ts.insertedPks,
+            );
+          }
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        }
+      });
     }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`run rollback ERROR: ${message}`);
+    throw err;
+  }
+
+  for (const ts of candidates) {
+    if (ts.insertedPks.length > 0) log(`${ts.targetKey}: deleted ${ts.insertedPks.length} rows`);
+    ts.status = 'rolled_back';
   }
 
   run.status = 'rolled_back';

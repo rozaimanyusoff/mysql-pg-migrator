@@ -93,7 +93,7 @@ export interface CronSchedule {
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
-  lastRunStatus: 'completed' | 'failed' | 'running' | 'paused' | null;
+  lastRunStatus: 'completed' | 'completed_with_issues' | 'failed' | 'running' | 'paused' | null;
   lastRunId: string | null;
   notifyEmail?: string | null;   // email to notify on completion/failure (optional)
   chunkMode?: 'auto' | 'fixed';
@@ -133,6 +133,16 @@ export interface MigJobTableSummary {
   truncateBeforeMigrate?: boolean;
 }
 
+export interface MigrationAdvisory {
+  tableId: string;
+  sourceKey: string;
+  level: 'warning' | 'info';
+  message: string;
+  reason: string;
+  impact: string;
+  action: string;
+}
+
 export interface MigJobSummary {
   id: string;
   name: string;
@@ -144,6 +154,7 @@ export interface MigJobSummary {
   tables: MigJobTableSummary[];
   scheduleReady: boolean;
   scheduleIssues: number;
+  advisories: MigrationAdvisory[];
 }
 
 export interface SchedulerJobSummary {
@@ -164,8 +175,8 @@ export interface SchedulerJobSummary {
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
-export type RunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
-export type TableRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'rolled_back' | 'aborted';
+export type RunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'completed_with_issues' | 'failed' | 'rolled_back' | 'aborted';
+export type TableRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'completed_with_issues' | 'failed' | 'rolled_back' | 'aborted';
 
 export interface RunExecutionPolicy {
   mode: 'auto' | 'fixed';
@@ -184,6 +195,9 @@ export interface RunExecutionPolicy {
 
 export interface MigRunTableState {
   id: string;           // = tableMap.id
+  /** Client-side Pending Save identity. Legacy run files may omit these fields. */
+  pendingId?: string;
+  originRunId?: string;
   sourceKey: string;    // "schema.table"
   targetKey: string;
   status: TableRunStatus;

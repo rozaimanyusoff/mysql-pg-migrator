@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { assessMigrationTables } from '../../../../lib/migv2/recurring-validation';
 import { createRunExecutionPolicy } from '../../../../lib/migv2/execution-policy';
 import { driveRun } from '../../../../lib/migv2/run-driver';
+import { validateMigrationBindings } from '../../../../lib/migv2/preflight';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -28,6 +29,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(422).json({
       error: `Migration setup has ${assessment.oneOffIssues.length} blocking issue${assessment.oneOffIssues.length !== 1 ? 's' : ''}.`,
       setupIssues: assessment.oneOffIssues,
+    });
+  }
+  const bindingIssues = await validateMigrationBindings(tables, source, target);
+  if (bindingIssues.length) {
+    return res.status(422).json({
+      error: `Migration has ${bindingIssues.length} missing or unverifiable physical binding${bindingIssues.length !== 1 ? 's' : ''}. Rebind the saved job before running.`,
+      bindingIssues,
     });
   }
   if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) {

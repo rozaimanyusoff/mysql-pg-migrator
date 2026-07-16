@@ -19,6 +19,8 @@ import { createRunExecutionPolicy, runChunkRows } from '../src/lib/migv2/executi
 import { calculateChunkCapability } from '../src/lib/migv2/server-capabilities.ts';
 import { runWithTableWorkerLimit } from '../src/lib/migv2/table-worker-pool.ts';
 import { displayTableStatus, isMigratedTableResult, summarizeRunTableProgress } from '../src/lib/migv2/run-progress.ts';
+import { pendingResultId, pendingState, pendingTablesToAdd, tableBindingSignature } from '../src/lib/migv2/pending-result.ts';
+import { canPersistWatermark, completedTableStatus, rollbackAvailability } from '../src/lib/migv2/run-outcome.ts';
 import type { PreflightReport } from '../src/lib/migv2/preflight.ts';
 import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
 
@@ -131,8 +133,81 @@ test('zero-row completion is presented as empty and table progress reports remai
   assert.equal(isMigratedTableResult(base), false);
   assert.equal(isMigratedTableResult(migrated), true);
   assert.deepEqual(summarizeRunTableProgress([base, migrated, pending]), {
-    total: 3, finished: 2, remaining: 1, completed: 1, empty: 1, failed: 0,
+    total: 3, finished: 2, remaining: 1, completed: 1, empty: 1, failed: 0, issues: 0,
   });
+});
+
+test('row outcomes distinguish clean completion from completed with issues', () => {
+  const clean = {
+    id: 'table-a', sourceKey: 'src.a', targetKey: 'dst.a', status: 'running' as const,
+    rowsSource: 3, rowsMigrated: 3, rowsSkipped: 0, rowsErrored: 0,
+    offset: 3, hasMore: false, error: null, insertedPks: ['1', '2', '3'], pkOverflow: false, targetPkCol: 'id',
+  };
+  assert.equal(completedTableStatus(clean), 'completed');
+  assert.equal(completedTableStatus({ ...clean, rowsRejected: 1 }), 'completed_with_issues');
+  assert.equal(completedTableStatus({ ...clean, rowsErrored: 1 }), 'completed_with_issues');
+});
+
+test('watermark commits only after a terminal table with no unresolved row errors', () => {
+  const base = {
+    id: 'table-a', sourceKey: 'src.a', targetKey: 'dst.a', status: 'completed_with_issues' as const,
+    rowsSource: 3, rowsMigrated: 2, rowsSkipped: 0, rowsErrored: 1,
+    offset: 3, hasMore: false, error: null, insertedPks: ['1', '2'], pkOverflow: false, targetPkCol: 'id',
+    newWatermark: '2026-07-17T00:00:00Z',
+  };
+  assert.equal(canPersistWatermark(base), false);
+  assert.equal(canPersistWatermark({ ...base, rowsErrored: 0, rowsRejected: 1 }), true);
+  assert.equal(canPersistWatermark({ ...base, rowsErrored: 0, status: 'running' }), false);
+});
+
+test('rollback is exact-only and rejects incomplete inserted-key evidence', () => {
+  const exact = {
+    id: 'table-a', sourceKey: 'src.a', targetKey: 'dst.a', status: 'completed' as const,
+    rowsSource: 2, rowsMigrated: 2, rowsSkipped: 0, rowsErrored: 0,
+    offset: 2, hasMore: false, error: null, insertedPks: ['1', '2'], pkOverflow: false, targetPkCol: 'id',
+  };
+  assert.equal(rollbackAvailability(exact).available, true);
+  assert.equal(rollbackAvailability({ ...exact, insertedPks: [] }).available, false);
+  assert.equal(rollbackAvailability({ ...exact, pkOverflow: true }).available, false);
+  assert.equal(rollbackAvailability({ ...exact, targetPkCol: null }).available, false);
+  assert.equal(rollbackAvailability({ ...exact, rowsMigrated: 0, insertedPks: [], targetPkCol: null }).available, true);
+});
+
+test('Pending Save identity survives source and target renames', () => {
+  const base = {
+    id: 'table-a', sourceKey: 'old.orders', targetKey: 'public.orders', status: 'completed' as const,
+    rowsSource: 3, rowsMigrated: 3, rowsSkipped: 0, rowsErrored: 0,
+    offset: 3, hasMore: false, error: null, insertedPks: [], pkOverflow: false, targetPkCol: null,
+  };
+  const snapshot = pendingState('run-a', base);
+  assert.equal(pendingResultId(snapshot), 'run-a:table-a');
+  assert.equal(pendingResultId({ ...snapshot, sourceKey: 'renamed.orders_v2', targetKey: 'archive.orders_v2' }), 'run-a:table-a');
+});
+
+test('physical binding fallback includes database, schemas and target alias', () => {
+  const table = {
+    id: 'table-a', include: true, sourceDatabase: 'legacy',
+    source: { schema: 'sales', table: 'orders' }, target: { schema: 'public', table: 'orders' },
+    targetAlias: 'orders_v2', columns: [], truncateBeforeMigrate: false,
+  } satisfies TableMap;
+  assert.equal(tableBindingSignature(table), ['legacy', 'sales', 'orders', 'public', 'orders_v2'].join('\u0000'));
+  assert.notEqual(tableBindingSignature(table), tableBindingSignature({ ...table, source: { ...table.source, table: 'orders_renamed' } }));
+});
+
+test('Pending Save links same table ID without restoring its stale binding', () => {
+  const current = {
+    id: 'table-a', include: true, sourceDatabase: 'renamed_db',
+    source: { schema: 'sales', table: 'orders_v2' }, target: { schema: 'public', table: 'orders_v2' },
+    columns: [], truncateBeforeMigrate: false,
+  } satisfies TableMap;
+  const oldSnapshot = {
+    ...current, sourceDatabase: 'legacy_db',
+    source: { schema: 'sales', table: 'orders' }, target: { schema: 'public', table: 'orders' },
+  } satisfies TableMap;
+  assert.deepEqual(pendingTablesToAdd([current], [oldSnapshot]), []);
+
+  const unmatched = { ...oldSnapshot, id: 'table-b' } satisfies TableMap;
+  assert.deepEqual(pendingTablesToAdd([current], [unmatched]), [unmatched]);
 });
 
 test('timestamp cursor uses primary-key tie breaker', () => {
@@ -540,8 +615,14 @@ test('Migration assessment owns FK ordering and sync-strategy notices', () => {
   };
   const assessment = assessMigrationTables([child, parent]);
   assert.equal(assessment.recurringReady, true);
-  assert.ok(assessment.notices.some(notice => /ordered later/.test(notice.message)));
-  assert.ok(assessment.notices.some(notice => /does not copy updates/.test(notice.message)));
+  const orderingAdvisory = assessment.notices.find(notice => /ordered later/.test(notice.message));
+  const insertAdvisory = assessment.notices.find(notice => /does not copy updates/.test(notice.message));
+  assert.ok(orderingAdvisory);
+  assert.match(orderingAdvisory.reason, /parent is ordered later/);
+  assert.match(orderingAdvisory.impact, /foreign-key violation/);
+  assert.match(orderingAdvisory.action, /Move the referenced parent table earlier/);
+  assert.ok(insertAdvisory);
+  assert.match(insertAdvisory.action, /Full scan · Insert & update/);
 });
 
 test('pre-flight UI preserves structured server diagnostics', () => {
