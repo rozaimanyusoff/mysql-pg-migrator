@@ -19,6 +19,7 @@ import { useAlert } from '../lib/alert-context';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { suggestTargetType, isPkLikeSerial } from '../lib/migv2/type-map';
 import { assessMigrationTables } from '../lib/migv2/recurring-validation';
+import { displayTableStatus, isMigratedTableResult, summarizeRunTableProgress } from '../lib/migv2/run-progress';
 import type { CronSchedule, MigConn, TableMap, ColumnMap, MigJob, MigJobSummary, MigJobTableSummary, MigRun, MigRunTableState, IdConversion, NullPolicy, EmptyPolicy } from '../lib/migv2/types';
 import type { DiagnoseResult } from './api/ai/diagnose';
 import type { MigTableInfo } from './api/migv2/tables';
@@ -72,12 +73,14 @@ function StatusBadge({ status }: { status: string }) {
     pending: 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300',
     running: 'bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300',
     completed: 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300',
+    empty: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
     failed: 'bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300',
     rolled_back: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
     aborted: 'bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300',
   };
   const Icon = status === 'running' ? Loader2
     : status === 'completed' ? CheckCircle2
+    : status === 'empty' ? Info
     : status === 'failed' ? AlertTriangle
     : status === 'rolled_back' ? Undo2
     : status === 'aborted' ? X
@@ -345,7 +348,7 @@ export default function Migration() {
 
   // ── Target column cache ───────────────────────────────────────────────────────
   const [tgtColsCache, setTgtColsCache] = useState<Record<string, MigColumnInfo[]>>({});
-  const [newSchemaBannerDismissed, setNewSchemaBannerDismissed] = useState(false);
+  const [acknowledgedNewSchemaKeys, setAcknowledgedNewSchemaKeys] = useState<Set<string>>(new Set());
   const [showMappingDesign, setShowMappingDesign] = useState(false);
   const [showRunReport, setShowRunReport] = useState(false);
 
@@ -354,6 +357,10 @@ export default function Migration() {
     void axios.get<{ connections: ConnectionRow[] }>('/api/connections')
       .then(r => setConnections(r.data.connections))
       .catch(() => {});
+    try {
+      const stored = JSON.parse(sessionStorage.getItem('migv2_acknowledged_new_schemas') ?? '[]') as string[];
+      setAcknowledgedNewSchemaKeys(new Set(stored));
+    } catch { /* ignore malformed browser state */ }
   }, []);
 
   // ── Source DB loading ─────────────────────────────────────────────────────────
@@ -836,6 +843,11 @@ export default function Migration() {
 
   const includedCount = tableMaps.filter(m => m.include).length;
   const canStart = srcConnected && tgtConnected && includedCount > 0 && !polling;
+  const runTableProgress = currentRun
+    ? summarizeRunTableProgress(currentRun.tableStates)
+    : polling
+      ? { total: includedCount, finished: 0, remaining: includedCount, completed: 0, empty: 0, failed: 0 }
+      : null;
 
   // Included tables whose target table does not exist yet — these are created
   // fresh on first run, preserving source columns & data types. Drives the
@@ -852,12 +864,17 @@ export default function Migration() {
     [tableMaps, tgtTables]
   );
   const newTargetSchema = newTargetTables[0]?.target.schema ?? '';
-  // Re-show banner whenever a genuinely new auto-create candidate appears
-  const prevNewTargetCountRef = useRef(0);
-  useEffect(() => {
-    if (newTargetTables.length > prevNewTargetCountRef.current) setNewSchemaBannerDismissed(false);
-    prevNewTargetCountRef.current = newTargetTables.length;
-  }, [newTargetTables.length]);
+  const newSchemaDecisionKey = newTargetSchema
+    ? `${tgtConn.type}:${tgtConn.host}:${tgtConn.port}:${tgtConn.database}:${newTargetSchema}`
+    : '';
+  const acknowledgeNewSchema = (key: string) => {
+    if (!key) return;
+    setAcknowledgedNewSchemaKeys(previous => {
+      const next = new Set(previous).add(key);
+      try { sessionStorage.setItem('migv2_acknowledged_new_schemas', JSON.stringify([...next])); } catch { /* unavailable */ }
+      return next;
+    });
+  };
 
   // Change the default target schema and re-point any table maps still on the
   // previous default, so already-selected tables follow the schema you pick.
@@ -1026,7 +1043,7 @@ export default function Migration() {
         };
         if (parsed.states?.length > 0) {
           const savedSet = new Set<string>(parsed.saved ?? []);
-          const unsaved = parsed.states.filter(ts => !savedSet.has(ts.sourceKey));
+          const unsaved = parsed.states.filter(ts => isMigratedTableResult(ts) && !savedSet.has(ts.sourceKey));
           if (unsaved.length > 0) {
             setAccumulatedTableStates(unsaved);
             setAccumulatedTableMaps(new Map(Object.entries(parsed.maps ?? {})));
@@ -1044,7 +1061,7 @@ export default function Migration() {
         const latest = data.runs.find(r => r.status === 'completed' || r.status === 'failed');
         if (!latest) return;
         const completedKeys = latest.tableStates
-          .filter(ts => ts.status === 'completed')
+          .filter(isMigratedTableResult)
           .map(ts => ts.sourceKey);
         if (completedKeys.length === 0) return;
         // Read which tables were already saved/cleared in a previous session
@@ -1060,7 +1077,7 @@ export default function Migration() {
         setMigratedTableKeys(new Set(completedKeys));
         if (savedKeys.size > 0) setSavedMigratedSources(savedKeys);
         // Populate accumulated state from restored run
-        const statesMap = new Map(latest.tableStates.filter(ts => ts.status === 'completed').map(ts => [ts.sourceKey, ts]));
+        const statesMap = new Map(latest.tableStates.filter(isMigratedTableResult).map(ts => [ts.sourceKey, ts]));
         setAccumulatedTableStates([...statesMap.values()]);
         const tMaps = new Map<string, TableMap>();
         for (const ts of statesMap.values()) {
@@ -1248,7 +1265,8 @@ export default function Migration() {
 
           const keys = new Set<string>();
           for (const [sourceKey, status] of tableLatestStatus) {
-            if (status === 'completed') keys.add(sourceKey);
+            const state = tableLatestState.get(sourceKey);
+            if (status === 'completed' && state && isMigratedTableResult(state)) keys.add(sourceKey);
           }
           setMigratedTableKeys(keys);
           // Restore accumulated table states so progress bars render on load
@@ -1575,7 +1593,8 @@ export default function Migration() {
   // Shared handler called whenever a run reaches a terminal state (completed/failed)
   const onRunFinished = (run: MigRun) => {
     setPolling(false);
-    const completedStates = run.tableStates.filter(ts => ts.status === 'completed');
+    const completedStates = run.tableStates.filter(isMigratedTableResult);
+    const emptyStates = run.tableStates.filter(ts => ts.status === 'completed' && ts.rowsSource === 0);
     const failedStates    = run.tableStates.filter(ts => ts.status === 'failed');
     const completedKeys = completedStates.map(ts => ts.sourceKey);
     if (completedKeys.length > 0) {
@@ -1607,6 +1626,12 @@ export default function Migration() {
         : `${completedStates.length} tables migrated — ${totalRows.toLocaleString()} rows total`;
       toast.success(msg, { duration: 4000 });
     }
+    if (emptyStates.length > 0) {
+      toast.info(`${emptyStates.length} empty source table${emptyStates.length !== 1 ? 's' : ''}`, {
+        description: 'Target structure is ready; no source rows were migrated.',
+        duration: 4000,
+      });
+    }
     if (failedStates.length > 0) {
       const detail = failedStates.map(ts => `${ts.sourceKey}: ${ts.error ?? 'unknown error'}`).join('\n');
       showError(
@@ -1627,6 +1652,7 @@ export default function Migration() {
       });
       return;
     }
+    acknowledgeNewSchema(newSchemaDecisionKey);
     stopRequestedRef.current = false;
     setPausedTableIds(new Set());
     setPolling(true);
@@ -2477,6 +2503,14 @@ export default function Migration() {
                       <div className="flex items-center gap-1.5 mb-1.5">
                         <Table2 size={12} className="text-violet-400 shrink-0" />
                         <span className="text-[12px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex-1">Tables</span>
+                        {runTableProgress && (
+                          <span
+                            title={`${runTableProgress.completed} migrated · ${runTableProgress.empty} empty · ${runTableProgress.failed} failed`}
+                            className="text-[11px] font-medium tabular-nums text-violet-600 dark:text-violet-300">
+                            {runTableProgress.finished.toLocaleString()}/{runTableProgress.total.toLocaleString()} finished
+                            {' · '}{runTableProgress.remaining.toLocaleString()} remaining
+                          </span>
+                        )}
                         {filteredTgtTables.length > 0 && (
                           <span className="text-[12px] text-slate-500 dark:text-slate-400">{filteredTgtTables.length}</span>
                         )}
@@ -2503,7 +2537,7 @@ export default function Migration() {
                     </div>
 
                     {/* New-schema migration guidance */}
-                    {!polling && tgtConnected && srcConnected && newTargetTables.length > 0 && !newSchemaBannerDismissed && (
+                    {!polling && tgtConnected && srcConnected && newTargetTables.length > 0 && !acknowledgedNewSchemaKeys.has(newSchemaDecisionKey) && (
                       <div className="shrink-0 mx-3 mt-2 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 p-3">
                         <div className="flex items-start gap-2">
                           <Info size={14} className="text-amber-500 shrink-0 mt-0.5" />
@@ -2539,7 +2573,7 @@ export default function Migration() {
                                   ? { ...m, target: { ...m.target, table: '' } }
                                   : m
                               ));
-                              setNewSchemaBannerDismissed(true);
+                              acknowledgeNewSchema(newSchemaDecisionKey);
                               setDirty(true);
                             }}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium border border-gray-300 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors ml-auto">
@@ -2583,7 +2617,8 @@ export default function Migration() {
                         const totalProcessed = (effectiveState?.rowsMigrated ?? 0) + (effectiveState?.rowsSkipped ?? 0);
                         const pct = effectiveState && effectiveState.rowsSource > 0
                           ? Math.min(100, Math.round(totalProcessed / effectiveState.rowsSource * 100))
-                          : effectiveState ? 0 : null;
+                          : null;
+                        const displayStatus = effectiveState ? displayTableStatus(effectiveState) : null;
                         const errorCount = effectiveState?.rowsErrored ?? 0;
                         const hasErrors = errorCount > 0;
                         const tgtRowKey = `${t.schema}.${t.name}`;
@@ -2670,11 +2705,14 @@ export default function Migration() {
                                     {(effectiveState?.rowsErrored ?? 0) > 0 && <span className="text-rose-500 dark:text-rose-400 ml-0.5">{effectiveState!.rowsErrored.toLocaleString()}e</span>}
                                   </span>
                                 )}
+                                {displayStatus === 'empty' && (
+                                  <span className="text-[11px] text-amber-600 dark:text-amber-400 shrink-0">0 source rows</span>
+                                )}
 
                                 {/* right-aligned: status + actions */}
                                 <div className="ml-auto flex items-center gap-0.5 shrink-0">
                                   {/* status badge */}
-                                  {effectiveState && <StatusBadge status={effectiveState.status} />}
+                                  {displayStatus && <StatusBadge status={displayStatus} />}
 
                                   {/* highlighted pair: full controls (play/pause/stop/restart/rollback) */}
                                   {isTarget ? (
@@ -2788,7 +2826,8 @@ export default function Migration() {
                           const totalProcessed = (runState?.rowsMigrated ?? 0) + (runState?.rowsSkipped ?? 0);
                           const pct = runState && runState.rowsSource > 0
                             ? Math.min(100, Math.round(totalProcessed / runState.rowsSource * 100))
-                            : runState ? 0 : null;
+                            : null;
+                          const displayStatus = runState ? displayTableStatus(runState) : null;
                           const isRunning = runState?.status === 'running';
                           const isPaused = pausedTableIds.has(m.id);
                           const hasErrors = (runState?.rowsErrored ?? accumState?.rowsErrored ?? 0) > 0;
@@ -2832,12 +2871,20 @@ export default function Migration() {
                                       </span>
                                     )}
                                   </>
+                                ) : displayStatus === 'empty' ? (
+                                  <span className="flex-1 text-[11px] text-amber-600 dark:text-amber-400 italic">
+                                    0 source rows; target structure ready
+                                  </span>
+                                ) : runState ? (
+                                  <span className="flex-1 text-[11px] text-slate-400 dark:text-slate-500 italic">
+                                    {runState.status === 'pending' || runState.status === 'running' ? 'Waiting for source count…' : 'No row progress'}
+                                  </span>
                                 ) : (
                                   <span className="flex-1 text-[11px] text-blue-400 dark:text-blue-600 italic">
                                     table will be auto-created on first run
                                   </span>
                                 )}
-                                {runState && <StatusBadge status={runState.status} />}
+                                {displayStatus && <StatusBadge status={displayStatus} />}
                                 {hasErrors && <AlertTriangle size={12} className="text-rose-500 shrink-0" />}
                                 <div className="flex items-center gap-0.5 shrink-0">
                                   {isRunning && !isPaused ? (

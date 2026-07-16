@@ -877,7 +877,9 @@ export async function advanceRun(
         ts.completedAt = new Date().toISOString();
         const tableElapsed = ts.startedAt ? Math.max(0.001, (Date.parse(ts.completedAt) - Date.parse(ts.startedAt)) / 1000) : 0;
         ts.rowsPerSecond = tableElapsed ? Number((ts.rowsMigrated / tableElapsed).toFixed(1)) : null;
-        log(`[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
+        log(ts.rowsSource === 0
+          ? `[${ts.sourceKey}] empty (0 source rows); target structure ready`
+          : `[${ts.sourceKey}] completed (${ts.rowsMigrated} rows)`);
         run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
         // Record watermark even when no new rows (source max may have advanced)
         if (isIncremental && tableMap.incrementalCol) {

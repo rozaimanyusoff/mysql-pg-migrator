@@ -18,6 +18,7 @@ import { assessMigrationTables, validateRecurringTables } from '../src/lib/migv2
 import { createRunExecutionPolicy, runChunkRows } from '../src/lib/migv2/execution-policy.ts';
 import { calculateChunkCapability } from '../src/lib/migv2/server-capabilities.ts';
 import { runWithTableWorkerLimit } from '../src/lib/migv2/table-worker-pool.ts';
+import { displayTableStatus, isMigratedTableResult, summarizeRunTableProgress } from '../src/lib/migv2/run-progress.ts';
 import type { PreflightReport } from '../src/lib/migv2/preflight.ts';
 import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
 
@@ -115,6 +116,23 @@ test('polling snapshot exposes active job ids and status filtering respects its 
   const activity = getRunActivitySnapshot();
   assert.equal(activity.activeRunJobIds.includes(jobId), true);
   assert.equal(listRunsForStatus(jobId, 1)[0]?.id, id);
+});
+
+test('zero-row completion is presented as empty and table progress reports remaining work', () => {
+  const base = {
+    id: 'table-empty', sourceKey: 'src.empty', targetKey: 'dst.empty', status: 'completed' as const,
+    rowsSource: 0, rowsMigrated: 0, rowsSkipped: 0, rowsErrored: 0,
+    offset: 0, hasMore: false, error: null, insertedPks: [], pkOverflow: false, targetPkCol: null,
+  };
+  const migrated = { ...base, id: 'table-done', sourceKey: 'src.done', targetKey: 'dst.done', rowsSource: 10, rowsMigrated: 10 };
+  const pending = { ...base, id: 'table-pending', sourceKey: 'src.pending', targetKey: 'dst.pending', status: 'pending' as const };
+
+  assert.equal(displayTableStatus(base), 'empty');
+  assert.equal(isMigratedTableResult(base), false);
+  assert.equal(isMigratedTableResult(migrated), true);
+  assert.deepEqual(summarizeRunTableProgress([base, migrated, pending]), {
+    total: 3, finished: 2, remaining: 1, completed: 1, empty: 1, failed: 0,
+  });
 });
 
 test('timestamp cursor uses primary-key tie breaker', () => {
