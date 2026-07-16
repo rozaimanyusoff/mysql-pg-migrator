@@ -4,7 +4,7 @@ import { loadJob } from '../../../../lib/migv2/job-store';
 import { listSchedules, saveSchedule } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
 import { driveRun } from '../../../../lib/migv2/run-driver';
-import type { MigRunTableState } from '../../../../lib/migv2/types';
+import type { MigConn, MigRunTableState } from '../../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
 
 type TableAction = 'run' | 'pause' | 'resume' | 'stop' | 'restart';
@@ -12,7 +12,10 @@ type TableAction = 'run' | 'pause' | 'resume' | 'stop' | 'restart';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
   if (!requireSchedulerMutationAuth(req, res)) return;
-  const { runId, tableId, action } = req.body as { runId?: string; tableId?: string; action?: TableAction };
+  const { runId, tableId, action, source, target } = req.body as {
+    runId?: string; tableId?: string; action?: TableAction;
+    source?: MigConn; target?: MigConn;
+  };
   if (!runId || !tableId || !action) return res.status(400).json({ error: 'runId, tableId and action are required' });
 
   const release = await acquireRunLock(runId);
@@ -104,11 +107,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (shouldDrive) {
-    if (!run.jobId) return res.status(400).json({ error: 'Run has no job to resolve connections from' });
-    const job = loadJob(run.jobId);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
     try {
-      const conns = await resolveJobConns(job);
+      let conns: { source: MigConn; target: MigConn };
+      if (run.jobId) {
+        const job = loadJob(run.jobId);
+        if (!job) throw new Error('Job not found');
+        conns = await resolveJobConns(job);
+      } else {
+        if (!source || !target) throw new Error('Source and target connections are required to resume an unsaved run');
+        conns = { source, target };
+      }
       void driveRun(run, conns.source, conns.target, owningSchedule?.id ?? null);
     } catch (err) {
       table.status = action === 'restart' ? 'aborted' : 'paused';

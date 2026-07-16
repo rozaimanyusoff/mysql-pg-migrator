@@ -1,10 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { advanceRun } from '../../../../lib/migv2/runner';
 import { activeRunCount, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
 import type { MigConn, MigRun, MigRunTableState, TableMap } from '../../../../lib/migv2/types';
 import { randomUUID } from 'crypto';
 import { assessMigrationTables } from '../../../../lib/migv2/recurring-validation';
 import { createRunExecutionPolicy } from '../../../../lib/migv2/execution-policy';
+import { driveRun } from '../../../../lib/migv2/run-driver';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -72,17 +72,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     filterTo: filterTo ?? null,
   };
 
-  try {
-    const advanced = await advanceRun(run, source, target);
-    saveRun(advanced);
-    return res.status(200).json({ run: advanced });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    run.status = 'failed';
-    run.errors.push(msg);
-    run.logs.push(`[${new Date().toISOString()}] ERROR: ${msg}`);
-    run.completedAt = new Date().toISOString();
-    saveRun(run);
-    return res.status(200).json({ run });
-  }
+  // Persist first, then let the server own execution. The browser only polls
+  // status, so closing the tab or the user's laptop does not abandon Run Once.
+  saveRun(run);
+  void driveRun(run, source, target, null);
+  return res.status(200).json({ run });
 }

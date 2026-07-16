@@ -358,7 +358,7 @@ export default function Migration() {
       .then(r => setConnections(r.data.connections))
       .catch(() => {});
     try {
-      const stored = JSON.parse(sessionStorage.getItem('migv2_acknowledged_new_schemas') ?? '[]') as string[];
+      const stored = JSON.parse(localStorage.getItem('migv2_acknowledged_new_schemas') ?? '[]') as string[];
       setAcknowledgedNewSchemaKeys(new Set(stored));
     } catch { /* ignore malformed browser state */ }
   }, []);
@@ -871,7 +871,7 @@ export default function Migration() {
     if (!key) return;
     setAcknowledgedNewSchemaKeys(previous => {
       const next = new Set(previous).add(key);
-      try { sessionStorage.setItem('migv2_acknowledged_new_schemas', JSON.stringify([...next])); } catch { /* unavailable */ }
+      try { localStorage.setItem('migv2_acknowledged_new_schemas', JSON.stringify([...next])); } catch { /* unavailable */ }
       return next;
     });
   };
@@ -939,19 +939,10 @@ export default function Migration() {
     });
   };
 
-  // Source keys already saved in any job — exclude from pending-save list
-  const savedJobSourceKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const j of jobs) {
-      for (const t of j.tables) {
-        if (t.include) keys.add(`${t.source.schema}.${t.source.table}`);
-      }
-    }
-    return keys;
-  }, [jobs]);
-
   const completedMigratedStates = accumulatedTableStates
-    .filter(ts => !savedMigratedSources.has(ts.sourceKey) && !savedJobSourceKeys.has(ts.sourceKey));
+    // A source table appearing in some saved job does not mean this ad-hoc run
+    // was saved. Hide it only after this exact pending result is explicitly saved.
+    .filter(ts => !savedMigratedSources.has(ts.sourceKey));
 
   // ── Jobs ──────────────────────────────────────────────────────────────────────
   const loadJobs = async () => {
@@ -1696,13 +1687,24 @@ export default function Migration() {
   const advanceMigration = async (runId: string) => {
     if (stopRequestedRef.current) { setPolling(false); return; }
     try {
-      const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/advance',
-        { runId, source: srcConn, target: tgtConn, pausedTableIds: [...pausedTableIds] });
+      const { data } = await axios.get<{ run: MigRun }>(`/api/migv2/run/status?id=${encodeURIComponent(runId)}`);
       setCurrentRun(data.run);
-      if (data.run.status === 'running' && !stopRequestedRef.current) scheduleAdvance(runId);
+      if ((data.run.status === 'running' || data.run.status === 'pending') && !stopRequestedRef.current) scheduleAdvance(runId);
       else onRunFinished(data.run);
-    } catch { setPolling(false); }
+    } catch {
+      // A transient network interruption must not stop the server-owned run.
+      if (!stopRequestedRef.current) scheduleAdvance(runId);
+    }
   };
+
+  // Loading a job or refreshing the page can restore an already active run.
+  // Reattach the live status poll without attempting to drive work in-browser.
+  useEffect(() => {
+    if (!currentRun || polling || stopRequestedRef.current) return;
+    if (currentRun.status !== 'running' && currentRun.status !== 'pending') return;
+    setPolling(true);
+    scheduleAdvance(currentRun.id);
+  }, [currentRun?.id, currentRun?.status, polling]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const emergencyStop = async () => {
     stopRequestedRef.current = true;
@@ -1851,6 +1853,7 @@ export default function Migration() {
       });
       return;
     }
+    acknowledgeNewSchema(newSchemaDecisionKey);
     stopRequestedRef.current = false;
     setPausedTableIds(new Set());
     setPolling(true);
@@ -1893,6 +1896,28 @@ export default function Migration() {
       });
       setCurrentRun(data.run);
     } catch { /* ignore */ }
+  };
+
+  const controlTableInRun = async (mapId: string, action: 'pause' | 'resume') => {
+    if (!currentRun) return;
+    try {
+      const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/control-table', {
+        runId: currentRun.id,
+        tableId: mapId,
+        action,
+        // Unsaved Run Once has no durable job from which the server can resolve
+        // credentials when resuming. These are used for this request only.
+        ...(!currentRun.jobId ? { source: srcConn, target: tgtConn } : {}),
+      });
+      setCurrentRun(data.run);
+      setPausedTableIds(previous => {
+        const next = new Set(previous);
+        if (action === 'pause') next.add(mapId); else next.delete(mapId);
+        return next;
+      });
+    } catch (err) {
+      showError('Table control failed', axios.isAxiosError(err) ? err.response?.data?.error : 'Could not update the table run state.');
+    }
   };
 
   const handleRollback = async (drop = false) => {
@@ -2613,7 +2638,7 @@ export default function Migration() {
                         const accumState = accumulatedTableStates.find(ts => ts.targetKey === `${t.schema}.${t.name}`);
                         const effectiveState = runState ?? accumState ?? null;
                         const isRunning = runState?.status === 'running';
-                        const isPaused = !!(mapping && pausedTableIds.has(mapping.id));
+                        const isPaused = runState?.status === 'paused';
                         const totalProcessed = (effectiveState?.rowsMigrated ?? 0) + (effectiveState?.rowsSkipped ?? 0);
                         const pct = effectiveState && effectiveState.rowsSource > 0
                           ? Math.min(100, Math.round(totalProcessed / effectiveState.rowsSource * 100))
@@ -2719,7 +2744,7 @@ export default function Migration() {
                                     <>
                                       {isRunning && !isPaused ? (
                                         <>
-                                          <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.add(mapping.id); return n; })}
+                                          <button onClick={() => void controlTableInRun(mapping.id, 'pause')}
                                             title="Pause" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-amber-500 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
                                             <Pause size={12} />
                                           </button>
@@ -2729,7 +2754,7 @@ export default function Migration() {
                                           </button>
                                         </>
                                       ) : isPaused ? (
-                                        <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.delete(mapping.id); return n; })}
+                                        <button onClick={() => void controlTableInRun(mapping.id, 'resume')}
                                           title="Resume" className="p-0.5 rounded border border-amber-400 dark:border-amber-500 text-amber-500 dark:text-amber-400 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-400 dark:hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
                                           <Play size={12} />
                                         </button>
@@ -2829,7 +2854,7 @@ export default function Migration() {
                             : null;
                           const displayStatus = runState ? displayTableStatus(runState) : null;
                           const isRunning = runState?.status === 'running';
-                          const isPaused = pausedTableIds.has(m.id);
+                          const isPaused = runState?.status === 'paused';
                           const hasErrors = (runState?.rowsErrored ?? accumState?.rowsErrored ?? 0) > 0;
                           return (
                             <div key={`new:${m.id}`}
@@ -2889,7 +2914,7 @@ export default function Migration() {
                                 <div className="flex items-center gap-0.5 shrink-0">
                                   {isRunning && !isPaused ? (
                                     <>
-                                      <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.add(m.id); return n; })}
+                                      <button onClick={() => void controlTableInRun(m.id, 'pause')}
                                         title="Pause" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-amber-500 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
                                         <Pause size={12} />
                                       </button>
@@ -2899,7 +2924,7 @@ export default function Migration() {
                                       </button>
                                     </>
                                   ) : isPaused ? (
-                                    <button onClick={() => setPausedTableIds(prev => { const n = new Set(prev); n.delete(m.id); return n; })}
+                                    <button onClick={() => void controlTableInRun(m.id, 'resume')}
                                       title="Resume" className="p-0.5 rounded border border-amber-400 dark:border-amber-500 text-amber-500 hover:text-violet-600 hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors">
                                       <Play size={12} />
                                     </button>
@@ -2984,19 +3009,26 @@ export default function Migration() {
                       </label>
                       {selectedAssessment && (
                         <>
-                          <span title={selectedAssessment.oneOffIssues.map(issue => issue.message).join('\n') || 'Mapping is valid for Run Once'}
-                            className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${selectedAssessment.oneOffReady ? 'border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400' : 'border-rose-300 text-rose-700 dark:border-rose-700 dark:text-rose-400'}`}>
-                            {selectedAssessment.oneOffReady ? 'One-off ready' : `${selectedAssessment.oneOffIssues.length} one-off issue${selectedAssessment.oneOffIssues.length !== 1 ? 's' : ''}`}
-                          </span>
-                          <span title={selectedAssessment.recurringIssues.map(issue => issue.message).join('\n') || 'Mapping and recurring policy are valid'}
-                            className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${selectedAssessment.recurringReady ? 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-400' : 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400'}`}>
-                            {selectedAssessment.recurringReady ? 'Schedule ready' : `${selectedAssessment.recurringIssues.length} schedule issue${selectedAssessment.recurringIssues.length !== 1 ? 's' : ''}`}
-                          </span>
-                          {selectedAssessment.notices.length > 0 && (
-                            <span title={selectedAssessment.notices.map(notice => notice.message).join('\n')}
-                              className="rounded border border-amber-300 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:border-amber-700 dark:text-amber-400">
-                              {selectedAssessment.notices.length} notice{selectedAssessment.notices.length !== 1 ? 's' : ''}
+                          <Tooltip side="top" content={selectedAssessment.oneOffReady
+                            ? 'The mapping is valid for Run Once. This does not mean its recurring policy is schedule-ready.'
+                            : <div className="space-y-1"><p className="font-semibold">Run Once blockers</p>{selectedAssessment.oneOffIssues.map((issue, index) => <p key={index}>• {issue.message}</p>)}</div>}>
+                            <span className={`cursor-help rounded border px-1.5 py-0.5 text-[10px] font-semibold ${selectedAssessment.oneOffReady ? 'border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400' : 'border-rose-300 text-rose-700 dark:border-rose-700 dark:text-rose-400'}`}>
+                              {selectedAssessment.oneOffReady ? 'One-off ready' : `${selectedAssessment.oneOffIssues.length} one-off issue${selectedAssessment.oneOffIssues.length !== 1 ? 's' : ''}`}
                             </span>
+                          </Tooltip>
+                          <Tooltip side="top" content={selectedAssessment.recurringReady
+                            ? 'The mapping and recurring policy are ready for Scheduler.'
+                            : <div className="space-y-1"><p className="font-semibold">Schedule blockers</p><p className="text-gray-300">These are configuration issues, not an unfinished Run Once.</p>{selectedAssessment.recurringIssues.map((issue, index) => <p key={index}>• {issue.message}</p>)}</div>}>
+                            <span className={`cursor-help rounded border px-1.5 py-0.5 text-[10px] font-semibold ${selectedAssessment.recurringReady ? 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-400' : 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400'}`}>
+                              {selectedAssessment.recurringReady ? 'Schedule ready' : `${selectedAssessment.recurringIssues.length} schedule issue${selectedAssessment.recurringIssues.length !== 1 ? 's' : ''}`}
+                            </span>
+                          </Tooltip>
+                          {selectedAssessment.notices.length > 0 && (
+                            <Tooltip side="top" content={<div className="space-y-1"><p className="font-semibold">Non-blocking notices</p>{selectedAssessment.notices.map((notice, index) => <p key={index}>• {notice.message}</p>)}</div>}>
+                              <span className="cursor-help rounded border border-amber-300 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:border-amber-700 dark:text-amber-400">
+                                {selectedAssessment.notices.length} notice{selectedAssessment.notices.length !== 1 ? 's' : ''}
+                              </span>
+                            </Tooltip>
                           )}
                         </>
                       )}
