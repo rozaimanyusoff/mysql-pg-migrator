@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { listJobs, loadJob } from '../../../../lib/migv2/job-store';
+import { listJobs } from '../../../../lib/migv2/job-store';
 
 export interface TableRef {
   targetKey: string; // "assetdata.types"
@@ -13,9 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const refs: TableRef[] = [];
 
   for (const summary of listJobs()) {
-    const job = loadJob(summary.id);
-    if (!job) continue;
-    for (const t of job.tables) {
+    for (const t of summary.tables) {
       if (!t.target.table || !t.source.table) continue;
       const targetKey = `${t.target.schema}.${t.target.table}`;
       const sourceKey = `${t.source.schema}.${t.source.table}`;

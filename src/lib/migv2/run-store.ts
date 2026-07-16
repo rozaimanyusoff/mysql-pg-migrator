@@ -96,17 +96,14 @@ function listAllRuns(): MigRun[] {
 
 // A server-driven run stamps heartbeatAt every advance loop (~8s). If a run is
 // still 'running' but its heartbeat is older than this, the driving process died
-// (deploy, crash, OOM) and the run is orphaned. Reconcile marks it failed +
-// interrupted so the UI can offer "Resume" (which continues from saved offsets).
+// (deploy, crash, OOM) and the run is orphaned.
 const HEARTBEAT_STALE_MS = 90_000;
 
-export function reconcileStaleRuns(): MigRun[] {
-  ensureDir();
+function reconcileRuns(runs: MigRun[]): MigRun[] {
   const now = Date.now();
   const reconciled: MigRun[] = [];
-  for (const f of runFiles()) {
-    const run = readRunFile(path.join(RUN_DIR, f));
-    if (!run || run.status !== 'running') continue;
+  for (const run of runs) {
+    if (run.status !== 'running') continue;
     const beat = run.heartbeatAt ?? run.startedAt ?? run.createdAt;
     if (now - new Date(beat).getTime() < HEARTBEAT_STALE_MS) continue;
     run.status = 'failed';
@@ -118,6 +115,31 @@ export function reconcileStaleRuns(): MigRun[] {
     reconciled.push(run);
   }
   return reconciled;
+}
+
+export function reconcileStaleRuns(): MigRun[] {
+  ensureDir();
+  return reconcileRuns(listAllRuns());
+}
+
+export function getRunActivitySnapshot(): { reconciledRuns: MigRun[]; activeRunJobIds: string[] } {
+  const runs = listAllRuns();
+  const reconciledRuns = reconcileRuns(runs);
+  const activeRunJobIds = [...new Set(runs
+    .filter(run => (run.status === 'running' || run.status === 'pending') && run.jobId)
+    .map(run => run.jobId as string))];
+  return { reconciledRuns, activeRunJobIds };
+}
+
+// Status polling used to reconcile stale runs and then read every run file a
+// second time. Keep one in-memory snapshot for both operations instead.
+export function listRunsForStatus(jobId?: string, limit = 20): MigRun[] {
+  const runs = listAllRuns();
+  reconcileRuns(runs);
+  return runs
+    .filter(run => !jobId || run.jobId === jobId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
 }
 
 export function listRunsForJob(jobId: string): MigRun[] {

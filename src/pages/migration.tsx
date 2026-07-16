@@ -266,7 +266,6 @@ export default function Migration() {
   const [unmappingScheduleId, setUnmappingScheduleId] = useState<string | null>(null);
   const [importingJob, setImportingJob] = useState(false);
   const importJobInputRef = useRef<HTMLInputElement>(null);
-  const [tgtToSrcRef, setTgtToSrcRef] = useState<Record<string, string>>({});
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [saveJobName, setSaveJobName] = useState('');
   const [saveJobDesc, setSaveJobDesc] = useState('');
@@ -946,50 +945,28 @@ export default function Migration() {
   };
   const loadSchedules = async () => {
     try {
-      const { data } = await axios.get<{ schedules: CronSchedule[] }>('/api/scheduler');
+      const { data } = await axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[] }>('/api/scheduler');
       setSchedules(data.schedules);
-    } catch { /* ignore */ }
-  };
-  const loadActiveRunJobs = async () => {
-    try {
-      const { data } = await axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { compact: 1, limit: 100 } });
-      setActiveRunJobIds(new Set(
-        data.runs
-          .filter(run => (run.status === 'running' || run.status === 'pending') && run.jobId)
-          .map(run => run.jobId as string)
-      ));
-    } catch { /* ignore */ }
-  };
-  const loadTableRefs = async () => {
-    try {
-      const { data } = await axios.get<{ refs: { targetKey: string; sourceKey: string }[] }>(
-        '/api/migv2/jobs/table-refs'
-      );
-      const map: Record<string, string> = {};
-      for (const r of data.refs) map[r.targetKey] = r.sourceKey;
-      setTgtToSrcRef(map);
+      setActiveRunJobIds(new Set(data.activeRunJobIds ?? []));
     } catch { /* ignore */ }
   };
   useEffect(() => {
     void loadJobs();
-    void loadTableRefs();
     void loadSchedules();
-    void loadActiveRunJobs();
 
-    // Jobs can start outside this page (cron or the Scheduler module), so keep
-    // both schedule and live-run indicators current while Migration is open.
-    const refreshJobIndicators = () => {
-      void loadSchedules();
-      void loadActiveRunJobs();
-    };
-    const interval = window.setInterval(refreshJobIndicators, 3000);
+    const refreshJobIndicators = () => void loadSchedules();
     const refreshOnFocus = () => refreshJobIndicators();
     window.addEventListener('focus', refreshOnFocus);
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener('focus', refreshOnFocus);
-    };
+    return () => window.removeEventListener('focus', refreshOnFocus);
   }, []);
+  useEffect(() => {
+    // Jobs can start outside this page (cron or Scheduler). Poll quickly only
+    // while work is active; an idle page needs only a lightweight heartbeat.
+    const interval = window.setInterval(() => {
+      void loadSchedules();
+    }, activeRunJobIds.size > 0 ? 3000 : 10000);
+    return () => window.clearInterval(interval);
+  }, [activeRunJobIds.size]);
 
   const scheduleByJobId = useMemo(() => {
     const result = new Map<string, CronSchedule>();
@@ -1192,7 +1169,7 @@ export default function Migration() {
         return next;
       });
 
-      await loadJobs(); void loadTableRefs();
+      await loadJobs();
 
       const savedJobId = data.job.id;
       if (scheduleAfterSave) {
@@ -1396,7 +1373,6 @@ export default function Migration() {
         payload,
       );
       await loadJobs();
-      void loadTableRefs();
       toast.success(`Job "${data.job.name}" imported.`, {
         description: 'Connection passwords are not included. Add matching source and target connections before running it.',
       });
@@ -1622,7 +1598,6 @@ export default function Migration() {
     }
     reloadSrcTables();
     reloadTgtTables();
-    void loadTableRefs();
 
     // Toast on success, alert dialog on error
     if (completedStates.length > 0) {

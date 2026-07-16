@@ -229,16 +229,13 @@ export default function SchedulerPage() {
   // ── Data fetching ─────────────────────────────────────────────────────────────
   const loadAll = async () => {
     try {
-      const [schRes, jobRes, activeRunRes] = await Promise.all([
-        axios.get<{ schedules: CronSchedule[] }>('/api/scheduler'),
+      const [schRes, jobRes] = await Promise.all([
+        axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[] }>('/api/scheduler'),
         axios.get<{ jobs: SchedulerJobSummary[] }>('/api/scheduler/jobs'),
-        axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { compact: 1, limit: 100 } }),
       ]);
       setSchedules(schRes.data.schedules);
       setJobs(jobRes.data.jobs);
-      setActiveRunJobIds(new Set(activeRunRes.data.runs
-        .filter(run => (run.status === 'running' || run.status === 'pending') && run.jobId)
-        .map(run => run.jobId as string)));
+      setActiveRunJobIds(new Set(schRes.data.activeRunJobIds ?? []));
     } catch { /* ignore */ } finally { setLoading(false); }
   };
 
@@ -251,18 +248,15 @@ export default function SchedulerPage() {
 
   const pollRuns = async () => {
     try {
-      const [schRes, runRes, activeRunRes] = await Promise.all([
-        axios.get<{ schedules: CronSchedule[] }>('/api/scheduler'),
+      const [schRes, runRes] = await Promise.all([
+        axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[] }>('/api/scheduler'),
         selectedId
           ? axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { jobId: selectedId, limit: 10, compact: 1 } })
           : Promise.resolve(null),
-        axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { compact: 1, limit: 100 } }),
       ]);
       setSchedules(schRes.data.schedules);
       if (runRes) setRuns(runRes.data.runs);
-      setActiveRunJobIds(new Set(activeRunRes.data.runs
-        .filter(run => (run.status === 'running' || run.status === 'pending') && run.jobId)
-        .map(run => run.jobId as string)));
+      setActiveRunJobIds(new Set(schRes.data.activeRunJobIds ?? []));
     } catch { /* ignore */ }
   };
 

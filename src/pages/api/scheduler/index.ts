@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
 import { listSchedules, saveSchedule } from '../../../lib/migv2/schedule-store';
-import { loadRun, reconcileStaleRuns } from '../../../lib/migv2/run-store';
+import { getRunActivitySnapshot, loadRun } from '../../../lib/migv2/run-store';
 import type { CronSchedule } from '../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../lib/scheduler-security';
 import { loadJob } from '../../../lib/migv2/job-store';
@@ -10,7 +10,7 @@ import { assessMigrationTables } from '../../../lib/migv2/recurring-validation';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
-    const reconciledRuns = reconcileStaleRuns();
+    const { reconciledRuns, activeRunJobIds } = getRunActivitySnapshot();
     const schedules = listSchedules().map(schedule => {
       const reconciled = reconciledRuns.find(run => run.jobId === schedule.jobId || run.id === schedule.lastRunId);
       const lastRun = schedule.lastRunId ? loadRun(schedule.lastRunId) : null;
@@ -25,7 +25,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       saveSchedule(updated);
       return updated;
     });
-    return res.status(200).json({ schedules });
+    return res.status(200).json({ schedules, activeRunJobIds });
   }
 
   if (req.method === 'POST') {

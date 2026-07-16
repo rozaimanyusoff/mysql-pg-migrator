@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isSchedulerRequestAuthorized } from '../src/lib/scheduler-security.ts';
-import { acquireRunLock, activeRunForJob, loadRun, saveRun } from '../src/lib/migv2/run-store.ts';
+import { acquireRunLock, activeRunForJob, getRunActivitySnapshot, listRunsForStatus, loadRun, saveRun } from '../src/lib/migv2/run-store.ts';
 import { buildWhere } from '../src/lib/migv2/cursor-query.ts';
 import { prepareRunTables } from '../src/lib/migv2/run-tables.ts';
 import { runSequentially } from '../src/lib/migv2/sequential-executor.ts';
@@ -101,6 +101,20 @@ test('same-job active-run lookup blocks overlapping runs', () => {
   runFiles.push(file);
   saveRun(makeRun(id, jobId));
   assert.equal(activeRunForJob(jobId)?.id, id);
+});
+
+test('polling snapshot exposes active job ids and status filtering respects its limit', () => {
+  const id = `test-${randomUUID()}`;
+  const jobId = `job-${id}`;
+  const file = path.join(process.cwd(), 'data', 'migv2', 'runs', `${id}.json`);
+  runFiles.push(file);
+  const run = makeRun(id, jobId);
+  run.logs = Array.from({ length: 100 }, (_, index) => `log-${index}`);
+  saveRun(run);
+
+  const activity = getRunActivitySnapshot();
+  assert.equal(activity.activeRunJobIds.includes(jobId), true);
+  assert.equal(listRunsForStatus(jobId, 1)[0]?.id, id);
 });
 
 test('timestamp cursor uses primary-key tie breaker', () => {

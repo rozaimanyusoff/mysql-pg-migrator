@@ -34,14 +34,14 @@ function jobPath(id: string): string {
   return path.join(JOB_DIR, `${id.replace(/[^a-z0-9_-]/gi, '_')}.json`);
 }
 
-export function listJobs(): MigJobSummary[] {
+function listJobSummaries(includeRuntime: boolean): MigJobSummary[] {
   ensureDir();
   return fs.readdirSync(JOB_DIR)
     .filter(f => f.endsWith('.json'))
     .map(f => {
       try {
         const config = normalizeJob(JSON.parse(fs.readFileSync(path.join(JOB_DIR, f), 'utf8')) as MigJob);
-        const j = hydrateJobRuntime(config);
+        const j = includeRuntime ? hydrateJobRuntime(config) : config;
         const scheduleIssues = assessMigrationTables(j.tables).recurringIssues;
         return {
           id: j.id, name: j.name, description: j.description,
@@ -57,8 +57,14 @@ export function listJobs(): MigJobSummary[] {
     .sort((a, b) => b!.updatedAt.localeCompare(a!.updatedAt)) as MigJobSummary[];
 }
 
+export function listJobs(): MigJobSummary[] {
+  return listJobSummaries(true);
+}
+
 export function listSchedulerJobs(): SchedulerJobSummary[] {
-  return listJobs().map(job => ({
+  // Scheduler rows never display incremental cursors, so avoid a second
+  // runtime-file read for every saved job.
+  return listJobSummaries(false).map(job => ({
     id: job.id,
     name: job.name,
     description: job.description,

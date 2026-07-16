@@ -1,11 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { loadRun, listRuns, listRunsForJob, reconcileStaleRuns } from '../../../../lib/migv2/run-store';
+import { loadRun, listRunsForStatus } from '../../../../lib/migv2/run-store';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).end();
-
-  // Mark any orphaned (process-restarted) runs as interrupted before reporting.
-  reconcileStaleRuns();
 
   const { id, jobId, compact } = req.query as { id?: string; jobId?: string; compact?: string };
   if (id) {
@@ -30,7 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   const rawLimit = Number(req.query.limit ?? 20);
   const limit = Number.isFinite(rawLimit) ? Math.min(100, Math.max(1, rawLimit)) : 20;
-  const runs = (jobId ? listRunsForJob(jobId) : listRuns()).slice(0, limit);
+  const runs = listRunsForStatus(jobId, limit);
   if (compact === '1') {
     return res.status(200).json({ runs: runs.map(run => ({ ...run, tables: [], sourceMeta: undefined, targetMeta: undefined })) });
   }
