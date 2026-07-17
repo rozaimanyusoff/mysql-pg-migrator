@@ -460,12 +460,24 @@ export default function SchedulerPage() {
     if (action === 'run') {
       if (!selectedJob) return;
       const resumePausedRun = canResumePausedRun && selectedHistoryRun;
+      const resumeInterruptedRun = canResumeInterruptedRun && selectedHistoryRun;
       const tableIds = resumePausedRun
         ? selectedHistoryTableStates
             .filter(table => table.status === 'pending' || table.status === 'paused')
             .map(table => table.id)
         : [];
       if (resumePausedRun && !tableIds.length) return;
+      if (resumeInterruptedRun) {
+        setBulkTableAction(action);
+        try {
+          await axios.post('/api/migv2/run/resume', { runId: selectedHistoryRun.id });
+          await pollRuns();
+        } catch (err) {
+          const msg = axios.isAxiosError(err) ? (err.response?.data?.error ?? 'Resume failed') : 'Resume failed';
+          showError('Resume failed', msg);
+        } finally { setBulkTableAction(null); }
+        return;
+      }
       if (!resumePausedRun && !preflightStatus?.ready) {
         if (hasReviewablePreflight) {
           setPreflight({ jobName: selectedJob.name, loading: false, report: lastPreflightReport, error: null });

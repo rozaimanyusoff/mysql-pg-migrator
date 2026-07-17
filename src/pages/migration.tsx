@@ -1283,6 +1283,8 @@ export default function Migration() {
         if (!run) throw new Error('No run history is available for this job.');
         if (action === 'restart') {
           await axios.post('/api/migv2/run/restart', { runId: run.id, truncate: false });
+        } else if (action === 'resume' && (run.status === 'interrupted' || run.interrupted)) {
+          await axios.post('/api/migv2/run/resume', { runId: run.id });
         } else {
           const tableIds = run.tableStates
             .filter(table => action === 'pause'
@@ -3134,16 +3136,19 @@ export default function Migration() {
                           <Info size={14} className="text-amber-500 shrink-0 mt-0.5" />
                           <div className="min-w-0">
                             <p className="text-[12.5px] font-semibold text-amber-700 dark:text-amber-300">
-                              Migrating into a new schema{newTargetSchema ? ` “${newTargetSchema}”` : ''}
+                              {activeJobId || currentRun
+                                ? `Target schema${newTargetSchema ? ` “${newTargetSchema}”` : ''} partially created`
+                                : `Migrating into a new schema${newTargetSchema ? ` “${newTargetSchema}”` : ''}`}
                             </p>
                             <p className="text-[12px] text-amber-700/90 dark:text-amber-200/80 mt-0.5 leading-snug">
-                              {newTargetTables.length} target {newTargetTables.length === 1 ? 'table doesn’t' : 'tables don’t'} exist yet —
-                              each maps 1:1 by default and is created on first run, preserving source columns &amp; data types.
-                              Click any source table to customize its columns, types, or PK&nbsp;→&nbsp;UUID before saving.
+                              {newTargetTables.length} target {newTargetTables.length === 1 ? 'table is' : 'tables are'} not present yet.
+                              {activeJobId || currentRun
+                                ? ' They will be created as the run reaches them; completed and empty tables will not be migrated again.'
+                                : ' Each maps 1:1 by default and will be created on first run, preserving source columns &amp; data types. Click any source table to customize it before saving.'}
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 mt-2.5">
+                        {!activeJobId && !currentRun && <div className="flex items-center gap-2 mt-2.5">
                           <button onClick={() => openSave(false)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors">
                             <Save size={12} /> Save
@@ -3166,10 +3171,10 @@ export default function Migration() {
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium border border-gray-300 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors ml-auto">
                             <X size={12} /> Cancel
                           </button>
-                        </div>
-                        <p className="text-[11px] text-amber-700/70 dark:text-amber-200/60 mt-1.5">
+                        </div>}
+                        {!activeJobId && !currentRun && <p className="text-[11px] text-amber-700/70 dark:text-amber-200/60 mt-1.5">
                           Save stores the migration setup as-is. Prepare Schedule validates the recurring policy, saves the job, then continues to Scheduler.
-                        </p>
+                        </p>}
                       </div>
                     )}
 
