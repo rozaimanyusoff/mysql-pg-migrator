@@ -1267,24 +1267,29 @@ export default function Migration() {
     const run = latestRunByJob.get(job.id);
     setJobActionKey(`${job.id}:${action}`);
     try {
+      let followRunId: string | null = null;
       if (action === 'run') {
         const start = () => axios.post('/api/migv2/run/start-job', {
           jobId: job.id,
         });
         try {
-          await start();
+          const { data } = await start();
+          followRunId = data.runId ?? null;
         } catch (error) {
           if (!axios.isAxiosError(error) || error.response?.status !== 428) throw error;
           const { data } = await axios.post<{ report: { ok: boolean } }>('/api/migv2/preflight', { jobId: job.id });
           if (!data.report.ok) throw new Error('Pre-flight found blocking compatibility or connectivity issues.');
-          await start();
+          const started = await start();
+          followRunId = started.data.runId ?? null;
         }
       } else {
         if (!run) throw new Error('No run history is available for this job.');
         if (action === 'restart') {
-          await axios.post('/api/migv2/run/restart', { runId: run.id, truncate: false });
+          const { data } = await axios.post<{ runId?: string }>('/api/migv2/run/restart', { runId: run.id, truncate: false });
+          followRunId = data.runId ?? run.id;
         } else if (action === 'resume' && (run.status === 'interrupted' || run.interrupted)) {
-          await axios.post('/api/migv2/run/resume', { runId: run.id });
+          const { data } = await axios.post<{ runId: string }>('/api/migv2/run/resume', { runId: run.id });
+          followRunId = data.runId;
         } else {
           const tableIds = run.tableStates
             .filter(table => action === 'pause'
@@ -1298,11 +1303,15 @@ export default function Migration() {
             tableIds,
             action: action === 'resume' ? 'run' : action,
           });
+          followRunId = run.id;
         }
       }
       await loadSchedules();
+      if (followRunId && (action === 'run' || action === 'resume' || action === 'restart')) {
+        await followRunStatus(followRunId);
+      }
     } catch (error) {
-      showError(`${action[0].toUpperCase()}${action.slice(1)} failed`, axios.isAxiosError(error) ? error.response?.data?.error : error instanceof Error ? error.message : 'Request failed');
+      showError(`${action[0].toUpperCase()}${action.slice(1)} failed`, requestErrorDetail(error));
     } finally {
       setJobActionKey(null);
     }
@@ -2026,6 +2035,23 @@ export default function Migration() {
   };
 
   const scheduleAdvance = (runId: string) => setTimeout(() => void advanceMigration(runId), 1000);
+
+  const followRunStatus = async (runId: string) => {
+    stopRequestedRef.current = false;
+    try {
+      const { data } = await axios.get<{ run: MigRun }>(`/api/migv2/run/status?id=${encodeURIComponent(runId)}`);
+      setCurrentRun(data.run);
+      if (data.run.status === 'running' || data.run.status === 'pending') {
+        setPolling(true);
+        scheduleAdvance(runId);
+      } else {
+        setPolling(false);
+      }
+    } catch (error) {
+      setPolling(false);
+      showError('Unable to follow migration', requestErrorDetail(error));
+    }
+  };
 
   const advanceMigration = async (runId: string) => {
     if (stopRequestedRef.current) { setPolling(false); return; }
