@@ -99,7 +99,9 @@ function listAllRuns(): MigRun[] {
 
 // Lease liveness is renewed independently from database chunks. A long query
 // must not look like a dead process, while a crashed process is reclaimed soon.
-export const RUN_LEASE_MS = 45_000;
+// Keep enough margin for a production process to be briefly paused or busy
+// serializing a large run snapshot. The heartbeat renews this every 10s.
+export const RUN_LEASE_MS = 120_000;
 
 export async function claimRunExecution(runId: string, executionId: string = randomUUID()): Promise<MigRun | null> {
   const release = await acquireRunLock(runId);

@@ -75,8 +75,13 @@ export async function driveRun(
   const claimed = await claimRunExecution(initial.id, executionId);
   if (!claimed) return;
   let run = claimed;
-  const heartbeatTimer = setInterval(() => { void refreshRunLease(run.id, executionId); }, 10_000);
-  heartbeatTimer.unref?.();
+  // Keep this timer referenced: a background migration must keep the server
+  // execution alive after the initiating HTTP request has returned.
+  const heartbeatTimer = setInterval(() => {
+    void refreshRunLease(run.id, executionId).catch(err => {
+      console.error('[migration] lease heartbeat failed', err);
+    });
+  }, 10_000);
   try {
     while (!TERMINAL.has(run.status)) {
       // Re-read persisted control state so table pause/stop requests made by

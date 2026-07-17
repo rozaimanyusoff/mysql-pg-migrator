@@ -22,8 +22,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const executionId = randomUUID();
   const claimed = await claimRunExecution(runId, executionId);
   if (!claimed) return res.status(409).json({ error: 'This run is already being driven by another execution. Wait for its checkpoint or resume it after interruption.' });
-  const heartbeatTimer = setInterval(() => { void refreshRunLease(runId, executionId); }, 10_000);
-  heartbeatTimer.unref?.();
+  const heartbeatTimer = setInterval(() => {
+    void refreshRunLease(runId, executionId).catch(err => {
+      console.error('[migration] lease heartbeat failed', err);
+    });
+  }, 10_000);
   try {
     const advanced = await advanceRun(claimed, source, target, pausedTableIds);
     const heartbeatAt = new Date();
