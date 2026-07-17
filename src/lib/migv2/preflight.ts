@@ -10,7 +10,7 @@ const ASSUMED_ROWS_PER_SEC = 2000;
 export interface PreflightIssue {
   level: 'error' | 'warning' | 'info';
   message: string;
-  code?: 'target_schema_compatibility' | 'binding_missing';
+  code?: 'target_schema_compatibility' | 'binding_missing' | 'data_conversion';
 }
 
 export interface BindingValidationIssue {
@@ -128,23 +128,66 @@ async function tableExists(conn: MigConn, schema: string, table: string): Promis
   });
 }
 
-async function columnNames(conn: MigConn, schema: string, table: string): Promise<Set<string>> {
+interface TargetColumnDefinition { name: string; nullable: boolean; defaultValue: string | null }
+
+async function targetColumnDefinitions(conn: MigConn, schema: string, table: string): Promise<TargetColumnDefinition[]> {
   if (conn.type === 'postgresql') {
     return withPg(conn, async c => {
-      const { rows } = await c.query<{ column_name: string }>(
-        'SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
+      const { rows } = await c.query<{ column_name: string; is_nullable: string; column_default: string | null }>(
+        'SELECT column_name, is_nullable, column_default FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
         [schema, table]
       );
-      return new Set(rows.map(row => row.column_name.toLowerCase()));
+      return rows.map(row => ({ name: row.column_name, nullable: row.is_nullable === 'YES', defaultValue: row.column_default }));
     });
   }
   return withMysql(conn, async c => {
     const [rows] = await c.query<any[]>(
-      'SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ?',
+      'SELECT column_name, is_nullable, column_default FROM information_schema.columns WHERE table_schema = ? AND table_name = ?',
       [schema, table]
     );
-    return new Set((rows as Array<{ column_name: string }>).map(row => row.column_name.toLowerCase()));
+    return (rows as Array<{ column_name: string; is_nullable: string; column_default: string | null }>).map(row => ({
+      name: row.column_name, nullable: row.is_nullable === 'YES', defaultValue: row.column_default,
+    }));
   });
+}
+
+function quoteIdentifier(value: string, type: MigConn['type']): string {
+  return type === 'postgresql' ? `"${value.replace(/"/g, '""')}"` : `\`${value.replace(/`/g, '``')}\``;
+}
+
+async function sampleColumnValues(conn: MigConn, schema: string, table: string, column: string): Promise<unknown[]> {
+  const qualified = `${quoteIdentifier(schema, conn.type)}.${quoteIdentifier(table, conn.type)}`;
+  const identifier = quoteIdentifier(column, conn.type);
+  if (conn.type === 'postgresql') {
+    return withPg(conn, async client => (await client.query(`SELECT ${identifier} AS value FROM ${qualified} WHERE ${identifier} IS NOT NULL LIMIT 100`)).rows.map(row => row.value));
+  }
+  return withMysql(conn, async client => {
+    const [rows] = await client.query<any[]>(`SELECT ${identifier} AS value FROM ${qualified} WHERE ${identifier} IS NOT NULL LIMIT 100`);
+    return rows.map(row => row.value);
+  });
+}
+
+function temporalKind(targetType: string): 'date' | 'time' | 'timestamp' | null {
+  const normalized = targetType.trim().toLowerCase();
+  if (normalized === 'date') return 'date';
+  if (normalized === 'time' || normalized.startsWith('time(') || normalized.startsWith('time without') || normalized.startsWith('time with')) return 'time';
+  if (normalized === 'datetime' || normalized.includes('timestamp')) return 'timestamp';
+  return null;
+}
+
+function temporalValueIsParseable(value: unknown, kind: 'date' | 'time' | 'timestamp'): boolean {
+  if (value instanceof Date) return !Number.isNaN(value.getTime());
+  const raw = String(value).trim();
+  if (!raw || /^0{4}-0{2}-0{2}/.test(raw)) return false;
+  if (kind === 'time') {
+    const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    return !!match && Number(match[1]) < 24 && Number(match[2]) < 60 && Number(match[3] ?? 0) < 60;
+  }
+  const normalized = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(.*)$/)
+    ? raw.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/, '$3-$2-$1')
+    : raw;
+  const parsed = Date.parse(kind === 'date' ? `${normalized.slice(0, 10)}T00:00:00Z` : normalized.replace(' ', 'T'));
+  return Number.isFinite(parsed);
 }
 
 async function ping(conn: MigConn): Promise<{ reachable: boolean; error?: string }> {
@@ -195,11 +238,32 @@ export async function validateMigrationBindings(
     const targetMode = tm.targetMode ?? (tm.target.table === tm.source.table ? 'source_clone' : 'existing');
     if (targetMode !== 'existing') continue;
     try {
-      if (!await tableExists(target, tm.target.schema, targetTableName(tm))) {
+      const exists = await tableExists(target, tm.target.schema, targetTableName(tm));
+      if (!exists) {
         issues.push({
           tableId: tm.id,
           side: 'target',
           message: `Existing target ${target.database}.${tm.target.schema}.${targetTableName(tm)} no longer exists. Rebind the saved job before running.`,
+        });
+        continue;
+      }
+      const definitions = await targetColumnDefinitions(target, tm.target.schema, targetTableName(tm));
+      const actualColumns = new Set(definitions.map(column => column.name.toLowerCase()));
+      const mappedColumns = new Set(tm.columns.filter(column => column.include).map(column => (column.targetName?.trim() || column.targetCol).toLowerCase()).filter(Boolean));
+      const missingMappings = [...mappedColumns].filter(column => !actualColumns.has(column));
+      if (missingMappings.length) {
+        issues.push({
+          tableId: tm.id,
+          side: 'target',
+          message: `Existing target mapping refers to missing column${missingMappings.length !== 1 ? 's' : ''}: ${missingMappings.slice(0, 5).join(', ')}.`,
+        });
+      }
+      const requiredUnmapped = definitions.filter(column => !column.nullable && column.defaultValue == null && !mappedColumns.has(column.name.toLowerCase()));
+      if (requiredUnmapped.length) {
+        issues.push({
+          tableId: tm.id,
+          side: 'target',
+          message: `Existing target requires source mappings for: ${requiredUnmapped.slice(0, 5).map(column => column.name).join(', ')}.`,
         });
       }
     } catch (err) {
@@ -239,6 +303,29 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
       } catch (err) {
         issues.push({ level: 'error', code: 'binding_missing', message: `Source unreadable: ${err instanceof Error ? err.message : String(err)}` });
       }
+      for (const column of tm.columns.filter(column => column.include && column.sourceCol && temporalKind(column.targetType))) {
+        try {
+          const kind = temporalKind(column.targetType)!;
+          const samples = await sampleColumnValues(tableSource, tm.source.schema, tm.source.table, column.sourceCol!);
+          const invalid = samples.filter(value => !temporalValueIsParseable(value, kind)).length;
+          if (invalid > 0) {
+            const blocksRequiredTarget = (column.targetNullable ?? column.nullable) === false && (column.nullPolicy ?? 'fail') === 'fail';
+            issues.push({
+              level: blocksRequiredTarget ? 'error' : 'warning',
+              code: 'data_conversion',
+              message: `${column.sourceCol} → ${column.targetName?.trim() || column.targetCol} (${column.targetType}): ${invalid} of ${samples.length} sampled non-NULL value${samples.length !== 1 ? 's' : ''} cannot be parsed. Invalid values become NULL; configure a fallback/reject policy or clean the source data.`,
+            });
+          } else if (samples.length > 0) {
+            issues.push({
+              level: 'info',
+              code: 'data_conversion',
+              message: `${column.sourceCol} → ${column.targetName?.trim() || column.targetCol}: ${samples.length} sampled value${samples.length !== 1 ? 's' : ''} can be converted to ${column.targetType}.`,
+            });
+          }
+        } catch (err) {
+          issues.push({ level: 'warning', code: 'data_conversion', message: `Could not sample ${column.sourceCol} for ${column.targetType} conversion: ${err instanceof Error ? err.message : String(err)}` });
+        }
+      }
     }
 
     let targetExists = false;
@@ -254,17 +341,27 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
           });
         }
         if (targetExists && targetMode === 'existing') {
-          const actualColumns = await columnNames(target, tm.target.schema, targetTableName(tm));
+          const definitions = await targetColumnDefinitions(target, tm.target.schema, targetTableName(tm));
+          const actualColumns = new Set(definitions.map(column => column.name.toLowerCase()));
           const expectedColumns = tm.columns.filter(column => column.include).flatMap(column => [
             (column.targetName?.trim() || column.targetCol).toLowerCase(),
             ...(column.keepLegacyAs ? [column.keepLegacyAs.toLowerCase()] : []),
-          ]);
+          ]).filter(Boolean);
           const missing = expectedColumns.filter(column => !actualColumns.has(column));
           if (missing.length) {
             issues.push({
-              level: 'warning',
+              level: 'error',
               code: 'target_schema_compatibility',
-              message: `Target schema compatibility: ${missing.length} mapped column${missing.length !== 1 ? 's are' : ' is'} missing (${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', …' : ''}). The existing target schema is authoritative; update the mapping in Migration before scheduling.`,
+              message: `Existing target: ${missing.length} mapped column${missing.length !== 1 ? 's do' : ' does'} not exist (${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', …' : ''}). Map each source column to a physical target column in Migration.`,
+            });
+          }
+          const mappedTargets = new Set(expectedColumns);
+          const requiredUnmapped = definitions.filter(column => !column.nullable && column.defaultValue == null && !mappedTargets.has(column.name.toLowerCase()));
+          if (requiredUnmapped.length) {
+            issues.push({
+              level: 'error',
+              code: 'target_schema_compatibility',
+              message: `Existing target has ${requiredUnmapped.length} required column${requiredUnmapped.length !== 1 ? 's' : ''} without a source mapping or target default (${requiredUnmapped.slice(0, 5).map(column => column.name).join(', ')}${requiredUnmapped.length > 5 ? ', …' : ''}).`,
             });
           }
         }

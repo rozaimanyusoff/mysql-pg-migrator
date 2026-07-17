@@ -7,8 +7,22 @@ import { deleteJobRuntime, hydrateJobRuntime, reconcileJobRuntime, saveJobRuntim
 const JOB_DIR = path.join(process.cwd(), 'data', 'migv2', 'jobs');
 
 function normalizeJob(job: MigJob): MigJob {
+  const legacyMode = (job as MigJob & { mappingMode?: string }).mappingMode;
+  const inferredCopySource = job.tables.length > 0 && job.tables.every(table =>
+    (table.targetMode ?? (table.target.table === table.source.table ? 'source_clone' : 'existing')) === 'source_clone'
+  );
+  const normalizedMappingMode = legacyMode === 'copy_source'
+    ? 'copy_source'
+    : legacyMode === 'existing_target' || legacyMode === 'per_table'
+      ? 'existing_target'
+      : inferredCopySource ? 'copy_source' : 'existing_target';
   return {
     ...job,
+    mappingMode: normalizedMappingMode,
+    syncStrategy: normalizedMappingMode === 'copy_source' ? job.syncStrategy ?? inferJobSyncStrategy(job.tables) : undefined,
+    initialRunOptions: normalizedMappingMode === 'copy_source'
+      ? { skipConstraints: job.initialRunOptions?.skipConstraints === true }
+      : undefined,
     tables: job.tables.map(table => ({
       ...table,
       targetMode: table.targetMode ?? (table.target.table === table.source.table ? 'source_clone' : 'existing'),
@@ -24,6 +38,16 @@ function normalizeJob(job: MigJob): MigJob {
       })),
     })),
   };
+}
+
+function inferJobSyncStrategy(tables: MigJob['tables']): MigJob['syncStrategy'] {
+  if (!tables.length) return 'full_insert';
+  const values = new Set(tables.map(table =>
+    (table.syncMode ?? 'full') === 'incremental'
+      ? 'incremental'
+      : table.fullSyncStrategy === 'upsert' ? 'full_upsert' : 'full_insert'
+  ));
+  return values.size === 1 ? [...values][0] as MigJob['syncStrategy'] : undefined;
 }
 
 function ensureDir() {
@@ -47,6 +71,8 @@ function listJobSummaries(includeRuntime: boolean): MigJobSummary[] {
           id: j.id, name: j.name, description: j.description,
           version: j.version, createdAt: j.createdAt, updatedAt: j.updatedAt,
           tableCount: j.tables.length,
+          mappingMode: j.mappingMode,
+          syncStrategy: j.syncStrategy,
           tables: j.tables.map(t => ({ id: t.id, include: t.include, source: t.source, sourceDatabase: t.sourceDatabase, target: t.target, targetAlias: t.targetAlias, syncMode: t.syncMode, fullSyncStrategy: t.fullSyncStrategy, incrementalCol: t.incrementalCol, lastSyncedValue: t.lastSyncedValue, truncateBeforeMigrate: t.truncateBeforeMigrate })),
           scheduleReady: assessment.recurringReady,
           scheduleIssues: assessment.recurringIssues.length,

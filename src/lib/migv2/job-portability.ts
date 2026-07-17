@@ -132,6 +132,13 @@ export function parsePortableJob(value: unknown): MigJob {
       database: targetMeta.database as string,
       username: targetMeta.username as string,
     },
+    ...((job.mappingMode === 'copy_source' || job.mappingMode === 'existing_target' || job.mappingMode === 'per_table') && {
+      mappingMode: job.mappingMode === 'per_table' ? 'existing_target' : job.mappingMode,
+    }),
+    ...((job.syncStrategy === 'incremental' || job.syncStrategy === 'full_upsert' || job.syncStrategy === 'full_insert') && { syncStrategy: job.syncStrategy }),
+    ...(isRecord(job.initialRunOptions) && typeof job.initialRunOptions.skipConstraints === 'boolean' && {
+      initialRunOptions: { skipConstraints: job.initialRunOptions.skipConstraints },
+    }),
     tables: (job.tables as TableMap[]).map(table => {
       const portable = { ...table };
       delete portable.lastSyncedValue;

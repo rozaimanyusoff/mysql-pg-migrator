@@ -38,8 +38,13 @@ function validateBaseTable(table: TableMap): RecurringConfigIssue[] {
   const includedColumns = table.columns.filter(column => column.include);
 
   if (!table.target.schema || !(table.targetAlias?.trim() || table.target.table)) issues.push(issue('Target table has not been configured.'));
+  if (table.targetMode === 'existing' && !includedColumns.length) issues.push(issue('Column mapping has not been configured.'));
 
   for (const column of includedColumns) {
+    if (!targetColumnName(column)) {
+      issues.push(issue(`Source column "${column.sourceCol ?? '(target-only)'}" has not been assigned to a target column.`));
+      continue;
+    }
     if (column.conversion === 'serial_to_uuid' && column.targetType.toLowerCase() !== 'uuid') {
       issues.push(issue(`Column "${targetColumnName(column)}" uses serial-to-UUID conversion but its target type is not UUID.`));
     }

@@ -32,11 +32,26 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       return res.status(400).json({ error: 'A positive chunkRows value is required for fixed chunk mode' });
     }
     const jobChangedWithoutPreflight = nextJobId !== s.jobId && !preflightStatus.ready;
+    const nextScheduleMode = patch.scheduleMode ?? s.scheduleMode ?? 'recurring';
+    const nextRunAt = patch.runAt !== undefined ? patch.runAt : s.runAt;
+    if (nextScheduleMode === 'once' && (!nextRunAt || !Number.isFinite(Date.parse(nextRunAt)))) {
+      return res.status(400).json({ error: 'A valid runAt date and time is required for a run-once schedule' });
+    }
+    if (patch.enabled === true && nextScheduleMode === 'once' && Date.parse(nextRunAt!) <= Date.now()) {
+      return res.status(400).json({ error: 'Choose a new future date and time before enabling this run-once schedule' });
+    }
+    if (patch.enabled === true && nextScheduleMode === 'once' && s.triggeredAt && patch.runAt === undefined) {
+      return res.status(409).json({ error: 'This run-once trigger was already consumed. Edit it with a new future date and time.' });
+    }
     const updated: CronSchedule = {
       ...s,
       ...(patch.jobId !== undefined && { jobId: patch.jobId }),
       ...(patch.jobName !== undefined && { jobName: patch.jobName }),
       ...(patch.cronExpr !== undefined && { cronExpr: patch.cronExpr }),
+      ...(patch.scheduleMode !== undefined && { scheduleMode: patch.scheduleMode }),
+      ...(patch.runAt !== undefined && { runAt: patch.runAt }),
+      ...(nextScheduleMode === 'once' && patch.runAt !== undefined && { triggeredAt: null, missedAt: null }),
+      ...(patch.scheduleMode === 'recurring' && { runAt: null, triggeredAt: null, missedAt: null }),
       ...(patch.enabled !== undefined && { enabled: patch.enabled }),
       ...(jobChangedWithoutPreflight && { enabled: false }),
       ...(patch.lastRunAt !== undefined && { lastRunAt: patch.lastRunAt }),

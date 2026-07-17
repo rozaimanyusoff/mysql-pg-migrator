@@ -36,6 +36,10 @@ REFRESH_TOKEN_EXPIRATION_TIME=86400 # Refresh token TTL in seconds (default: 24 
 # Required by external cron/scheduler calls. Browser UI uses same-origin protection.
 SCHEDULER_API_TOKEN=replace-with-a-random-64-character-secret
 RUN_TIMEOUT_SECONDS=86400          # Scheduled-run polling timeout (default: 24 hours)
+SCHEDULE_TRIGGER_RETRY_SECONDS=900 # Retry temporary app outages for 15 minutes
+SCHEDULE_TRIGGER_RETRY_INTERVAL_SECONDS=15
+SCHEDULE_TRIGGER_REQUEST_TIMEOUT_SECONDS=15
+SCHEDULE_AUTO_RESUME_ATTEMPTS=3  # Resume interrupted scheduled runs from checkpoints
 
 # File storage — audit logs and config snapshots are saved here
 UPLOAD_DIR=./public/uploads

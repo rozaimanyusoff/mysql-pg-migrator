@@ -11,6 +11,7 @@ import { usesUpsertStrategy } from './sync-strategy';
 import { buildWhere, cursorValue, type IncrementalFilter, type RangeFilter } from './cursor-query';
 import { runChunkRows } from './execution-policy';
 import { completedTableStatus, rollbackAvailability } from './run-outcome';
+import { isTransientMigrationError, MAX_TRANSIENT_RETRIES, transientRetryDelayMs } from './transient-error';
 
 const MAX_ROLLBACK_PKS = 5_000;
 
@@ -980,6 +981,9 @@ export async function advanceRun(
       ts.rowsMigrated += insertResult.inserted;
       ts.rowsSkipped  += insertResult.conflictSkipped + embeddedHeaders;
       ts.rowsErrored  += insertResult.errored;
+      ts.transientRetryCount = 0;
+      ts.lastTransientErrorAt = null;
+      ts.error = null;
       run.migratedRows = run.tableStates.reduce((s, t) => s + t.rowsMigrated, 0);
 
       const parts: string[] = [];
@@ -1012,8 +1016,18 @@ export async function advanceRun(
         log(`[${ts.sourceKey}] offset ${ts.offset} / ~${ts.rowsSource}`);
       }
     } catch (err) {
-      ts.status = 'failed';
       ts.error = err instanceof Error ? err.message : String(err);
+      const nextRetry = (ts.transientRetryCount ?? 0) + 1;
+      if (isTransientMigrationError(err) && nextRetry <= MAX_TRANSIENT_RETRIES) {
+        ts.status = 'pending';
+        ts.transientRetryCount = nextRetry;
+        ts.lastTransientErrorAt = new Date().toISOString();
+        const delayMs = transientRetryDelayMs(nextRetry);
+        log(`[${ts.sourceKey}] transient infrastructure error: ${ts.error}. Retry ${nextRetry}/${MAX_TRANSIENT_RETRIES} in ${delayMs / 1000}s.`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        return;
+      }
+      ts.status = 'failed';
       run.errors.push(`${ts.sourceKey}: ${ts.error}`);
       log(`[${ts.sourceKey}] ERROR: ${ts.error}`);
     }

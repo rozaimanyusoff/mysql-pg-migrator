@@ -30,6 +30,24 @@ export function saveSchedule(s: CronSchedule): void {
   fs.writeFileSync(schedulePath(s.id), JSON.stringify(s, null, 2));
 }
 
+export function acceptedScheduleRun(schedule: CronSchedule, runId: string, now: string): CronSchedule {
+  return {
+    ...schedule,
+    ...(schedule.scheduleMode === 'once' ? { enabled: false, triggeredAt: now, missedAt: null } : {}),
+    lastRunStatus: 'running',
+    lastRunId: runId,
+    updatedAt: now,
+  };
+}
+
+export function markMissedOneShot(schedule: CronSchedule, now: string): CronSchedule {
+  const runAt = schedule.runAt ? Date.parse(schedule.runAt) : Number.NaN;
+  if (schedule.scheduleMode !== 'once' || !schedule.enabled || schedule.triggeredAt || schedule.missedAt || !Number.isFinite(runAt) || runAt >= Date.parse(now)) {
+    return schedule;
+  }
+  return { ...schedule, missedAt: now, updatedAt: now };
+}
+
 export function deleteSchedule(id: string): void {
   try { fs.unlinkSync(schedulePath(id)); } catch { /* ignore */ }
 }

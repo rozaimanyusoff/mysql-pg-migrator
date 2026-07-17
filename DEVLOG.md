@@ -4,6 +4,29 @@
 
 ## 2026-07-17
 
+- **fix / production run recovery** — Safe execution semantics, same-job exclusion, and bounded outage recovery.
+  - Removed the ad-hoc global `Run Once` actions from the Target search header and new-schema guidance. Job-level execution now lives on the Saved Job card; Pre-flight remains the non-mutating assessment action.
+  - Unified Run Once, Saved Job Run, Scheduler, Resume, and Restart behind one global start lock plus a same-job active-run check. Conflict responses expose `activeRunId` so a caller can reattach instead of creating a duplicate run.
+  - Added bounded transient database retry (three consecutive attempts with 1s/2s/4s backoff) for connection loss, timeout, connection exhaustion, deadlock, and serialization failures. Deterministic data/mapping errors fail immediately.
+  - Hardened `scripts/run-job.js` with request timeouts, a configurable trigger retry window, lost-response reattachment, and automatic checkpoint resume when stale-heartbeat reconciliation marks a scheduled run interrupted. A one-shot whose exact trigger time passed is persisted as `missed`; Run Now consumes that missed schedule atomically instead of leaving it eligible for a later cron recurrence.
+  - Durability boundary: run/checkpoint state remains atomic local JSON. Production must mount `data/migv2` on persistent shared storage; a database-backed queue/lease is still required for multi-instance failover and recovery after loss of the cron host itself.
+  - Files: `src/pages/migration.tsx`, `src/pages/api/{scheduler,migv2}/**`, `src/lib/migv2/{run-store,runner,transient-error,types}.ts`, `scripts/run-job.js`, `.env.example`, `README.md`, `tests/scheduler-hardening.test.ts`.
+  - Verification: TypeScript, CLI syntax, 42 integration tests, and `git diff --check` pass. Production build reaches optimization but remains blocked only by the environment failing to fetch Google Fonts `Inter`.
+  - Status: implemented.
+
+- **implement / workflow contract** — Global Copy Source jobs, one-shot cron, shared runtime controls, and conversion-aware Pre-flight.
+  - Added a job-wide `Copy Source · 1:1` mode. Selecting all source tables now maps the same table/column names into the chosen target schema, translates source types, and keeps the per-table mapping mode only for custom/existing-target work.
+  - Clarified `Existing Target` as the second job-wide mapping type. Source tables must be selected individually: an exact same-name target table binds automatically, same-name columns auto-map against the live target definition, and different/unmatched columns stay explicitly unresolved until the user maps them. Select-all is hidden and rejected for this mode; Run Once and Scheduler both block missing physical target columns or required target columns without mappings.
+  - Sync strategy is global for Copy Source (`insert new`, `insert & update`, or incremental). Incremental still requires a tracking column and timestamp tie-breaker per affected table because those physical columns may differ across tables.
+  - Copy Source Run Once uses one global `Skip constraints` option and never offers truncate. Saved configuration persists the global mapping/sync contract, while destructive/bypass flags remain excluded from unattended recurring runs.
+  - Saving a job now runs operational Pre-flight immediately. Temporal target mappings sample up to 100 non-NULL source values per column and report parseable or incompatible VARCHAR-to-date/time/timestamp conversions; required target columns with unparseable samples become blockers.
+  - Saved Job cards now mirror live execution state from the server and expose Run Now, Pause, Resume, Stop, and Restart. Both Migration and Scheduler read the same persisted run, so navigation does not own or interrupt execution. Pause/stop take effect at the next persisted row/chunk boundary; Resume continues from that cursor; Restart clears recurring cursors and starts from the first source row without truncating.
+  - Scheduler supports `Run once` and `Recurring`. A run-once date/time is represented by cron for triggering, but the server consumes and disables it atomically when the first run is accepted; duplicate invocations cannot create a second run. A consumed one-shot must be edited with a new future time before it can be enabled again.
+  - The cron CLI now treats `completed_with_issues` as terminal and exits distinctly instead of polling until timeout.
+  - Verification: TypeScript, 41 integration tests, and `git diff --check` pass. Production build compiles TypeScript but remains blocked by the environment failing to fetch Google Fonts `Inter`.
+  - Files: `src/pages/{migration,scheduler}.tsx`, `src/pages/api/{scheduler,migv2}/**`, `src/lib/migv2/{types,job-store,job-portability,preflight}.ts`, `scripts/run-job.js`, `tests/scheduler-hardening.test.ts`.
+  - Status: implemented.
+
 - **fix / migration correctness** — Safe watermark outcomes, explicit completion issues, and exact-only rollback.
   - Added `completed_with_issues` at table, run, schedule and notification levels. A finished table is clean `completed` only when it has no database errors or policy rejects; Migration and Scheduler render issue outcomes in amber and keep affected tables visible for review/restart.
   - Incremental watermarks are no longer persisted when unresolved row/database errors exist. The old watermark is retained so a later restart reprocesses the pending window; explicit `skip_row` policy rejects remain auditable but may advance because that outcome was configured deliberately.

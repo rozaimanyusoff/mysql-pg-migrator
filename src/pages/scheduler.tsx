@@ -170,6 +170,8 @@ export default function SchedulerPage() {
   const [formJobId, setFormJobId] = useState('');
   const [formCron, setFormCron] = useState('0 2 * * *');
   const [formPreset, setFormPreset] = useState('0 2 * * *');
+  const [formScheduleMode, setFormScheduleMode] = useState<'once' | 'recurring'>('recurring');
+  const [formRunAt, setFormRunAt] = useState('');
   const [formNotifyEmail, setFormNotifyEmail] = useState('');
   const [formChunkMode, setFormChunkMode] = useState<'auto' | 'fixed'>('auto');
   const [formChunkRows, setFormChunkRows] = useState(1_000);
@@ -496,6 +498,8 @@ export default function SchedulerPage() {
     setFormJobId(preselectedJobId ?? jobs[0]?.id ?? '');
     setFormCron('0 2 * * *');
     setFormPreset('0 2 * * *');
+    setFormScheduleMode('recurring');
+    setFormRunAt('');
     setFormNotifyEmail('');
     setFormChunkMode('auto');
     setFormChunkRows(autoChunkRows);
@@ -507,6 +511,8 @@ export default function SchedulerPage() {
     setFormJobId(s.jobId);
     setFormCron(s.cronExpr);
     setFormPreset(CRON_PRESETS.find(p => p.value === s.cronExpr)?.value ?? '__custom__');
+    setFormScheduleMode(s.scheduleMode === 'once' ? 'once' : 'recurring');
+    setFormRunAt(s.runAt ? new Date(s.runAt).toLocaleString('sv-SE').slice(0, 16) : '');
     setFormNotifyEmail(s.notifyEmail ?? '');
     setFormChunkMode(s.chunkMode === 'fixed' ? 'fixed' : 'auto');
     setFormChunkRows(s.chunkRows ?? autoChunkRows);
@@ -514,7 +520,7 @@ export default function SchedulerPage() {
   };
 
   const handleFormSave = async () => {
-    if (!formJobId || !formCron.trim()) return;
+    if (!formJobId || (formScheduleMode === 'recurring' ? !formCron.trim() : !formRunAt)) return;
     setFormSaving(true);
     try {
       const job = jobs.find(j => j.id === formJobId);
@@ -522,14 +528,19 @@ export default function SchedulerPage() {
       const notifyEmail = formNotifyEmail.trim() || null;
       const chunkMode = formChunkMode;
       const chunkRows = chunkMode === 'fixed' ? formChunkRows : null;
+      const runAt = formScheduleMode === 'once' ? new Date(formRunAt).toISOString() : null;
+      const runDate = formScheduleMode === 'once' ? new Date(formRunAt) : null;
+      const cronExpr = runDate
+        ? `${runDate.getMinutes()} ${runDate.getHours()} ${runDate.getDate()} ${runDate.getMonth() + 1} *`
+        : formCron.trim();
       if (editTarget) {
         const { data } = await axios.patch<{ schedule: CronSchedule }>(`/api/scheduler/${editTarget.id}`, {
-          jobId: formJobId, jobName: job.name, cronExpr: formCron.trim(), notifyEmail, chunkMode, chunkRows,
+          jobId: formJobId, jobName: job.name, cronExpr, scheduleMode: formScheduleMode, runAt, notifyEmail, chunkMode, chunkRows,
         });
         setSchedules(prev => prev.map(s => s.id === editTarget.id ? data.schedule : s));
       } else {
         const { data } = await axios.post<{ schedule: CronSchedule }>('/api/scheduler', {
-          jobId: formJobId, jobName: job.name, cronExpr: formCron.trim(), notifyEmail, chunkMode, chunkRows,
+          jobId: formJobId, jobName: job.name, cronExpr, scheduleMode: formScheduleMode, runAt, notifyEmail, chunkMode, chunkRows,
         });
         setSchedules(prev => [...prev, data.schedule]);
         setSelectedId(data.schedule.jobId);
@@ -656,7 +667,7 @@ export default function SchedulerPage() {
                         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                           <CircleDot size={10} className={selectedSchedule.enabled ? 'text-violet-400' : 'text-gray-300 dark:text-slate-600'} />
                           <Clock size={10} className="text-slate-400" />
-                          <span className="text-[12px] text-gray-500 dark:text-slate-400">{describeCron(selectedSchedule.cronExpr)}</span>
+                          <span className="text-[12px] text-gray-500 dark:text-slate-400">{selectedSchedule.scheduleMode === 'once' && selectedSchedule.runAt ? `Run once · ${new Date(selectedSchedule.runAt).toLocaleString()}` : describeCron(selectedSchedule.cronExpr)}</span>
                           <code className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">({selectedSchedule.cronExpr})</code>
                           <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                             Chunk {selectedSchedule.chunkMode === 'fixed' ? `${(selectedSchedule.chunkRows ?? autoChunkRows).toLocaleString()} requested` : 'Auto'}
@@ -664,10 +675,17 @@ export default function SchedulerPage() {
                           {!selectedSchedule.enabled && (
                             <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500">disabled</span>
                           )}
+                          {selectedSchedule.missedAt && !selectedSchedule.triggeredAt && (
+                            <Tooltip content="The one-shot time passed while no run was accepted. Run Now will execute it once and consume this schedule, or edit a new future time." side="bottom">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                <AlertTriangle size={9} />missed
+                              </span>
+                            </Tooltip>
+                          )}
                         </div>
                       ) : (
                         <p className="text-[12px] text-gray-400 dark:text-slate-500 mt-0.5">
-                          <span className="italic">No schedule configured.</span> Run Now executes this saved job once immediately; Add Schedule enables recurring cron runs.
+                          <span className="italic">No schedule configured.</span> Run Now executes immediately; Add Schedule can create a run-once or recurring cron trigger.
                         </p>
                       )}
                     </div>
@@ -1342,6 +1360,22 @@ export default function SchedulerPage() {
 
               {/* Cron preset */}
               <div className="space-y-1">
+                <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">Run pattern</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setFormScheduleMode('once')} className={`rounded border px-3 py-2 text-[12px] font-medium ${formScheduleMode === 'once' ? 'border-violet-400 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300' : 'border-gray-200 text-gray-500 dark:border-slate-700 dark:text-slate-400'}`}>Run once</button>
+                  <button type="button" onClick={() => setFormScheduleMode('recurring')} className={`rounded border px-3 py-2 text-[12px] font-medium ${formScheduleMode === 'recurring' ? 'border-violet-400 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300' : 'border-gray-200 text-gray-500 dark:border-slate-700 dark:text-slate-400'}`}>Recurring</button>
+                </div>
+              </div>
+
+              {formScheduleMode === 'once' ? (
+                <div className="space-y-1">
+                  <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">Run date &amp; time</label>
+                  <input type="datetime-local" value={formRunAt} min={new Date().toLocaleString('sv-SE').slice(0, 16)} onChange={event => setFormRunAt(event.target.value)}
+                    className="w-full rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] text-gray-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500">Uses cron as the trigger, then auto-disables immediately after the first accepted run. It will not recur.</p>
+                </div>
+              ) : <>
+              <div className="space-y-1">
                 <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">Schedule Preset</label>
                 <select
                   value={formPreset}
@@ -1354,6 +1388,7 @@ export default function SchedulerPage() {
                   <option value="__custom__">Custom expression…</option>
                 </select>
               </div>
+              </>}
 
               {/* Cron expression */}
               <div className="space-y-1">
@@ -1370,7 +1405,7 @@ export default function SchedulerPage() {
 
               {/* Chunk policy */}
               <div className="space-y-1">
-                <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">Recurring run chunk</label>
+                <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">Scheduled run chunk</label>
                 <div className="grid grid-cols-2 gap-2">
                   <select value={formChunkMode} onChange={event => setFormChunkMode(event.target.value as 'auto' | 'fixed')}
                     className="w-full rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] text-gray-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -1407,7 +1442,7 @@ export default function SchedulerPage() {
                   Cancel
                 </button>
                 <button
-                  disabled={formSaving || !formJobId || !formCron.trim()}
+                  disabled={formSaving || !formJobId || (formScheduleMode === 'recurring' ? !formCron.trim() : !formRunAt)}
                   onClick={() => void handleFormSave()}
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-violet-600 text-white text-[13px] font-medium hover:bg-violet-700 disabled:opacity-40 transition-colors">
                   {formSaving && <Loader2 size={12} className="animate-spin" />}

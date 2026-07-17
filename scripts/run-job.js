@@ -6,7 +6,10 @@
  *   node scripts/run-job.js --schedule-id <id> [--base-url http://localhost:3000]
  *
  * Environment variables:
- *   APP_URL   Base URL of the running Next.js app (default: http://localhost:3000)
+ *   APP_URL                                Base URL (default: http://localhost:3000)
+ *   SCHEDULE_TRIGGER_RETRY_SECONDS          Trigger retry window (default: 900)
+ *   SCHEDULE_TRIGGER_RETRY_INTERVAL_SECONDS Delay between retries (default: 15)
+ *   SCHEDULE_TRIGGER_REQUEST_TIMEOUT_SECONDS Per-request timeout (default: 15)
  *
  * Exit codes:
  *   0  Migration completed successfully
@@ -25,6 +28,10 @@ function getArg(flag) {
 const scheduleId = getArg('--schedule-id');
 const baseUrl = getArg('--base-url') || process.env.APP_URL || 'http://localhost:3000';
 const timeoutSeconds = Number(process.env.RUN_TIMEOUT_SECONDS || 86400);
+const triggerRetrySeconds = Number(process.env.SCHEDULE_TRIGGER_RETRY_SECONDS || 900);
+const triggerRetryIntervalSeconds = Number(process.env.SCHEDULE_TRIGGER_RETRY_INTERVAL_SECONDS || 15);
+const triggerRequestTimeoutSeconds = Number(process.env.SCHEDULE_TRIGGER_REQUEST_TIMEOUT_SECONDS || 15);
+const autoResumeAttempts = Number(process.env.SCHEDULE_AUTO_RESUME_ATTEMPTS || 3);
 const schedulerToken = process.env.SCHEDULER_API_TOKEN || '';
 
 if (!scheduleId) {
@@ -56,6 +63,9 @@ function request(method, url, body) {
       });
     });
     req.on('error', reject);
+    req.setTimeout(Math.max(1, triggerRequestTimeoutSeconds) * 1000, () => {
+      req.destroy(new Error(`Request timed out after ${triggerRequestTimeoutSeconds}s`));
+    });
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
@@ -79,28 +89,53 @@ async function main() {
   console.log(`[run-job] ${startedAt} — schedule: ${scheduleId}`);
   console.log(`[run-job] App URL: ${baseUrl}`);
 
-  // Trigger the run
-  let triggerRes;
-  try {
-    triggerRes = await request('POST', `${baseUrl}/api/scheduler/${scheduleId}/run`, {});
-  } catch (err) {
-    console.error(`[run-job] Failed to reach app: ${err.message}`);
-    console.error(`[run-job] Is the server running at ${baseUrl}?`);
-    process.exit(1);
+  // Retry temporary app/network failures. If the first request was accepted but
+  // its response was lost, the API returns activeRunId and this process safely
+  // reattaches instead of starting a duplicate run.
+  const triggerDeadline = Date.now() + Math.max(0, triggerRetrySeconds) * 1000;
+  let runId = null;
+  let triggerAttempt = 0;
+  while (!runId) {
+    triggerAttempt += 1;
+    let triggerRes;
+    try {
+      triggerRes = await request('POST', `${baseUrl}/api/scheduler/${scheduleId}/run`, {});
+    } catch (err) {
+      if (Date.now() >= triggerDeadline) {
+        console.error(`[run-job] Failed to reach app after ${triggerAttempt} attempt(s): ${err.message}`);
+        process.exit(1);
+      }
+      console.error(`[run-job] Trigger attempt ${triggerAttempt} could not reach app: ${err.message}. Retrying in ${triggerRetryIntervalSeconds}s.`);
+      await sleep(Math.max(1, triggerRetryIntervalSeconds) * 1000);
+      continue;
+    }
+
+    if (triggerRes.status === 200 && triggerRes.body?.runId) {
+      runId = triggerRes.body.runId;
+      break;
+    }
+    if (triggerRes.status === 409 && triggerRes.body?.activeRunId) {
+      runId = triggerRes.body.activeRunId;
+      console.log(`[run-job] Trigger was already accepted; reattaching to run ${runId}`);
+      break;
+    }
+
+    const retryable = triggerRes.status === 429 || triggerRes.status >= 500;
+    if (!retryable || Date.now() >= triggerDeadline) {
+      console.error(`[run-job] Trigger failed (HTTP ${triggerRes.status}):`, triggerRes.body?.error || triggerRes.body);
+      process.exit(1);
+    }
+    console.error(`[run-job] Trigger attempt ${triggerAttempt} returned HTTP ${triggerRes.status}. Retrying in ${triggerRetryIntervalSeconds}s.`);
+    await sleep(Math.max(1, triggerRetryIntervalSeconds) * 1000);
   }
 
-  if (triggerRes.status !== 200) {
-    console.error(`[run-job] Trigger failed (HTTP ${triggerRes.status}):`, triggerRes.body?.error || triggerRes.body);
-    process.exit(1);
-  }
-
-  const { runId } = triggerRes.body;
   console.log(`[run-job] Run started: ${runId}`);
 
   // Poll for completion
-  const TERMINAL = new Set(['completed', 'failed', 'aborted', 'rolled_back']);
+  const TERMINAL = new Set(['completed', 'completed_with_issues', 'failed', 'aborted', 'rolled_back']);
   let lastStatus = null;
   let lastTableSummary = '';
+  let recoveryAttempts = 0;
 
   const maxAttempts = Math.max(1, Math.ceil(timeoutSeconds / 5));
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -118,6 +153,22 @@ async function main() {
 
     const run = statusRes.body?.run;
     if (!run) continue;
+
+    if (run.status === 'failed' && run.interrupted && recoveryAttempts < Math.max(0, autoResumeAttempts)) {
+      recoveryAttempts += 1;
+      console.error(`[run-job] Server interruption detected; resuming run ${runId} from its saved checkpoint (${recoveryAttempts}/${autoResumeAttempts}).`);
+      try {
+        const recoveryRes = await request('POST', `${baseUrl}/api/migv2/run/resume`, { runId });
+        if (recoveryRes.status === 200 || (recoveryRes.status === 409 && recoveryRes.body?.activeRunId === runId)) {
+          lastStatus = null;
+          continue;
+        }
+        console.error(`[run-job] Recovery request failed (HTTP ${recoveryRes.status}):`, recoveryRes.body?.error || recoveryRes.body);
+      } catch (err) {
+        console.error(`[run-job] Recovery request could not reach app: ${err.message}`);
+      }
+      continue;
+    }
 
     if (run.status !== lastStatus) {
       lastStatus = run.status;
@@ -138,6 +189,9 @@ async function main() {
       if (run.status === 'completed') {
         console.log(`[run-job] ✓ Completed in ${elapsed}s — ${run.migratedRows} rows migrated`);
         process.exit(0);
+      } else if (run.status === 'completed_with_issues') {
+        console.error(`[run-job] ⚠ Completed with issues in ${elapsed}s — review rejected/error rows in Scheduler`);
+        process.exit(2);
       } else {
         console.error(`[run-job] ✗ Run ${run.status} after ${elapsed}s`);
         if (run.errors?.length) {

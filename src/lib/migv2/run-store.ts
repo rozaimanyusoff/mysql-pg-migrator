@@ -4,6 +4,8 @@ import type { MigRun } from './types';
 
 const RUN_DIR = path.join(process.cwd(), 'data', 'migv2', 'runs');
 export const MAX_CONCURRENT_MIGRATIONS = 5;
+/** One lock namespace shared by every endpoint that can create a run. */
+export const RUN_START_LOCK = 'migration-global-start';
 const LOCK_STALE_MS = 120_000;
 
 function ensureDir() { fs.mkdirSync(RUN_DIR, { recursive: true }); }

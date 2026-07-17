@@ -21,6 +21,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       updatedAt: '',
       sourceMeta: body.sourceMeta!,
       targetMeta: body.targetMeta!,
+      mappingMode: body.mappingMode,
+      syncStrategy: body.syncStrategy,
+      initialRunOptions: body.initialRunOptions,
       tables: body.tables,
     };
     const saved = saveJob(job);

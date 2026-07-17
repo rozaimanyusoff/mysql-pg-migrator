@@ -1,14 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { activeRunCount, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
+import { acquireRunLock, activeRunCount, activeRunForJob, MAX_CONCURRENT_MIGRATIONS, RUN_START_LOCK, saveRun } from '../../../../lib/migv2/run-store';
 import type { MigConn, MigRun, MigRunTableState, TableMap } from '../../../../lib/migv2/types';
 import { randomUUID } from 'crypto';
 import { assessMigrationTables } from '../../../../lib/migv2/recurring-validation';
 import { createRunExecutionPolicy } from '../../../../lib/migv2/execution-policy';
 import { driveRun } from '../../../../lib/migv2/run-driver';
 import { validateMigrationBindings } from '../../../../lib/migv2/preflight';
+import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
+  if (!requireSchedulerMutationAuth(req, res)) return;
 
   const { source, target, tables, jobId, jobName, filterCol, filterFrom, filterTo } = req.body as {
     source: MigConn;
@@ -38,8 +40,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       bindingIssues,
     });
   }
+  const releaseStartLock = await acquireRunLock(RUN_START_LOCK);
   if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) {
+    releaseStartLock();
     return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
+  }
+  const existingRun = jobId ? activeRunForJob(jobId) : null;
+  if (existingRun) {
+    releaseStartLock();
+    return res.status(409).json({
+      error: `This job already has an active ${existingRun.status} run (${existingRun.id.slice(0, 8)}). Resume or stop it before starting another.`,
+      activeRunId: existingRun.id,
+    });
   }
 
   const run: MigRun = {
@@ -82,7 +94,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Persist first, then let the server own execution. The browser only polls
   // status, so closing the tab or the user's laptop does not abandon Run Once.
-  saveRun(run);
+  try { saveRun(run); } finally { releaseStartLock(); }
   void driveRun(run, source, target, null);
   return res.status(200).json({ run });
 }

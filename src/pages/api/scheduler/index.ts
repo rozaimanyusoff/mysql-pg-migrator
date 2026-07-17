@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
-import { listSchedules, saveSchedule } from '../../../lib/migv2/schedule-store';
+import { listSchedules, markMissedOneShot, saveSchedule } from '../../../lib/migv2/schedule-store';
 import { getRunActivitySnapshot, loadRun } from '../../../lib/migv2/run-store';
 import type { CronSchedule } from '../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../lib/scheduler-security';
@@ -12,12 +12,16 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
     const { reconciledRuns, activeRunJobIds } = getRunActivitySnapshot();
     const schedules = listSchedules().map(schedule => {
+      const normalized = markMissedOneShot(schedule, new Date().toISOString());
       const reconciled = reconciledRuns.find(run => run.jobId === schedule.jobId || run.id === schedule.lastRunId);
       const lastRun = schedule.lastRunId ? loadRun(schedule.lastRunId) : null;
       const staleRunningSchedule = schedule.lastRunStatus === 'running' && lastRun && !['running', 'pending'].includes(lastRun.status);
-      if (!reconciled && !staleRunningSchedule) return schedule;
+      if (!reconciled && !staleRunningSchedule) {
+        if (normalized !== schedule) saveSchedule(normalized);
+        return normalized;
+      }
       const updated: CronSchedule = {
-        ...schedule,
+        ...normalized,
         lastRunAt: lastRun?.completedAt ?? reconciled?.completedAt ?? schedule.lastRunAt,
         lastRunStatus: lastRun?.status === 'completed' ? 'completed' : lastRun?.status === 'completed_with_issues' ? 'completed_with_issues' : 'failed',
         updatedAt: new Date().toISOString(),
@@ -30,7 +34,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   if (req.method === 'POST') {
     if (!requireSchedulerMutationAuth(req, res)) return;
-    const { jobId, jobName, cronExpr, notifyEmail, chunkMode, chunkRows } = req.body as Partial<CronSchedule>;
+    const { jobId, jobName, cronExpr, scheduleMode, runAt, notifyEmail, chunkMode, chunkRows } = req.body as Partial<CronSchedule>;
     if (!jobId || !jobName || !cronExpr) {
       return res.status(400).json({ error: 'jobId, jobName, cronExpr required' });
     }
@@ -48,9 +52,17 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     }
     const preflightStatus = getPreflightStatus(job);
     const now = new Date().toISOString();
+    const normalizedMode = scheduleMode === 'once' ? 'once' : 'recurring';
+    if (normalizedMode === 'once' && (!runAt || !Number.isFinite(Date.parse(runAt)) || Date.parse(runAt) <= Date.now())) {
+      return res.status(400).json({ error: 'A future runAt date and time is required for a run-once schedule' });
+    }
     const schedule: CronSchedule = {
       id: randomUUID(),
       jobId, jobName, cronExpr,
+      scheduleMode: normalizedMode,
+      runAt: normalizedMode === 'once' ? runAt : null,
+      triggeredAt: null,
+      missedAt: null,
       // Schedules may be configured first, but cannot become active until a
       // current Pre-flight has passed for this exact saved-job version.
       enabled: preflightStatus.ready,

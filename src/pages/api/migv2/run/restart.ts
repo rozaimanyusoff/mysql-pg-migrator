@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
-import { activeRunCount, loadRun, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
+import { acquireRunLock, activeRunCount, activeRunForJob, loadRun, MAX_CONCURRENT_MIGRATIONS, RUN_START_LOCK, saveRun } from '../../../../lib/migv2/run-store';
 import { loadJob } from '../../../../lib/migv2/job-store';
 import { listSchedules } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
@@ -27,6 +27,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (sourceRun.status === 'running') return res.status(400).json({ error: 'Run is already in progress' });
   if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
   if (!sourceRun.jobId) return res.status(400).json({ error: 'Run has no job to resolve connections from' });
+  const existingRun = activeRunForJob(sourceRun.jobId);
+  if (existingRun) return res.status(409).json({ error: `This job still has an active ${existingRun.status} run. Stop it before restarting from the first row.`, activeRunId: existingRun.id });
 
   const job = loadJob(sourceRun.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found — cannot resolve connections' });
@@ -40,9 +42,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 
+  const releaseStartLock = await acquireRunLock(RUN_START_LOCK);
+  if (activeRunCount() >= MAX_CONCURRENT_MIGRATIONS) {
+    releaseStartLock();
+    return res.status(409).json({ error: `Maximum ${MAX_CONCURRENT_MIGRATIONS} concurrent migrations reached.` });
+  }
+  const lockedExistingRun = activeRunForJob(sourceRun.jobId);
+  if (lockedExistingRun) {
+    releaseStartLock();
+    return res.status(409).json({ error: `This job still has an active ${lockedExistingRun.status} run. Stop it before restarting from the first row.`, activeRunId: lockedExistingRun.id });
+  }
+
   const now = new Date().toISOString();
 
-  const tables = prepareRunTables(sourceRun.tables, { truncate });
+  const tables = prepareRunTables(sourceRun.tables, { truncate }).map(table => ({
+    ...table,
+    // Restart is a new migration attempt from the first source row. Resume is
+    // the operation that continues from a paused/failed run cursor.
+    lastSyncedValue: null,
+    lastSyncedPk: null,
+  }));
 
   const newRun: MigRun = {
     id: randomUUID(),
@@ -79,7 +98,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     filterTo: sourceRun.filterTo ?? null,
   };
 
-  saveRun(newRun);
+  try { saveRun(newRun); } finally { releaseStartLock(); }
 
   const schedule = listSchedules().find(s => s.jobId === newRun.jobId) ?? null;
   void driveRun(newRun, conns.source, conns.target, schedule?.id ?? null);

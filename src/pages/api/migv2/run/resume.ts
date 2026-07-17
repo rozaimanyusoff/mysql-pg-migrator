@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { activeRunCount, loadRun, MAX_CONCURRENT_MIGRATIONS, saveRun } from '../../../../lib/migv2/run-store';
+import { acquireRunLock, activeRunCount, activeRunForJob, loadRun, MAX_CONCURRENT_MIGRATIONS, RUN_START_LOCK, saveRun } from '../../../../lib/migv2/run-store';
 import { loadJob } from '../../../../lib/migv2/job-store';
 import { listSchedules } from '../../../../lib/migv2/schedule-store';
 import { resolveJobConns } from '../../../../lib/migv2/resolve-conns';
@@ -18,7 +18,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { runId } = req.body as { runId?: string };
   if (!runId) return res.status(400).json({ error: 'runId is required' });
 
-  const run = loadRun(runId);
+  let run = loadRun(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
   if (run.status === 'running') return res.status(400).json({ error: 'Run is already in progress' });
   if (run.status === 'completed' || run.status === 'completed_with_issues') return res.status(400).json({ error: 'Run already completed; restart the affected table to retry unresolved rows.' });
@@ -38,11 +38,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Runs interrupted under the former persistent ALTER TABLE implementation
   // may have left target triggers disabled. Repair that state before reopening
   // the run; fail closed if cleanup cannot be confirmed.
+  let recoveredConstraintLog: string | null = null;
   if (run.interrupted) {
     try {
       const recovered = await recoverLegacyDisabledConstraints(run, conns.target);
       if (recovered.length > 0) {
-        run.logs.push(`[${new Date().toISOString()}] Recovery: constraints re-enabled on ${recovered.join(', ')}.`);
+        recoveredConstraintLog = `[${new Date().toISOString()}] Recovery: constraints re-enabled on ${recovered.join(', ')}.`;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -52,8 +53,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // Reopen the run: clear terminal flags, re-arm in-flight tables that were
-  // mid-chunk when the process died (failed tables stay failed and are skipped).
+  // Reopen under the same global boundary used by every run-creation endpoint.
+  // This prevents recovery racing a fresh manual or scheduled invocation.
+  const releaseStartLock = await acquireRunLock(RUN_START_LOCK);
+  run = loadRun(runId);
+  if (!run) {
+    releaseStartLock();
+    return res.status(404).json({ error: 'Run not found' });
+  }
+  const competingRun = run.jobId ? activeRunForJob(run.jobId) : null;
+  if (competingRun && competingRun.id !== run.id) {
+    releaseStartLock();
+    return res.status(409).json({ error: `This job already has an active ${competingRun.status} run.`, activeRunId: competingRun.id });
+  }
+  if (run.status === 'running' || run.status === 'pending') {
+    releaseStartLock();
+    return res.status(409).json({ error: 'Run recovery was already accepted.', activeRunId: run.id });
+  }
+
+  // Clear terminal flags and re-arm only unfinished tables. Completed tables
+  // remain completed; failed/in-flight tables continue from saved checkpoints.
   run.status = 'running';
   run.interrupted = false;
   run.completedAt = null;
@@ -61,8 +80,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   for (const ts of run.tableStates) {
     if (ts.status === 'running' || ts.status === 'failed') ts.status = 'pending';
   }
+  if (recoveredConstraintLog) run.logs.push(recoveredConstraintLog);
   run.logs.push(`[${new Date().toISOString()}] Run resumed from saved offsets (failed tables retried).`);
-  saveRun(run);
+  try { saveRun(run); } finally { releaseStartLock(); }
 
   const schedule = listSchedules().find(s => s.jobId === run.jobId) ?? null;
   void driveRun(run, conns.source, conns.target, schedule?.id ?? null);

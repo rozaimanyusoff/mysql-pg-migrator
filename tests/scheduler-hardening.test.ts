@@ -21,6 +21,8 @@ import { runWithTableWorkerLimit } from '../src/lib/migv2/table-worker-pool.ts';
 import { displayTableStatus, isMigratedTableResult, summarizeRunTableProgress } from '../src/lib/migv2/run-progress.ts';
 import { pendingResultId, pendingState, pendingTablesToAdd, tableBindingSignature } from '../src/lib/migv2/pending-result.ts';
 import { canPersistWatermark, completedTableStatus, rollbackAvailability } from '../src/lib/migv2/run-outcome.ts';
+import { acceptedScheduleRun, markMissedOneShot } from '../src/lib/migv2/schedule-store.ts';
+import { isTransientMigrationError, MAX_TRANSIENT_RETRIES, transientRetryDelayMs } from '../src/lib/migv2/transient-error.ts';
 import type { PreflightReport } from '../src/lib/migv2/preflight.ts';
 import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
 
@@ -104,6 +106,32 @@ test('same-job active-run lookup blocks overlapping runs', () => {
   runFiles.push(file);
   saveRun(makeRun(id, jobId));
   assert.equal(activeRunForJob(jobId)?.id, id);
+});
+
+test('run-once cron is consumed while recurring cron stays enabled', () => {
+  const base = {
+    id: 'schedule', jobId: 'job', jobName: 'Job', cronExpr: '30 10 17 7 *', enabled: true,
+    createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z',
+    lastRunAt: null, lastRunStatus: null, lastRunId: null,
+  } as const;
+  const missed = markMissedOneShot({ ...base, scheduleMode: 'once', runAt: '2026-07-17T10:30:00.000Z' }, '2026-07-17T10:31:00.000Z');
+  assert.equal(missed.missedAt, '2026-07-17T10:31:00.000Z');
+  const once = acceptedScheduleRun(missed, 'run-1', '2026-07-17T10:32:00.000Z');
+  assert.equal(once.enabled, false);
+  assert.equal(once.triggeredAt, '2026-07-17T10:32:00.000Z');
+  assert.equal(once.missedAt, null);
+  const recurring = acceptedScheduleRun({ ...base, scheduleMode: 'recurring' }, 'run-2', '2026-07-17T10:30:00.000Z');
+  assert.equal(recurring.enabled, true);
+  assert.equal(recurring.triggeredAt, undefined);
+});
+
+test('transient database failures use bounded exponential retry classification', () => {
+  assert.equal(isTransientMigrationError(Object.assign(new Error('socket closed'), { code: 'ECONNRESET' })), true);
+  assert.equal(isTransientMigrationError(new Error('deadlock detected while updating target')), true);
+  assert.equal(isTransientMigrationError(Object.assign(new Error('database unavailable'), { code: '57P01' })), true);
+  assert.equal(isTransientMigrationError(new Error('invalid input syntax for type uuid')), false);
+  assert.equal(MAX_TRANSIENT_RETRIES, 3);
+  assert.deepEqual([1, 2, 3, 99].map(transientRetryDelayMs), [1000, 2000, 4000, 4000]);
 });
 
 test('polling snapshot exposes active job ids and status filtering respects its limit', () => {
@@ -265,6 +293,18 @@ test('Scheduler runs ignore saved one-off bypass flags', () => {
   assert.equal(prepareRunTables([table], { truncate: true })[0].truncateBeforeMigrate, true);
 });
 
+test('restart table preparation can clear recurring cursors for a first-row restart', () => {
+  const table: TableMap = {
+    id: 'restart-table', include: true,
+    source: { schema: 'src', table: 'items' }, target: { schema: 'dst', table: 'items' },
+    columns: [], truncateBeforeMigrate: false, syncMode: 'incremental', incrementalCol: 'id',
+    lastSyncedValue: '500', lastSyncedPk: '500',
+  };
+  const restarted = prepareRunTables([table]).map(candidate => ({ ...candidate, lastSyncedValue: null, lastSyncedPk: null }))[0];
+  assert.equal(restarted.lastSyncedValue, null);
+  assert.equal(restarted.lastSyncedPk, null);
+});
+
 test('saved jobs never persist one-off bypass options', () => {
   const id = `test-${randomUUID()}`;
   const file = path.join(process.cwd(), 'data', 'migv2', 'jobs', `${id}.json`);
@@ -297,6 +337,31 @@ test('saved jobs never persist one-off bypass options', () => {
   assert.equal(savedTable.skipNullViolations, false);
 });
 
+test('saved jobs infer and preserve the global Copy Source contract', () => {
+  const id = `test-${randomUUID()}`;
+  const file = path.join(process.cwd(), 'data', 'migv2', 'jobs', `${id}.json`);
+  jobFiles.push(file);
+  const job: MigJob = {
+    id, name: 'copy source', description: '', version: 0, createdAt: '', updatedAt: '',
+    sourceMeta: { type: 'mysql', host: 'localhost', port: 3306, database: 'source', username: 'test' },
+    targetMeta: { type: 'postgresql', host: 'localhost', port: 5432, database: 'target', username: 'test' },
+    tables: [{
+      id: 'items', include: true,
+      source: { schema: 'legacy', table: 'items' },
+      target: { schema: 'archive', table: 'items' },
+      targetMode: 'source_clone', columns: [], truncateBeforeMigrate: false,
+      syncMode: 'full', fullSyncStrategy: 'upsert',
+    }],
+    initialRunOptions: { skipConstraints: true },
+  };
+  const saved = saveJob(job);
+  assert.equal(saved.mappingMode, 'copy_source');
+  assert.equal(saved.syncStrategy, 'full_upsert');
+  assert.equal(saved.initialRunOptions?.skipConstraints, true);
+  assert.equal(prepareRunTables(saved.tables)[0].skipConstraints, false);
+  assert.equal(listSchedulerJobs().find(candidate => candidate.id === id)?.scheduleReady, false);
+});
+
 test('portable saved jobs round-trip mappings without carrying credentials', () => {
   const job: MigJob = {
     id: 'portable-job',
@@ -314,6 +379,8 @@ test('portable saved jobs round-trip mappings without carrying credentials', () 
       columns: [], truncateBeforeMigrate: false,
       syncMode: 'incremental', incrementalCol: 'updated_at', lastSyncedValue: '2026-01-01',
     }],
+    mappingMode: 'copy_source',
+    syncStrategy: 'incremental',
     filterCol: 'created_at', filterFrom: '2025-01-01', filterTo: null,
   };
   const payload = JSON.parse(JSON.stringify(createPortableJob(job))) as {
@@ -323,6 +390,8 @@ test('portable saved jobs round-trip mappings without carrying credentials', () 
   payload.job.targetMeta.password = 'must-not-be-imported';
 
   const imported = parsePortableJob(payload);
+  assert.equal(imported.mappingMode, 'copy_source');
+  assert.equal(imported.syncStrategy, 'incremental');
   assert.equal(imported.name, job.name);
   assert.equal(imported.tables[0].lastSyncedValue, undefined);
   const expectedPortableTable = { ...job.tables[0] };
@@ -581,6 +650,20 @@ test('required target columns validate explicit NULL handling policies', () => {
   assert.match(assessMigrationTables([table]).oneOffIssues[0]?.message ?? '', /target has no default/);
 });
 
+test('Existing Target blocks unassigned source columns and empty mappings', () => {
+  const table: TableMap = {
+    id: 'existing-target', include: true,
+    source: { schema: 'legacy', table: 'users' }, target: { schema: 'app', table: 'accounts' },
+    targetMode: 'existing', truncateBeforeMigrate: false,
+    columns: [{
+      sourceCol: 'user_name', targetCol: '', targetName: null, targetType: 'TEXT', nullable: true,
+      defaultValue: null, include: true, conversion: 'keep', fkRef: null,
+    }],
+  };
+  assert.match(assessMigrationTables([table]).oneOffIssues[0]?.message ?? '', /not been assigned/);
+  assert.match(assessMigrationTables([{ ...table, columns: [] }]).oneOffIssues[0]?.message ?? '', /Column mapping/);
+});
+
 test('saved legacy mappings normalize target ownership and conservative data policies', () => {
   const id = `test-${randomUUID()}`;
   const file = path.join(process.cwd(), 'data', 'migv2', 'jobs', `${id}.json`);
@@ -597,6 +680,7 @@ test('saved legacy mappings normalize target ownership and conservative data pol
     }],
   };
   const saved = saveJob(job);
+  assert.equal(saved.mappingMode, 'existing_target');
   assert.equal(saved.tables[0].targetMode, 'existing');
   assert.equal(saved.tables[0].columns[0].nullPolicy, 'fail');
   assert.equal(saved.tables[0].columns[0].targetNullable, false);

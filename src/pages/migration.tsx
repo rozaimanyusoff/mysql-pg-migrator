@@ -17,7 +17,7 @@ import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'reac
 import { Tooltip } from '../components/Tooltip';
 import { useAlert } from '../lib/alert-context';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
-import { suggestTargetType, isPkLikeSerial } from '../lib/migv2/type-map';
+import { suggestTargetType } from '../lib/migv2/type-map';
 import { assessMigrationTables } from '../lib/migv2/recurring-validation';
 import { displayTableStatus, isMigratedTableResult, summarizeRunTableProgress } from '../lib/migv2/run-progress';
 import { pendingResultId, pendingState, pendingTablesToAdd, tableBindingSignature } from '../lib/migv2/pending-result';
@@ -54,6 +54,53 @@ function editableJobTables(tables: TableMap[]): TableMap[] {
       skipConstraints: false,
       skipNullViolations: false,
     };
+  });
+}
+
+function sourceColumnsToMaps(columns: MigColumnInfo[], srcType: MigConn['type'], targetType: MigConn['type']): ColumnMap[] {
+  return columns.map(column => ({
+    sourceCol: column.name,
+    targetCol: column.name,
+    targetName: null,
+    targetType: suggestTargetType(column.rawType, srcType, targetType),
+    nullable: column.nullable,
+    defaultValue: column.defaultValue,
+    sourceNullable: column.nullable,
+    targetNullable: column.nullable,
+    targetDefaultValue: column.defaultValue,
+    nullPolicy: 'fail',
+    emptyPolicy: 'keep',
+    nullFallback: null,
+    include: true,
+    conversion: 'keep',
+    fkRef: column.isFk && column.fkRef ? column.fkRef.split('.').slice(0, 2).join('.') : null,
+    keepLegacyAs: null,
+  }));
+}
+
+function existingTargetColumnMaps(sourceColumns: MigColumnInfo[], targetColumns: MigColumnInfo[], srcType: MigConn['type'], targetType: MigConn['type']): ColumnMap[] {
+  return sourceColumns.map(source => {
+    const target = targetColumns.find(candidate => candidate.name === source.name)
+      ?? targetColumns.find(candidate => candidate.name.toLowerCase() === source.name.toLowerCase());
+    return {
+      sourceCol: source.name,
+      targetCol: target?.name ?? '',
+      targetName: null,
+      targetType: target?.rawType.toUpperCase() ?? suggestTargetType(source.rawType, srcType, targetType),
+      nullable: target?.nullable ?? source.nullable,
+      defaultValue: target?.defaultValue ?? null,
+      sourceNullable: source.nullable,
+      targetNullable: target?.nullable ?? true,
+      targetDefaultValue: target?.defaultValue ?? null,
+      nullPolicy: 'fail' as const,
+      emptyPolicy: 'keep' as const,
+      nullFallback: null,
+      include: true,
+      conversion: 'keep' as const,
+      fkRef: source.isFk && source.fkRef ? source.fkRef.split('.').slice(0, 2).join('.') : null,
+      targetFkRef: target?.fkRef ?? null,
+      keepLegacyAs: null,
+    } satisfies ColumnMap;
   });
 }
 
@@ -250,6 +297,9 @@ export default function Migration() {
 
   // ── Mapping ───────────────────────────────────────────────────────────────────
   const [tableMaps, setTableMaps] = useState<TableMap[]>([]);
+  const [mappingMode, setMappingMode] = useState<'copy_source' | 'existing_target'>('existing_target');
+  const [globalSyncStrategy, setGlobalSyncStrategy] = useState<'incremental' | 'full_upsert' | 'full_insert'>('full_insert');
+  const [globalSkipConstraints, setGlobalSkipConstraints] = useState(false);
   const [runOnceOptions, setRunOnceOptions] = useState<Record<string, RunOnceTableOptions>>({});
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
   const [colsCache, setColsCache] = useState<Record<string, MigColumnInfo[]>>({});
@@ -270,6 +320,8 @@ export default function Migration() {
   const [jobs, setJobs] = useState<MigJobSummary[]>([]);
   const [schedules, setSchedules] = useState<CronSchedule[]>([]);
   const [activeRunJobIds, setActiveRunJobIds] = useState<Set<string>>(new Set());
+  const [latestRunByJob, setLatestRunByJob] = useState<Map<string, MigRun>>(new Map());
+  const [jobActionKey, setJobActionKey] = useState<string | null>(null);
   const [importingJob, setImportingJob] = useState(false);
   const importJobInputRef = useRef<HTMLInputElement>(null);
   const pendingSaveRef = useRef<HTMLDivElement>(null);
@@ -587,20 +639,25 @@ export default function Migration() {
   const isTableIncluded = (schema: string, table: string, database?: string) =>
     tableMaps.some(m => m.source.schema === schema && m.source.table === table && m.include && (!database || m.sourceDatabase === database));
 
-  const handleCheckAll = () => {
+  const handleCheckAll = async () => {
+    if (mappingMode !== 'copy_source') {
+      toast.info('Select Existing Target tables one at a time.', {
+        description: 'Each source table must be bound to a physical target table and its columns reviewed.',
+      });
+      return;
+    }
     const toAdd: typeof tableMaps = [];
     for (const t of filteredSrcTables) {
       const existing = tableMaps.find(m => m.source.schema === t.schema && m.source.table === t.name && m.sourceDatabase === t.database);
       if (!existing) {
-        const existsInTarget = tgtConnected && tgtTables.some(
-          tgt => tgt.schema === (tgtDefaultSchema || 'public') && tgt.name === t.name
-        );
         toAdd.push({
           id: newId(), include: true,
           source: { schema: t.schema, table: t.name },
           sourceDatabase: t.database,
-          target: { schema: tgtDefaultSchema || '', table: existsInTarget ? '' : t.name },
-          targetMode: existsInTarget ? 'existing' : 'source_clone',
+          target: { schema: tgtDefaultSchema || '', table: t.name },
+          targetMode: 'source_clone',
+          syncMode: globalSyncStrategy === 'incremental' ? 'incremental' : 'full',
+          fullSyncStrategy: globalSyncStrategy === 'full_upsert' ? 'upsert' : 'insert_missing',
           columns: [], // lazy — fetched when table is selected
           truncateBeforeMigrate: false,
         });
@@ -614,6 +671,32 @@ export default function Migration() {
       return [...updated, ...toAdd];
     });
     setDirty(true);
+    if (mappingMode === 'copy_source' && toAdd.length > 0) {
+      setLoadingCols(true);
+      try {
+        for (let offset = 0; offset < toAdd.length; offset += 5) {
+          await Promise.all(toAdd.slice(offset, offset + 5).map(async map => {
+            const database = map.sourceDatabase ?? srcConn.database;
+            const tableKey = `${map.source.schema}.${map.source.table}`;
+            const cacheKey = `${database}.${tableKey}`;
+            let sourceColumns = colsCache[cacheKey];
+            if (!sourceColumns) {
+              const row = connections.find(connection => connection.id === srcConnId);
+              const connection = row ? connRowToMigConn(row, database) : { ...srcConn, database };
+              const { data } = await axios.post<{ columns: MigColumnInfo[] }>('/api/migv2/columns', { conn: connection, tableKey });
+              sourceColumns = data.columns;
+              setColsCache(previous => ({ ...previous, [cacheKey]: sourceColumns }));
+            }
+            const columns = sourceColumnsToMaps(sourceColumns, srcConn.type, tgtConn.type);
+            setTableMaps(previous => previous.map(table => table.id === map.id ? { ...table, columns } : table));
+          }));
+        }
+      } catch (error) {
+        showError('Copy Source mapping failed', axios.isAxiosError(error) ? error.response?.data?.error : 'Could not inspect every selected source table.');
+      } finally {
+        setLoadingCols(false);
+      }
+    }
   };
 
   const handleUncheckAll = () => {
@@ -643,16 +726,18 @@ export default function Migration() {
     const tableKey = `${schema}.${table}`;
     const colCacheKey = `${database}.${tableKey}`;
     const mapId = newId();
-    const existsInTarget = tgtConnected && tgtTables.some(
+    const existsInTarget = mappingMode === 'existing_target' && tgtConnected && tgtTables.some(
       t => t.schema === (tgtDefaultSchema || 'public') && t.name === table
     );
-    const autoTargetTable = !existsInTarget ? table : '';
+    const autoTargetTable = mappingMode === 'copy_source' ? table : existsInTarget ? table : '';
     setTableMaps(prev => [...prev, {
       id: mapId, include: true,
       source: { schema, table },
       sourceDatabase: database,
       target: { schema: tgtDefaultSchema || '', table: autoTargetTable },
-      targetMode: existsInTarget ? 'existing' : 'source_clone',
+      targetMode: mappingMode === 'copy_source' ? 'source_clone' : 'existing',
+      syncMode: globalSyncStrategy === 'incremental' ? 'incremental' : 'full',
+      fullSyncStrategy: globalSyncStrategy === 'full_upsert' ? 'upsert' : 'insert_missing',
       columns: [], truncateBeforeMigrate: false,
     }]);
     setSelectedMapId(mapId);
@@ -668,27 +753,17 @@ export default function Migration() {
         srcCols = data.columns;
         setColsCache(prev => ({ ...prev, [colCacheKey]: srcCols }));
       }
-      const columns: ColumnMap[] = srcCols.map(c => {
-        const isSerial = c.isPk && (c.isAutoIncrement || isPkLikeSerial(c.rawType));
-        return {
-          sourceCol: c.name,
-          targetCol: c.name,
-          targetName: null,
-          targetType: suggestTargetType(c.rawType, srcConn.type, tgtConn.type),
-          nullable: c.nullable,
-          defaultValue: c.defaultValue,
-          sourceNullable: c.nullable,
-          targetNullable: c.nullable,
-          targetDefaultValue: c.defaultValue,
-          nullPolicy: 'fail',
-          emptyPolicy: 'keep',
-          nullFallback: null,
-          include: true,
-          conversion: 'keep',
-          fkRef: c.isFk && c.fkRef ? c.fkRef.split('.').slice(0, 2).join('.') : null,
-          keepLegacyAs: null,
-        };
-      });
+      let columns = sourceColumnsToMaps(srcCols, srcConn.type, tgtConn.type);
+      if (mappingMode === 'existing_target' && existsInTarget) {
+        const targetKey = `${tgtDefaultSchema || 'public'}.${table}`;
+        let targetColumns = tgtColsCache[targetKey];
+        if (!targetColumns) {
+          const { data } = await axios.post<{ columns: MigColumnInfo[] }>('/api/migv2/columns', { conn: tgtConn, tableKey: targetKey });
+          targetColumns = data.columns;
+          setTgtColsCache(previous => ({ ...previous, [targetKey]: targetColumns }));
+        }
+        columns = existingTargetColumnMaps(srcCols, targetColumns, srcConn.type, tgtConn.type);
+      }
       columns.forEach(c => {
         if (c.conversion === 'serial_to_uuid' && tgtConn.type === 'postgresql') c.targetType = 'UUID';
       });
@@ -699,6 +774,36 @@ export default function Migration() {
 
   // ── Mapping helpers ───────────────────────────────────────────────────────────
   const selectedMap = tableMaps.find(m => m.id === selectedMapId) ?? null;
+  const applyMappingMode = (mode: 'copy_source' | 'existing_target') => {
+    setMappingMode(mode);
+    if (mode === 'copy_source') {
+      setTableMaps(previous => previous.map(table => ({
+        ...table,
+        target: { schema: tgtDefaultSchema || 'public', table: table.source.table },
+        targetAlias: null,
+        targetMode: 'source_clone',
+      })));
+    } else {
+      setTableMaps(previous => previous.map(table => ({
+        ...table,
+        target: { schema: tgtDefaultSchema || 'public', table: '' },
+        targetAlias: null,
+        targetMode: 'existing',
+        columns: [],
+      })));
+      setSelectedMapId(null);
+    }
+    setDirty(true);
+  };
+  const applyGlobalSyncStrategy = (strategy: 'incremental' | 'full_upsert' | 'full_insert') => {
+    setGlobalSyncStrategy(strategy);
+    setTableMaps(previous => previous.map(table => ({
+      ...table,
+      syncMode: strategy === 'incremental' ? 'incremental' : 'full',
+      fullSyncStrategy: strategy === 'full_upsert' ? 'upsert' : 'insert_missing',
+    })));
+    setDirty(true);
+  };
   const liveJobAssessment = useMemo(() => assessMigrationTables(tableMaps), [tableMaps]);
   const missingSourceDatabases = useMemo(() => {
     if (!activeJobId || srcDbs.length === 0) return [];
@@ -945,7 +1050,6 @@ export default function Migration() {
   }, [selectedMap, tgtColsForSelected]);
 
   const includedCount = tableMaps.filter(m => m.include).length;
-  const canStart = srcConnected && tgtConnected && includedCount > 0 && bindingIssueCount === 0 && !polling;
   const runTableProgress = currentRun
     ? summarizeRunTableProgress(currentRun.tableStates)
     : polling
@@ -1060,9 +1164,15 @@ export default function Migration() {
   };
   const loadSchedules = async () => {
     try {
-      const { data } = await axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[] }>('/api/scheduler');
-      setSchedules(data.schedules);
-      setActiveRunJobIds(new Set(data.activeRunJobIds ?? []));
+      const [scheduleResponse, runResponse] = await Promise.all([
+        axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[] }>('/api/scheduler'),
+        axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { limit: 100, compact: 1 } }),
+      ]);
+      setSchedules(scheduleResponse.data.schedules);
+      setActiveRunJobIds(new Set(scheduleResponse.data.activeRunJobIds ?? []));
+      const latest = new Map<string, MigRun>();
+      for (const run of runResponse.data.runs) if (run.jobId && !latest.has(run.jobId)) latest.set(run.jobId, run);
+      setLatestRunByJob(latest);
     } catch { /* ignore */ }
   };
   useEffect(() => {
@@ -1088,6 +1198,49 @@ export default function Migration() {
     for (const schedule of schedules) result.set(schedule.jobId, schedule);
     return result;
   }, [schedules]);
+
+  const handleSavedJobAction = async (job: MigJobSummary, action: 'run' | 'pause' | 'resume' | 'stop' | 'restart') => {
+    const run = latestRunByJob.get(job.id);
+    setJobActionKey(`${job.id}:${action}`);
+    try {
+      if (action === 'run') {
+        const start = () => axios.post('/api/migv2/run/start-job', {
+          jobId: job.id,
+        });
+        try {
+          await start();
+        } catch (error) {
+          if (!axios.isAxiosError(error) || error.response?.status !== 428) throw error;
+          const { data } = await axios.post<{ report: { ok: boolean } }>('/api/migv2/preflight', { jobId: job.id });
+          if (!data.report.ok) throw new Error('Pre-flight found blocking compatibility or connectivity issues.');
+          await start();
+        }
+      } else {
+        if (!run) throw new Error('No run history is available for this job.');
+        if (action === 'restart') {
+          await axios.post('/api/migv2/run/restart', { runId: run.id, truncate: false });
+        } else {
+          const tableIds = run.tableStates
+            .filter(table => action === 'pause'
+              ? table.status === 'running' || table.status === 'pending'
+              : table.status === 'running' || table.status === 'pending' || table.status === 'paused')
+            .map(table => table.id);
+          if (!tableIds.length) throw new Error(`No table is available to ${action}.`);
+          await axios.post('/api/migv2/run/control-tables', {
+            jobId: job.id,
+            runId: run.id,
+            tableIds,
+            action: action === 'resume' ? 'run' : action,
+          });
+        }
+      }
+      await loadSchedules();
+    } catch (error) {
+      showError(`${action[0].toUpperCase()}${action.slice(1)} failed`, axios.isAxiosError(error) ? error.response?.data?.error : error instanceof Error ? error.message : 'Request failed');
+    } finally {
+      setJobActionKey(null);
+    }
+  };
 
   // Persist accumulated pending states to localStorage whenever they change.
   // This lets multiple runs accumulate across page reloads and route navigations.
@@ -1287,6 +1440,9 @@ export default function Migration() {
         name: saveJobName.trim(), description: saveJobDesc.trim(),
         sourceMeta: { type: srcConn.type, host: srcConn.host, port: srcConn.port, database: tables.find(t => t.include)?.sourceDatabase ?? srcConn.database, username: srcConn.username },
         targetMeta: { type: tgtConn.type, host: tgtConn.host, port: tgtConn.port, database: tgtConn.database, username: tgtConn.username },
+        mappingMode,
+        syncStrategy: mappingMode === 'copy_source' ? globalSyncStrategy : undefined,
+        initialRunOptions: mappingMode === 'copy_source' ? { skipConstraints: globalSkipConstraints } : undefined,
         tables,
         filterCol: filterCol.trim() || null,
         filterFrom: filterFrom.trim() || null,
@@ -1322,6 +1478,16 @@ export default function Migration() {
       await loadJobs();
 
       const savedJobId = data.job.id;
+      try {
+        const { data: preflightData } = await axios.post<{ report: { ok: boolean; summary?: string } }>('/api/migv2/preflight', { jobId: savedJobId });
+        if (preflightData.report.ok) toast.success('Job saved · Pre-flight passed', { duration: 3500 });
+        else toast.warning('Job saved · Pre-flight needs review', { description: preflightData.report.summary ?? 'Compatibility or operational blockers were found.', duration: 6000 });
+      } catch (error) {
+        toast.warning('Job saved · Pre-flight could not finish', {
+          description: axios.isAxiosError(error) ? error.response?.data?.error : 'Run Pre-flight again before execution.',
+          duration: 6000,
+        });
+      }
       if (scheduleAfterSave) {
         setScheduleAfterSave(false);
         toast.success(`Job "${data.job.name}" saved — set up its schedule.`);
@@ -1413,6 +1579,9 @@ export default function Migration() {
         .catch(() => setMigratedTableKeys(new Set()));
 
       const firstIncluded = job.tables.find(m => m.include);
+      setMappingMode(job.mappingMode === 'copy_source' ? 'copy_source' : 'existing_target');
+      setGlobalSyncStrategy(job.syncStrategy ?? 'full_insert');
+      setGlobalSkipConstraints(job.initialRunOptions?.skipConstraints === true);
 
       // Try to restore source and target connections from saved metadata
       const normType = (t: string) => t === 'postgresql' ? 'postgres' : t;
@@ -1788,60 +1957,6 @@ export default function Migration() {
     }
   };
 
-  const startMigration = async () => {
-    const included = tableMaps.filter(t => t.include);
-    if (!included.length) return;
-    if (bindingIssueCount > 0) {
-      setShowBindingDialog(true);
-      return;
-    }
-    const assessment = assessMigrationTables(included);
-    if (!assessment.oneOffReady) {
-      showWarning({
-        title: 'Migration setup is not ready',
-        description: `${assessment.oneOffIssues.length} setup issue${assessment.oneOffIssues.length !== 1 ? 's' : ''} must be resolved before Run Once:\n\n${assessment.oneOffIssues.slice(0, 10).map(issue => `• ${issue.sourceKey}: ${issue.message}`).join('\n')}${assessment.oneOffIssues.length > 10 ? `\n• +${assessment.oneOffIssues.length - 10} more` : ''}`,
-      });
-      return;
-    }
-    acknowledgeNewSchema(newSchemaDecisionKey);
-    stopRequestedRef.current = false;
-    setPausedTableIds(new Set());
-    setPolling(true);
-    setCurrentRun(null);
-    try {
-      for (const table of included) {
-        if (runOnceOptionsFor(table.id).truncate && !await resetRuntimeCursor(table.id, false)) {
-          setPolling(false);
-          return;
-        }
-      }
-      const { data } = await axios.post<{ run: MigRun }>('/api/migv2/run/start', {
-        source: srcConn, target: tgtConn,
-        tables: included.map(t => {
-          const options = runOnceOptionsFor(t.id);
-          return {
-            ...t,
-            syncMode: 'full' as const,
-            fullSyncStrategy: 'insert_missing' as const,
-            truncateBeforeMigrate: options.truncate,
-            skipConstraints: options.skipConstraints,
-            skipNullViolations: false,
-          };
-        }),
-        jobId: activeJobId, jobName: saveJobName || 'Migration',
-        filterCol: filterCol.trim() || null,
-        filterFrom: filterFrom.trim() || null,
-        filterTo: filterTo.trim() || null,
-      });
-      setCurrentRun(data.run);
-      if (data.run.status === 'running' || data.run.status === 'pending') {
-        scheduleAdvance(data.run.id);
-      } else {
-        onRunFinished(data.run); // completed in a single start call (small table)
-      }
-    } catch { setPolling(false); }
-  };
-
   const scheduleAdvance = (runId: string) => setTimeout(() => void advanceMigration(runId), 1000);
 
   const advanceMigration = async (runId: string) => {
@@ -1891,6 +2006,9 @@ export default function Migration() {
         setSrcDbsSelected([]);
         setSrcSchema('');
         setTableMaps([]);
+        setMappingMode('existing_target');
+        setGlobalSyncStrategy('full_insert');
+        setGlobalSkipConstraints(false);
         setRunOnceOptions({});
         setSelectedMapId(null);
         setColsCache({});
@@ -2105,7 +2223,7 @@ export default function Migration() {
           syncMode: 'full',
           fullSyncStrategy: 'insert_missing',
           truncateBeforeMigrate: truncate,
-          skipConstraints: runOnceOptionsFor(map.id).skipConstraints,
+          skipConstraints: mappingMode === 'copy_source' ? globalSkipConstraints : runOnceOptionsFor(map.id).skipConstraints,
           skipNullViolations: false,
           ...(truncate ? { lastSyncedValue: null, lastSyncedPk: null } : {}),
         }],
@@ -2333,16 +2451,34 @@ export default function Migration() {
 
   // ── Select target table for current mapping ───────────────────────────────────
   const selectTargetTable = async (schema: string, table: string) => {
-    if (!selectedMapId) return;
-    updateTableMap(selectedMapId, { target: { schema, table }, targetMode: 'existing' });
+    if (!selectedMapId || !selectedMap) return;
     const key = `${schema}.${table}`;
     if (tgtConnected) {
-      // Fetch cols if not cached
-      if (!tgtColsCache[key]) {
-        void axios.post<{ columns: MigColumnInfo[] }>(
-          '/api/migv2/columns', { conn: tgtConn, tableKey: key }
-        ).then(({ data }) => setTgtColsCache(prev => ({ ...prev, [key]: data.columns })))
-         .catch(() => {});
+      try {
+        const sourceKey = `${selectedMap.source.schema}.${selectedMap.source.table}`;
+        const sourceCacheKey = `${selectedMap.sourceDatabase ?? srcConn.database}.${sourceKey}`;
+        let sourceColumns = colsCache[sourceCacheKey];
+        if (!sourceColumns) {
+          const { data } = await axios.post<{ columns: MigColumnInfo[] }>('/api/migv2/columns', {
+            conn: srcConnForMap(selectedMap), tableKey: sourceKey,
+          });
+          sourceColumns = data.columns;
+          setColsCache(previous => ({ ...previous, [sourceCacheKey]: sourceColumns }));
+        }
+        let targetColumns = tgtColsCache[key];
+        if (!targetColumns) {
+          const { data } = await axios.post<{ columns: MigColumnInfo[] }>('/api/migv2/columns', { conn: tgtConn, tableKey: key });
+          targetColumns = data.columns;
+          setTgtColsCache(previous => ({ ...previous, [key]: targetColumns }));
+        }
+        updateTableMap(selectedMapId, {
+          target: { schema, table },
+          targetMode: 'existing',
+          columns: existingTargetColumnMaps(sourceColumns, targetColumns, srcConn.type, tgtConn.type),
+        });
+      } catch (error) {
+        showError('Column mapping failed', axios.isAxiosError(error) ? error.response?.data?.error : 'Could not inspect the selected target table.');
+        return;
       }
       // Refresh preview
       setTgtPreviewLoading(true); setTgtPreviewCols([]); setTgtPreviewRows([]);
@@ -2350,6 +2486,8 @@ export default function Migration() {
         '/api/migv2/preview', { conn: tgtConn, tableKey: key }
       ).then(({ data }) => { setTgtPreviewCols(data.columns); setTgtPreviewRows(data.rows); })
        .catch(() => {}).finally(() => setTgtPreviewLoading(false));
+    } else {
+      updateTableMap(selectedMapId, { target: { schema, table }, targetMode: 'existing' });
     }
   };
 
@@ -2568,6 +2706,43 @@ export default function Migration() {
               </div>
             </div>
           )}
+          <div className="shrink-0 border-b border-gray-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mapping type</span>
+                <select value={mappingMode} onChange={event => applyMappingMode(event.target.value as 'copy_source' | 'existing_target')}
+                  className="rounded border border-gray-200 bg-white px-2 py-1 text-[12px] text-gray-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  <option value="copy_source">Copy Source · 1:1</option>
+                  <option value="existing_target">Existing Target · per table</option>
+                </select>
+              </div>
+              {mappingMode === 'copy_source' && <>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sync strategy</span>
+                  <select value={globalSyncStrategy} onChange={event => applyGlobalSyncStrategy(event.target.value as 'incremental' | 'full_upsert' | 'full_insert')}
+                    className="rounded border border-gray-200 bg-white px-2 py-1 text-[12px] text-gray-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    <option value="full_insert">Default Copy Source · insert new</option>
+                    <option value="full_upsert">Full scan · insert &amp; update</option>
+                    <option value="incremental">Incremental · tracking column</option>
+                  </select>
+                </div>
+                <label className="inline-flex items-center gap-1.5 text-[12px] text-gray-600 dark:text-slate-300">
+                  <input type="checkbox" checked={globalSkipConstraints} onChange={event => setGlobalSkipConstraints(event.target.checked)} className="accent-amber-500" />
+                  Skip constraints
+                </label>
+                <button type="button" onClick={() => void handleCheckAll()} disabled={!srcConnected || filteredSrcTables.length === 0 || loadingCols}
+                  className="inline-flex items-center gap-1 rounded border border-blue-300 px-2 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-40 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/30">
+                  {loadingCols ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}Select &amp; map all source tables
+                </button>
+                <span className="text-[11px] text-slate-400">Target tables use the same names in <span className="font-mono">{tgtDefaultSchema || 'public'}</span>. Truncate is not used.</span>
+              </>}
+              {mappingMode === 'existing_target' && (
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Select source tables one at a time. Same-name target tables bind automatically; matching columns are mapped automatically and unmatched columns require review.
+                </span>
+              )}
+            </div>
+          </div>
           <PanelGroup orientation="vertical" className="flex-1 min-w-0 min-h-0">
 
             {/* ── TOP ROW: source + target connection + tables ────────── */}
@@ -2593,7 +2768,7 @@ export default function Migration() {
                           <span className="text-[12px] text-rose-500 truncate max-w-[100px]" title={srcError}>{srcError}</span>
                         )}
                       </div>
-                      <div className="flex flex-col gap-1.5">
+                      <div className="flex flex-col">
                         <ConnSelect connections={connections.filter(c => c.db_type === 'mysql')} value={srcConnId}
                           onChange={id => setSrcConnId(id)} onNew={() => void router.push('/settings')} accent="blue" />
                         <div className="flex items-center gap-1.5">
@@ -2629,7 +2804,7 @@ export default function Migration() {
                         {loadingCols && <Loader2 size={12} className="animate-spin text-slate-500 dark:text-slate-400" />}
                       </div>
                       <div className="flex items-center gap-1.5">
-                        {filteredSrcTables.length > 0 && (() => {
+                        {mappingMode === 'copy_source' && filteredSrcTables.length > 0 && (() => {
                           const allChecked = filteredSrcTables.every(t => isTableIncluded(t.schema, t.name, t.database));
                           const someChecked = !allChecked && filteredSrcTables.some(t => isTableIncluded(t.schema, t.name, t.database));
                           return (
@@ -2637,7 +2812,7 @@ export default function Migration() {
                               type="checkbox"
                               checked={allChecked}
                               ref={el => { if (el) el.indeterminate = someChecked; }}
-                              onChange={() => allChecked ? handleUncheckAll() : handleCheckAll()}
+                              onChange={() => allChecked ? handleUncheckAll() : void handleCheckAll()}
                               title={allChecked ? 'Uncheck all' : 'Check all'}
                               className="shrink-0 accent-blue-500 cursor-pointer"
                             />
@@ -2852,7 +3027,7 @@ export default function Migration() {
                       </div>
                     </div>
 
-                    {/* Tables label + search + Run Once */}
+                    {/* Tables label + search. Job-level execution lives on the Saved Job card. */}
                     <div className="shrink-0 px-3 pt-2 pb-1.5 border-b border-gray-100 dark:border-slate-800">
                       <div className="flex items-center gap-1.5 mb-1.5">
                         <Table2 size={12} className="text-violet-400 shrink-0" />
@@ -2881,11 +3056,6 @@ export default function Migration() {
                             className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium border border-rose-300 dark:border-rose-700 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 animate-pulse transition-colors">
                             <Square size={11} /> Stop All
                           </button>
-                        ) : tableMaps.filter(m => m.include).length > 0 && tgtConnected && srcConnected ? (
-                          <button onClick={() => void startMigration()} disabled={!canStart} title={bindingIssueCount > 0 ? 'Repair Saved Job bindings before Run Once' : 'Run Once for all included tables'}
-                            className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium border border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:cursor-not-allowed disabled:opacity-40 transition-colors">
-                            <Play size={11} /> Run Once
-                          </button>
                         ) : null}
                       </div>
                     </div>
@@ -2902,15 +3072,11 @@ export default function Migration() {
                             <p className="text-[12px] text-amber-700/90 dark:text-amber-200/80 mt-0.5 leading-snug">
                               {newTargetTables.length} target {newTargetTables.length === 1 ? 'table doesn’t' : 'tables don’t'} exist yet —
                               each maps 1:1 by default and is created on first run, preserving source columns &amp; data types.
-                              Click any source table to customize its columns, types, or PK&nbsp;→&nbsp;UUID before running.
+                              Click any source table to customize its columns, types, or PK&nbsp;→&nbsp;UUID before saving.
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2 mt-2.5">
-                          <button onClick={() => void startMigration()} disabled={!canStart}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium bg-violet-600 text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40 transition-colors">
-                            <Play size={12} /> Run Once
-                          </button>
                           <button onClick={() => openSave(false)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[12px] font-medium border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors">
                             <Save size={12} /> Save
@@ -3342,12 +3508,12 @@ export default function Migration() {
 
                   {selectedMap?.target.table && (
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-gray-200/80 px-3 py-1.5 dark:border-slate-700/80">
-                      <button onClick={() => void openMappingDesign()}
+                      {mappingMode === 'existing_target' ? <button onClick={() => void openMappingDesign()}
                         className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] font-medium transition-colors ${(selectedMap.targetMode ?? (selectedMap.target.table === selectedMap.source.table ? 'source_clone' : 'existing')) === 'existing' ? 'border-blue-300 text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30' : 'border-emerald-300 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/30'}`}>
                         Mapping type: {(selectedMap.targetMode ?? (selectedMap.target.table === selectedMap.source.table ? 'source_clone' : 'existing')) === 'existing' ? 'Existing target' : 'Source clone'}
-                      </button>
+                      </button> : <span className="rounded border border-emerald-300 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:border-emerald-700 dark:text-emerald-400">Copy Source · job-wide</span>}
 
-                      <div className="flex flex-wrap items-center gap-1.5">
+                      <div className={`${mappingMode === 'copy_source' ? 'hidden' : 'flex'} flex-wrap items-center gap-1.5`}>
                         <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sync strategy</span>
                         <select
                           aria-label="Sync strategy"
@@ -3425,7 +3591,33 @@ export default function Migration() {
                         )}
                       </div>
 
-                      <div className="ml-auto flex flex-wrap items-center gap-1.5 border-l border-gray-300 pl-3 dark:border-slate-600">
+                      {mappingMode === 'copy_source' && globalSyncStrategy === 'incremental' && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Tracking for this table</span>
+                          <select aria-label="Incremental tracking column" value={selectedMap.incrementalCol ?? ''}
+                            onChange={event => updateTableMap(selectedMap.id, { incrementalCol: event.target.value || null })}
+                            className="max-w-[140px] rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[12px] text-gray-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            <option value="">— tracking column —</option>
+                            {srcColsForSelected.map(column => <option key={column.name} value={column.name}>{column.name}</option>)}
+                          </select>
+                          <select aria-label="Incremental strategy" value={selectedMap.incrementalStrategy ?? 'id'}
+                            onChange={event => updateTableMap(selectedMap.id, { incrementalStrategy: event.target.value as 'id' | 'timestamp' })}
+                            className="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[12px] text-gray-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            <option value="id">by ID</option>
+                            <option value="timestamp">by Timestamp</option>
+                          </select>
+                          {(selectedMap.incrementalStrategy ?? 'id') === 'timestamp' && (
+                            <select aria-label="Incremental tie-breaker column" value={selectedMap.incrementalTieCol ?? ''}
+                              onChange={event => updateTableMap(selectedMap.id, { incrementalTieCol: event.target.value || null })}
+                              className="max-w-[140px] rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[12px] text-gray-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                              <option value="">— tie-breaker PK —</option>
+                              {srcColsForSelected.filter(column => column.name !== selectedMap.incrementalCol).map(column => <option key={column.name} value={column.name}>{column.name}</option>)}
+                            </select>
+                          )}
+                        </div>
+                      )}
+
+                      <div className={`${mappingMode === 'copy_source' ? 'hidden' : 'flex'} ml-auto flex-wrap items-center gap-1.5 border-l border-gray-300 pl-3 dark:border-slate-600`}>
                         <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Run Once options</span>
                         <label className="inline-flex items-center gap-1 text-[12px] text-gray-500 dark:text-slate-400">
                           <input type="checkbox" checked={runOnceOptionsFor(selectedMap.id).truncate}
@@ -3641,6 +3833,8 @@ export default function Migration() {
                                     {(col.targetName ?? col.targetCol) ? (
                                       tgtColsForSelected.length > 0 && tgtColsForSelected.find(c => c.name === (col.targetName ?? col.targetCol)) ? (
                                         <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold uppercase tracking-wide">existing</span>
+                                      ) : mappingMode === 'existing_target' ? (
+                                        <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-semibold uppercase tracking-wide">unmapped</span>
                                       ) : (
                                         <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-semibold uppercase tracking-wide">new</span>
                                       )
@@ -4115,7 +4309,10 @@ export default function Migration() {
                   </div>
                 ) : jobs.map(job => {
                   const schedule = scheduleByJobId.get(job.id);
-                  const isJobRunning = activeRunJobIds.has(job.id) || (polling && activeJobId === job.id) || schedule?.lastRunStatus === 'running';
+                  const latestJobRun = latestRunByJob.get(job.id);
+                  const isJobRunning = latestJobRun?.status === 'running' || latestJobRun?.status === 'pending' || activeRunJobIds.has(job.id) || (polling && activeJobId === job.id) || schedule?.lastRunStatus === 'running';
+                  const isJobPaused = latestJobRun?.status === 'paused' || schedule?.lastRunStatus === 'paused';
+                  const isJobTerminal = !!latestJobRun && ['completed', 'completed_with_issues', 'failed', 'aborted', 'rolled_back'].includes(latestJobRun.status);
                   const isActiveJob = activeJobId === job.id;
                   const advisories = isActiveJob ? liveJobAssessment.notices : (job.advisories ?? []);
                   const compatibilityIssues = isActiveJob ? schemaDrift.length : 0;
@@ -4274,6 +4471,46 @@ export default function Migration() {
                           className="shrink-0 px-3 py-1 rounded text-[12px] font-medium bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors">
                           Load
                         </button>
+                        {!latestJobRun && (
+                          <Tooltip content="Run this saved job now; Pre-flight runs automatically if needed" side="top">
+                            <button type="button" onClick={() => void handleSavedJobAction(job, 'run')} disabled={!!jobActionKey || !recurringReady}
+                              className="rounded p-1 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 dark:hover:bg-emerald-950/30">
+                              {jobActionKey === `${job.id}:run` ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                            </button>
+                          </Tooltip>
+                        )}
+                        {isJobRunning && (
+                          <Tooltip content="Pause at the next persisted row/chunk boundary" side="top">
+                            <button type="button" onClick={() => void handleSavedJobAction(job, 'pause')} disabled={!!jobActionKey}
+                              className="rounded p-1 text-amber-600 hover:bg-amber-50 disabled:opacity-40 dark:hover:bg-amber-950/30">
+                              {jobActionKey === `${job.id}:pause` ? <Loader2 size={13} className="animate-spin" /> : <Pause size={13} />}
+                            </button>
+                          </Tooltip>
+                        )}
+                        {isJobPaused && (
+                          <Tooltip content="Resume from the last persisted source cursor" side="top">
+                            <button type="button" onClick={() => void handleSavedJobAction(job, 'resume')} disabled={!!jobActionKey}
+                              className="rounded p-1 text-violet-600 hover:bg-violet-50 disabled:opacity-40 dark:hover:bg-violet-950/30">
+                              {jobActionKey === `${job.id}:resume` ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                            </button>
+                          </Tooltip>
+                        )}
+                        {(isJobRunning || isJobPaused) && (
+                          <Tooltip content="Stop at the latest persisted progress boundary" side="top">
+                            <button type="button" onClick={() => void handleSavedJobAction(job, 'stop')} disabled={!!jobActionKey}
+                              className="rounded p-1 text-rose-600 hover:bg-rose-50 disabled:opacity-40 dark:hover:bg-rose-950/30">
+                              {jobActionKey === `${job.id}:stop` ? <Loader2 size={13} className="animate-spin" /> : <Square size={12} />}
+                            </button>
+                          </Tooltip>
+                        )}
+                        {isJobTerminal && (
+                          <Tooltip content="Restart from the first source row without truncating the target" side="top">
+                            <button type="button" onClick={() => void handleSavedJobAction(job, 'restart')} disabled={!!jobActionKey || !recurringReady}
+                              className="rounded p-1 text-blue-600 hover:bg-blue-50 disabled:opacity-40 dark:hover:bg-blue-950/30">
+                              {jobActionKey === `${job.id}:restart` ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                            </button>
+                          </Tooltip>
+                        )}
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
                         <Tooltip content="Export portable saved job (.migjob.json)" side="top">

@@ -89,6 +89,14 @@ export interface CronSchedule {
   jobId: string;
   jobName: string;          // denormalised for display
   cronExpr: string;         // standard 5-field: "0 2 * * *"
+  /** Recurring cron or a cron-backed one-shot trigger that disables itself. */
+  scheduleMode?: 'once' | 'recurring';
+  /** Exact requested wall-clock instant for one-shot schedules. */
+  runAt?: string | null;
+  /** Set atomically when a one-shot trigger is accepted. */
+  triggeredAt?: string | null;
+  /** Set when the requested one-shot instant passed without an accepted run. */
+  missedAt?: string | null;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -112,6 +120,12 @@ export interface MigJob {
   // passwords excluded from job storage
   sourceMeta: Omit<MigConn, 'password'>;
   targetMeta: Omit<MigConn, 'password'>;
+  /** Copy Source is a job-wide 1:1 contract; per-table remains the legacy/custom path. */
+  mappingMode?: 'copy_source' | 'existing_target';
+  /** Job-wide default projected onto every table for Copy Source jobs. */
+  syncStrategy?: 'incremental' | 'full_upsert' | 'full_insert';
+  /** Saved for the operator-triggered initial run only; Scheduler never consumes it. */
+  initialRunOptions?: { skipConstraints?: boolean };
   tables: TableMap[];
   // Global row-range filter applied to every table in this job
   filterCol?: string | null;    // timestamp/date column name (must exist in all source tables)
@@ -151,6 +165,8 @@ export interface MigJobSummary {
   createdAt: string;
   updatedAt: string;
   tableCount: number;
+  mappingMode?: 'copy_source' | 'existing_target';
+  syncStrategy?: 'incremental' | 'full_upsert' | 'full_insert';
   tables: MigJobTableSummary[];
   scheduleReady: boolean;
   scheduleIssues: number;
@@ -225,6 +241,9 @@ export interface MigRunTableState {
   writeDurationMs?: number;
   writerMethod?: 'copy-staging' | 'multi-row' | 'row-by-row';
   rowsPerSecond?: number | null;
+  /** Consecutive transient infrastructure failures for bounded automatic retry. */
+  transientRetryCount?: number;
+  lastTransientErrorAt?: string | null;
 }
 
 export interface MigRunReject {
