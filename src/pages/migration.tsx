@@ -1367,7 +1367,7 @@ export default function Migration() {
     } catch { /* ignore */ }
 
     // Fallback: restore from the single latest run (legacy path, no localStorage key yet)
-    void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status')
+    void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { compact: 1 } })
       .then(({ data }) => {
         const latest = data.runs.find(r => r.status === 'completed' || r.status === 'completed_with_issues' || r.status === 'failed');
         if (!latest) return;
@@ -1613,7 +1613,7 @@ export default function Migration() {
       // 1. Runs with matching jobId (direct association)
       // 2. All other runs — cross-match by sourceKey against job's tables
       //    (covers ad-hoc runs saved to job via pending-save, which have jobId: null)
-      void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status')
+      void axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { compact: 1 } })
         .then(({ data: runData }) => {
           const jobSourceKeys = new Set(job.tables.map(t => `${t.source.schema}.${t.source.table}`));
           const tableLatestStatus = new Map<string, string>();
@@ -2039,7 +2039,7 @@ export default function Migration() {
   const followRunStatus = async (runId: string) => {
     stopRequestedRef.current = false;
     try {
-      const { data } = await axios.get<{ run: MigRun }>(`/api/migv2/run/status?id=${encodeURIComponent(runId)}`);
+      const { data } = await axios.get<{ run: MigRun }>(`/api/migv2/run/status?id=${encodeURIComponent(runId)}&compact=1`);
       setCurrentRun(data.run);
       if (data.run.status === 'running' || data.run.status === 'pending') {
         setPolling(true);
@@ -2056,10 +2056,17 @@ export default function Migration() {
   const advanceMigration = async (runId: string) => {
     if (stopRequestedRef.current) { setPolling(false); return; }
     try {
-      const { data } = await axios.get<{ run: MigRun }>(`/api/migv2/run/status?id=${encodeURIComponent(runId)}`);
+      const { data } = await axios.get<{ run: MigRun }>(`/api/migv2/run/status?id=${encodeURIComponent(runId)}&compact=1`);
       setCurrentRun(data.run);
-      if ((data.run.status === 'running' || data.run.status === 'pending') && !stopRequestedRef.current) scheduleAdvance(runId);
-      else onRunFinished(data.run);
+      if ((data.run.status === 'running' || data.run.status === 'pending') && !stopRequestedRef.current) {
+        scheduleAdvance(runId);
+      } else {
+        // Compact snapshots are sufficient for live progress. Fetch the full
+        // mapping only once at terminal state for the completion/pending-save UI.
+        const full = await axios.get<{ run: MigRun }>(`/api/migv2/run/status?id=${encodeURIComponent(runId)}`);
+        setCurrentRun(full.data.run);
+        onRunFinished(full.data.run);
+      }
     } catch {
       // A transient network interruption must not stop the server-owned run.
       if (!stopRequestedRef.current) scheduleAdvance(runId);
