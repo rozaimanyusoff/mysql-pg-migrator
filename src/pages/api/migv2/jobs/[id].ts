@@ -2,6 +2,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { loadJob, saveJob, deleteJob } from '../../../../lib/migv2/job-store';
 import type { MigJob } from '../../../../lib/migv2/types';
 
+export const config = {
+  api: { bodyParser: { sizeLimit: '50mb' }, responseLimit: '50mb' },
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
 
   const { id } = req.query as { id: string };

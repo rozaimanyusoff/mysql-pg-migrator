@@ -3,6 +3,10 @@ import { listJobs, saveJob } from '../../../../lib/migv2/job-store';
 import type { MigJob } from '../../../../lib/migv2/types';
 import { randomUUID } from 'crypto';
 
+export const config = {
+  api: { bodyParser: { sizeLimit: '50mb' }, responseLimit: '50mb' },
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
 
   if (req.method === 'GET') {

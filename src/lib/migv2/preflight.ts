@@ -109,6 +109,36 @@ async function countRows(conn: MigConn, schema: string, table: string, where: st
   });
 }
 
+function sourceCountKey(database: string, schema: string, table: string): string {
+  return `${database}\u0000${schema}\u0000${table}`;
+}
+
+async function estimateSourceRows(conn: MigConn, tables: Array<{ schema: string; table: string }>): Promise<Map<string, number>> {
+  if (conn.type === 'postgresql') {
+    return withPg(conn, async client => {
+      const params = tables.flatMap(table => [table.schema, table.table]);
+      const tuples = tables.map((_, index) => `($${index * 2 + 1}, $${index * 2 + 2})`).join(', ');
+      const { rows } = await client.query<{ table_schema: string; table_name: string; row_count: string }>(`
+        SELECT t.table_schema, t.table_name, COALESCE(s.n_live_tup, 0)::bigint::text AS row_count
+        FROM information_schema.tables t
+        LEFT JOIN pg_stat_user_tables s ON s.schemaname = t.table_schema AND s.relname = t.table_name
+        WHERE t.table_type = 'BASE TABLE' AND (t.table_schema, t.table_name) IN (${tuples})
+      `, params);
+      return new Map(rows.map(row => [sourceCountKey(conn.database, row.table_schema, row.table_name), Number(row.row_count)]));
+    });
+  }
+  return withMysql(conn, async client => {
+    const tuples = tables.map(() => '(?, ?)').join(', ');
+    const params = tables.flatMap(table => [table.schema, table.table]);
+    const [rows] = await client.query<any[]>(`
+      SELECT TABLE_SCHEMA, TABLE_NAME, COALESCE(TABLE_ROWS, 0) AS row_count
+      FROM information_schema.TABLES
+      WHERE TABLE_TYPE = 'BASE TABLE' AND (TABLE_SCHEMA, TABLE_NAME) IN (${tuples})
+    `, params);
+    return new Map((rows as any[]).map(row => [sourceCountKey(conn.database, row.TABLE_SCHEMA, row.TABLE_NAME), Number(row.row_count)]));
+  });
+}
+
 async function tableExists(conn: MigConn, schema: string, table: string): Promise<boolean> {
   if (conn.type === 'postgresql') {
     return withPg(conn, async c => {
@@ -173,6 +203,13 @@ function temporalKind(targetType: string): 'date' | 'time' | 'timestamp' | null 
   if (normalized === 'time' || normalized.startsWith('time(') || normalized.startsWith('time without') || normalized.startsWith('time with')) return 'time';
   if (normalized === 'datetime' || normalized.includes('timestamp')) return 'timestamp';
   return null;
+}
+
+function requiresTemporalTextSampling(column: TableMap['columns'][number]): boolean {
+  if (!temporalKind(column.targetType)) return false;
+  // Legacy saved jobs did not retain sourceType, so keep their conservative
+  // sampling behaviour. Newly inspected native DATE/TIME columns need no text parse scan.
+  return !column.sourceType || /char|text|clob|enum|set/i.test(column.sourceType);
 }
 
 function temporalValueIsParseable(value: unknown, kind: 'date' | 'time' | 'timestamp'): boolean {
@@ -285,6 +322,31 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
 
   const [srcPing, tgtPing] = await Promise.all([ping(source), ping(target)]);
 
+  const useCatalogRowEstimates = included.length >= 100
+    && !job.filterCol
+    && included.every(table => table.syncMode !== 'incremental' || !table.lastSyncedValue);
+  const estimatedRows = new Map<string, number>();
+  const estimateFailures = new Map<string, string>();
+  if (srcPing.reachable && useCatalogRowEstimates) {
+    const byDatabase = new Map<string, Array<{ schema: string; table: string }>>();
+    for (const table of included) {
+      const database = table.sourceDatabase || source.database;
+      byDatabase.set(database, [...(byDatabase.get(database) ?? []), table.source]);
+    }
+    for (const [database, tablesForDatabase] of byDatabase) {
+      try {
+        const estimates = await estimateSourceRows({ ...source, database }, tablesForDatabase);
+        for (const [key, value] of estimates) estimatedRows.set(key, value);
+      } catch (error) {
+        estimateFailures.set(database, error instanceof Error ? error.message : String(error));
+      }
+    }
+    globalIssues.push({
+      level: 'info',
+      message: `Large-job Pre-flight uses database catalog row estimates for ${included.length.toLocaleString()} tables to avoid opening one COUNT connection per table. Runtime still tracks exact migrated rows.`,
+    });
+  }
+
   const tables: PreflightTableCheck[] = [];
   let totalRows = 0;
 
@@ -296,14 +358,27 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
 
     let sourceRows: number | null = null;
     if (srcPing.reachable) {
-      try {
-        const { where, params } = buildCountWhere(tableSource.type, tm, job);
-        sourceRows = await countRows(tableSource, tm.source.schema, tm.source.table, where, params);
-        totalRows += sourceRows;
-      } catch (err) {
-        issues.push({ level: 'error', code: 'binding_missing', message: `Source unreadable: ${err instanceof Error ? err.message : String(err)}` });
+      if (useCatalogRowEstimates) {
+        const estimateError = estimateFailures.get(tableSource.database);
+        const estimate = estimatedRows.get(sourceCountKey(tableSource.database, tm.source.schema, tm.source.table));
+        if (estimateError) {
+          issues.push({ level: 'warning', code: 'binding_missing', message: `Source row estimate unavailable: ${estimateError}` });
+        } else if (estimate === undefined) {
+          issues.push({ level: 'error', code: 'binding_missing', message: `Source ${tableSource.database}.${tm.source.schema}.${tm.source.table} was not found during bulk Pre-flight inspection.` });
+        } else {
+          sourceRows = estimate;
+          totalRows += estimate;
+        }
+      } else {
+        try {
+          const { where, params } = buildCountWhere(tableSource.type, tm, job);
+          sourceRows = await countRows(tableSource, tm.source.schema, tm.source.table, where, params);
+          totalRows += sourceRows;
+        } catch (err) {
+          issues.push({ level: 'error', code: 'binding_missing', message: `Source unreadable: ${err instanceof Error ? err.message : String(err)}` });
+        }
       }
-      for (const column of tm.columns.filter(column => column.include && column.sourceCol && temporalKind(column.targetType))) {
+      for (const column of tm.columns.filter(column => column.include && column.sourceCol && requiresTemporalTextSampling(column))) {
         try {
           const kind = temporalKind(column.targetType)!;
           const samples = await sampleColumnValues(tableSource, tm.source.schema, tm.source.table, column.sourceCol!);
@@ -331,8 +406,10 @@ export async function runPreflight(job: MigJob, source: MigConn, target: MigConn
     let targetExists = false;
     if (tgtPing.reachable) {
       try {
-        targetExists = await tableExists(target, tm.target.schema, targetTableName(tm));
         const targetMode = tm.targetMode ?? (tm.target.table === tm.source.table ? 'source_clone' : 'existing');
+        targetExists = targetMode === 'existing'
+          ? await tableExists(target, tm.target.schema, targetTableName(tm))
+          : false;
         if (!targetExists && targetMode === 'existing') {
           issues.push({
             level: 'error',

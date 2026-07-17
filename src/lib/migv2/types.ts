@@ -31,6 +31,8 @@ export type EmptyPolicy = 'keep' | 'as_null';
 
 export interface ColumnMap {
   sourceCol: string | null;  // null = target-only (new column not in source)
+  /** Physical source type captured during inspection; used for conversion-aware Pre-flight. */
+  sourceType?: string | null;
   targetCol: string;
   targetName: string | null; // null = keep targetCol name; string = rename in output
   targetType: string;        // target DB type string

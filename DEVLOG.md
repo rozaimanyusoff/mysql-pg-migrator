@@ -4,6 +4,15 @@
 
 ## 2026-07-17
 
+- **fix / large Copy Source mapping** — Scale metadata inspection for databases with 1,500+ tables and preserve actionable failure detail.
+  - Replaced one `/columns` request per source table with `/columns-bulk` batches of 200 tables. The server reads column, PK/unique, and FK metadata in set-based queries with a hard 250-table request ceiling.
+  - Bulk mapping now renders live progress, applies successful batches once, preserves partial results, and retries only unresolved tables. Network, timeout, HTTP, and server messages are shown with affected table samples instead of an empty error dialog.
+  - Raised saved-job and portable-job request/response limits to 50 MB so large Copy Source definitions do not fail at the next Save step under Next.js's default body limit. Save Job now surfaces its actual request/server error.
+  - Large-job Pre-flight now uses set-based catalog row estimates instead of creating 1,500 individual COUNT connections, skips target-existence round trips for source-clone tables, and samples temporal values only when the inspected source type is textual. Native date/time columns no longer cause redundant sample queries.
+  - Files: `src/pages/migration.tsx`, `src/pages/api/migv2/{columns-bulk,jobs/**}.ts`, `src/lib/migv2/{preflight,types}.ts`, `tests/scheduler-hardening.test.ts`.
+  - Verification: TypeScript, 43 integration tests, and `git diff --check` pass.
+  - Status: implemented.
+
 - **fix / production run recovery** — Safe execution semantics, same-job exclusion, and bounded outage recovery.
   - Removed the ad-hoc global `Run Once` actions from the Target search header and new-schema guidance. Job-level execution now lives on the Saved Job card; Pre-flight remains the non-mutating assessment action.
   - Unified Run Once, Saved Job Run, Scheduler, Resume, and Restart behind one global start lock plus a same-job active-run check. Conflict responses expose `activeRunId` so a caller can reattach instead of creating a duplicate run.

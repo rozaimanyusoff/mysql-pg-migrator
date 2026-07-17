@@ -4,7 +4,7 @@ import { loadJob, saveJob } from '../../../../lib/migv2/job-store';
 import { createPortableJob, parsePortableJob } from '../../../../lib/migv2/job-portability';
 
 export const config = {
-  api: { bodyParser: { sizeLimit: '5mb' } },
+  api: { bodyParser: { sizeLimit: '50mb' }, responseLimit: '50mb' },
 };
 
 function safeFilename(value: string): string {

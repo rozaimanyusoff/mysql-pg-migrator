@@ -25,6 +25,7 @@ import { acceptedScheduleRun, markMissedOneShot } from '../src/lib/migv2/schedul
 import { isTransientMigrationError, MAX_TRANSIENT_RETRIES, transientRetryDelayMs } from '../src/lib/migv2/transient-error.ts';
 import type { PreflightReport } from '../src/lib/migv2/preflight.ts';
 import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
+import columnsBulkHandler, { MAX_TABLES_PER_REQUEST } from '../src/pages/api/migv2/columns-bulk.ts';
 
 const runFiles: string[] = [];
 const jobFiles: string[] = [];
@@ -132,6 +133,25 @@ test('transient database failures use bounded exponential retry classification',
   assert.equal(isTransientMigrationError(new Error('invalid input syntax for type uuid')), false);
   assert.equal(MAX_TRANSIENT_RETRIES, 3);
   assert.deepEqual([1, 2, 3, 99].map(transientRetryDelayMs), [1000, 2000, 4000, 4000]);
+});
+
+test('bulk column inspection enforces a bounded request batch before opening a database connection', async () => {
+  let statusCode = 0;
+  let payload: any = null;
+  const response = {
+    status(code: number) { statusCode = code; return this; },
+    json(body: unknown) { payload = body; return this; },
+    end() { return this; },
+  };
+  await columnsBulkHandler({
+    method: 'POST',
+    body: {
+      conn: { type: 'mysql', host: 'localhost', port: 3306, database: 'source', username: 'test', password: '' },
+      tables: Array.from({ length: MAX_TABLES_PER_REQUEST + 1 }, (_, index) => ({ schema: 'source', table: `table_${index}` })),
+    },
+  } as any, response as any);
+  assert.equal(statusCode, 400);
+  assert.match(payload.error, /maximum of 250 tables/i);
 });
 
 test('polling snapshot exposes active job ids and status filtering respects its limit', () => {

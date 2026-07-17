@@ -60,6 +60,7 @@ function editableJobTables(tables: TableMap[]): TableMap[] {
 function sourceColumnsToMaps(columns: MigColumnInfo[], srcType: MigConn['type'], targetType: MigConn['type']): ColumnMap[] {
   return columns.map(column => ({
     sourceCol: column.name,
+    sourceType: column.rawType,
     targetCol: column.name,
     targetName: null,
     targetType: suggestTargetType(column.rawType, srcType, targetType),
@@ -84,6 +85,7 @@ function existingTargetColumnMaps(sourceColumns: MigColumnInfo[], targetColumns:
       ?? targetColumns.find(candidate => candidate.name.toLowerCase() === source.name.toLowerCase());
     return {
       sourceCol: source.name,
+      sourceType: source.rawType,
       targetCol: target?.name ?? '',
       targetName: null,
       targetType: target?.rawType.toUpperCase() ?? suggestTargetType(source.rawType, srcType, targetType),
@@ -113,6 +115,14 @@ function connRowToMigConn(row: ConnectionRow, database: string): MigConn {
     username: row.username,
     password: row.password_enc ?? '',
   };
+}
+
+function requestErrorDetail(error: unknown): string {
+  if (!axios.isAxiosError(error)) return error instanceof Error ? error.message : String(error);
+  const serverMessage = typeof error.response?.data?.error === 'string' ? error.response.data.error : null;
+  const status = error.response?.status ? `HTTP ${error.response.status}` : null;
+  const code = error.code ? String(error.code) : null;
+  return [serverMessage ?? error.message ?? 'Request failed without a response', status, code].filter(Boolean).join(' · ');
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -304,6 +314,7 @@ export default function Migration() {
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
   const [colsCache, setColsCache] = useState<Record<string, MigColumnInfo[]>>({});
   const [loadingCols, setLoadingCols] = useState(false);
+  const [bulkMappingProgress, setBulkMappingProgress] = useState<{ completed: number; total: number } | null>(null);
   const [fkPickerIdx, setFkPickerIdx] = useState<number | null>(null);
   const [fkPickerPos, setFkPickerPos] = useState<{ top: number; left: number } | null>(null);
   const [openColPickerIdx, setOpenColPickerIdx] = useState<number | null>(null);
@@ -671,30 +682,81 @@ export default function Migration() {
       return [...updated, ...toAdd];
     });
     setDirty(true);
-    if (mappingMode === 'copy_source' && toAdd.length > 0) {
+    const existingToInspect = tableMaps.filter(map =>
+      map.columns.length === 0
+      && filteredSrcTables.some(table => table.schema === map.source.schema && table.name === map.source.table && table.database === map.sourceDatabase)
+    );
+    const toInspect = [...new Map([...existingToInspect, ...toAdd].map(map => [map.id, map])).values()];
+    if (mappingMode === 'copy_source' && toInspect.length > 0) {
       setLoadingCols(true);
+      setBulkMappingProgress({ completed: 0, total: toInspect.length });
       try {
-        for (let offset = 0; offset < toAdd.length; offset += 5) {
-          await Promise.all(toAdd.slice(offset, offset + 5).map(async map => {
-            const database = map.sourceDatabase ?? srcConn.database;
-            const tableKey = `${map.source.schema}.${map.source.table}`;
-            const cacheKey = `${database}.${tableKey}`;
-            let sourceColumns = colsCache[cacheKey];
-            if (!sourceColumns) {
-              const row = connections.find(connection => connection.id === srcConnId);
-              const connection = row ? connRowToMigConn(row, database) : { ...srcConn, database };
-              const { data } = await axios.post<{ columns: MigColumnInfo[] }>('/api/migv2/columns', { conn: connection, tableKey });
-              sourceColumns = data.columns;
-              setColsCache(previous => ({ ...previous, [cacheKey]: sourceColumns }));
+        const byDatabase = new Map<string, TableMap[]>();
+        for (const map of toInspect) {
+          const database = map.sourceDatabase ?? srcConn.database;
+          byDatabase.set(database, [...(byDatabase.get(database) ?? []), map]);
+        }
+        const mappedColumns = new Map<string, ColumnMap[]>();
+        const cacheUpdates: Record<string, MigColumnInfo[]> = {};
+        const failures: Array<{ tables: string[]; detail: string }> = [];
+        let completed = 0;
+        const connectionRow = connections.find(connection => connection.id === srcConnId);
+
+        for (const [database, maps] of byDatabase) {
+          const connection = connectionRow ? connRowToMigConn(connectionRow, database) : { ...srcConn, database };
+          for (let offset = 0; offset < maps.length; offset += 200) {
+            const chunk = maps.slice(offset, offset + 200);
+            try {
+              const { data } = await axios.post<{ columnsByTable: Record<string, MigColumnInfo[]> }>('/api/migv2/columns-bulk', {
+                conn: connection,
+                tables: chunk.map(map => ({ schema: map.source.schema, table: map.source.table })),
+              }, { timeout: 120_000 });
+              for (const map of chunk) {
+                const key = `${map.source.schema}.${map.source.table}`;
+                const columns = data.columnsByTable[key];
+                if (!columns?.length) {
+                  failures.push({ tables: [`${database}.${key}`], detail: 'No column metadata returned' });
+                  continue;
+                }
+                cacheUpdates[`${database}.${key}`] = columns;
+                mappedColumns.set(map.id, sourceColumnsToMaps(columns, srcConn.type, tgtConn.type));
+              }
+            } catch (error) {
+              failures.push({
+                tables: chunk.map(map => `${database}.${map.source.schema}.${map.source.table}`),
+                detail: requestErrorDetail(error),
+              });
+            } finally {
+              completed += chunk.length;
+              setBulkMappingProgress({ completed, total: toInspect.length });
             }
-            const columns = sourceColumnsToMaps(sourceColumns, srcConn.type, tgtConn.type);
-            setTableMaps(previous => previous.map(table => table.id === map.id ? { ...table, columns } : table));
+          }
+        }
+
+        if (Object.keys(cacheUpdates).length) setColsCache(previous => ({ ...previous, ...cacheUpdates }));
+        if (mappedColumns.size) {
+          setTableMaps(previous => previous.map(table => {
+            const columns = mappedColumns.get(table.id);
+            return columns ? { ...table, columns } : table;
           }));
         }
+        if (failures.length) {
+          const failedTables = failures.reduce((sum, failure) => sum + failure.tables.length, 0);
+          const details = failures.slice(0, 5).map(failure => {
+            const tableList = failure.tables.slice(0, 3).join(', ');
+            return `• ${tableList}${failure.tables.length > 3 ? ` +${failure.tables.length - 3} more` : ''}: ${failure.detail}`;
+          }).join('\n');
+          const description = `${mappedColumns.size.toLocaleString()} of ${toInspect.length.toLocaleString()} tables mapped. ${failedTables.toLocaleString()} table${failedTables === 1 ? '' : 's'} still need metadata and remain blocked from Save/Run.\n\n${details}${failures.length > 5 ? `\n• +${failures.length - 5} more failed batch/table result(s)` : ''}\n\nSelect & map all again to retry only the unresolved tables.`;
+          if (mappedColumns.size === 0) showError('Copy Source mapping failed', description);
+          else showWarning({ title: 'Copy Source mapping partially completed', description, confirmLabel: 'Review' });
+        } else {
+          toast.success(`${mappedColumns.size.toLocaleString()} source tables mapped`, { duration: 4000 });
+        }
       } catch (error) {
-        showError('Copy Source mapping failed', axios.isAxiosError(error) ? error.response?.data?.error : 'Could not inspect every selected source table.');
+        showError('Copy Source mapping failed', `Unexpected bulk-mapping failure: ${requestErrorDetail(error)}`);
       } finally {
         setLoadingCols(false);
+        setBulkMappingProgress(null);
       }
     }
   };
@@ -1495,7 +1557,9 @@ export default function Migration() {
       } else {
         toast.success(`Job "${data.job.name}" saved.`);
       }
-    } catch { /* ignore */ } finally { setSavingJob(false); }
+    } catch (error) {
+      showError('Save job failed', requestErrorDetail(error));
+    } finally { setSavingJob(false); }
   };
 
   const handleSaveJob = () => {
@@ -2732,7 +2796,8 @@ export default function Migration() {
                 </label>
                 <button type="button" onClick={() => void handleCheckAll()} disabled={!srcConnected || filteredSrcTables.length === 0 || loadingCols}
                   className="inline-flex items-center gap-1 rounded border border-blue-300 px-2 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-40 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/30">
-                  {loadingCols ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}Select &amp; map all source tables
+                  {loadingCols ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                  {bulkMappingProgress ? `Mapping ${bulkMappingProgress.completed.toLocaleString()}/${bulkMappingProgress.total.toLocaleString()}` : 'Select & map all source tables'}
                 </button>
                 <span className="text-[11px] text-slate-400">Target tables use the same names in <span className="font-mono">{tgtDefaultSchema || 'public'}</span>. Truncate is not used.</span>
               </>}
