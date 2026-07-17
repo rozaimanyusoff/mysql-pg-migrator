@@ -3204,7 +3204,9 @@ export default function Migration() {
                         );
                         const accumState = [...accumulatedTableStates].reverse().find(ts => ts.targetKey === `${t.schema}.${t.name}`);
                         const effectiveState = runState ?? accumState ?? null;
-                        const isInterrupted = runState?.status === 'interrupted' || currentRun?.status === 'interrupted';
+                        // Interruption is table-scoped. A run can be interrupted while
+                        // empty/completed tables remain terminal and must not offer resume.
+                        const isInterrupted = effectiveState?.status === 'interrupted';
                         const isRunning = runState?.status === 'running' && !isInterrupted;
                         const isPaused = runState?.status === 'paused';
                         const totalProcessed = (effectiveState?.rowsMigrated ?? 0) + (effectiveState?.rowsSkipped ?? 0);
