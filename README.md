@@ -33,7 +33,13 @@ JWT_SECRET_KEY=your-secret-key-min-32-chars
 JWT_EXPIRATION_TIME=3600            # Access token TTL in seconds (default: 1 hour)
 REFRESH_TOKEN_EXPIRATION_TIME=86400 # Refresh token TTL in seconds (default: 24 hours)
 
-# Required by external cron/scheduler calls. Browser UI uses same-origin protection.
+# Internal Scheduler starts with the persistent Next.js Node server.
+SCHEDULER_TIMEZONE=Asia/Kuala_Lumpur
+SCHEDULER_POLL_INTERVAL_MS=15000
+DISABLE_INTERNAL_SCHEDULER=false # true only when an external scheduler owns triggering
+ENABLE_INTERNAL_SCHEDULER_IN_DEV=false # prevents local dev from consuming production-like schedules
+
+# Required only by optional external cron/scheduler calls. Browser UI uses same-origin protection.
 SCHEDULER_API_TOKEN=replace-with-a-random-64-character-secret
 RUN_TIMEOUT_SECONDS=86400          # Scheduled-run polling timeout (default: 24 hours)
 SCHEDULE_TRIGGER_RETRY_SECONDS=900 # Retry temporary app outages for 15 minutes
@@ -91,6 +97,12 @@ npm run build && npm start  # Production
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Sign in with `admin` / `admin` and change the password immediately in **Settings → Account**.
+
+### Production Scheduler
+
+Run production as a persistent Node process (`npm start`, normally supervised by systemd, PM2, Docker, or an equivalent service manager). The internal Scheduler starts with that process, so run-once and recurring jobs do not require an open browser or a logged-in user. It checks schedules every 15 seconds by default and catches up an overdue run-once trigger after an application/server restart.
+
+Persist and back up `data/migv2`; it contains schedules, job definitions, run state, and recovery checkpoints. Every app instance that may execute migrations must see the same storage. For horizontally scaled hosts without shared storage, run a single Scheduler-enabled instance and set `DISABLE_INTERNAL_SCHEDULER=true` on the others.
 
 ---
 

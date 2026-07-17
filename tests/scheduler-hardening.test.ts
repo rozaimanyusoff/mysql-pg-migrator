@@ -22,6 +22,7 @@ import { displayTableStatus, isMigratedTableResult, summarizeRunTableProgress } 
 import { pendingResultId, pendingState, pendingTablesToAdd, tableBindingSignature } from '../src/lib/migv2/pending-result.ts';
 import { canPersistWatermark, completedTableStatus, rollbackAvailability } from '../src/lib/migv2/run-outcome.ts';
 import { acceptedScheduleRun, markMissedOneShot } from '../src/lib/migv2/schedule-store.ts';
+import { cronMatches, normalizeScheduleTimezone, scheduleIsDue, validateCronExpression } from '../src/lib/migv2/cron-schedule.ts';
 import { isTransientMigrationError, MAX_TRANSIENT_RETRIES, transientRetryDelayMs } from '../src/lib/migv2/transient-error.ts';
 import type { PreflightReport } from '../src/lib/migv2/preflight.ts';
 import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
@@ -122,9 +123,34 @@ test('run-once cron is consumed while recurring cron stays enabled', () => {
   assert.equal(once.enabled, false);
   assert.equal(once.triggeredAt, '2026-07-17T10:32:00.000Z');
   assert.equal(once.missedAt, null);
+  assert.equal(once.lastTriggeredAt, '2026-07-17T10:32:00.000Z');
+  assert.equal(once.pendingRunAt, null);
   const recurring = acceptedScheduleRun({ ...base, scheduleMode: 'recurring' }, 'run-2', '2026-07-17T10:30:00.000Z');
   assert.equal(recurring.enabled, true);
   assert.equal(recurring.triggeredAt, undefined);
+});
+
+test('server scheduler evaluates recurring cron in its persisted timezone', () => {
+  const instant = new Date('2026-07-17T10:00:00.000Z');
+  assert.equal(cronMatches('0 18 17 7 *', instant, 'Asia/Kuala_Lumpur'), true);
+  assert.equal(cronMatches('0 18 17 7 *', instant, 'UTC'), false);
+  assert.equal(cronMatches('0 0 * * 5-7', new Date('2026-07-19T00:00:00.000Z'), 'UTC'), true);
+  assert.equal(normalizeScheduleTimezone('Asia/Kuala_Lumpur'), 'Asia/Kuala_Lumpur');
+  assert.throws(() => normalizeScheduleTimezone('Not/A_Timezone'), /invalid schedule timezone/i);
+});
+
+test('server scheduler validates cron and recovers overdue or queued occurrences', () => {
+  assert.equal(validateCronExpression('*/5 * * * *'), true);
+  assert.equal(validateCronExpression('60 * * * *'), false);
+  assert.equal(validateCronExpression('not cron'), false);
+  const base = {
+    id: 'schedule', jobId: 'job', jobName: 'Job', cronExpr: '0 18 * * *', timezone: 'Asia/Kuala_Lumpur', enabled: true,
+    createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z',
+    lastRunAt: null, lastRunStatus: null, lastRunId: null,
+  } as const;
+  assert.equal(scheduleIsDue({ ...base, scheduleMode: 'once', runAt: '2026-07-17T09:00:00.000Z', missedAt: '2026-07-17T09:01:00.000Z' }, new Date('2026-07-17T10:00:00.000Z')), true);
+  assert.equal(scheduleIsDue({ ...base, scheduleMode: 'recurring', pendingRunAt: '2026-07-17T09:00:00.000Z' }, new Date('2026-07-17T10:03:00.000Z')), true);
+  assert.equal(scheduleIsDue({ ...base, scheduleMode: 'recurring', lastTriggeredAt: '2026-07-17T10:00:10.000Z' }, new Date('2026-07-17T10:00:30.000Z')), false);
 });
 
 test('transient database failures use bounded exponential retry classification', () => {

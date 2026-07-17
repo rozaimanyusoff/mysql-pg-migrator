@@ -6,6 +6,7 @@ import { loadJob } from '../../../lib/migv2/job-store';
 import { getPreflightStatus, preflightRequiredMessage } from '../../../lib/migv2/preflight-store';
 import { MAX_CHUNK_ROWS } from '../../../lib/migv2/execution-policy';
 import { MAX_NOTIFICATION_RECIPIENTS, normalizeNotificationRecipients } from '../../../lib/migv2/notification-recipients';
+import { normalizeScheduleTimezone, validateCronExpression } from '../../../lib/migv2/cron-schedule';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const { id } = req.query as { id: string };
@@ -39,6 +40,11 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     const jobChangedWithoutPreflight = nextJobId !== s.jobId && !preflightStatus.ready;
     const nextScheduleMode = patch.scheduleMode ?? s.scheduleMode ?? 'recurring';
     const nextRunAt = patch.runAt !== undefined ? patch.runAt : s.runAt;
+    const nextCronExpr = patch.cronExpr ?? s.cronExpr;
+    if (!validateCronExpression(nextCronExpr)) return res.status(400).json({ error: 'A valid five-field cron expression is required' });
+    let nextTimezone: string;
+    try { nextTimezone = normalizeScheduleTimezone(patch.timezone !== undefined ? patch.timezone : s.timezone); }
+    catch (err) { return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid schedule timezone' }); }
     if (nextScheduleMode === 'once' && (!nextRunAt || !Number.isFinite(Date.parse(nextRunAt)))) {
       return res.status(400).json({ error: 'A valid runAt date and time is required for a run-once schedule' });
     }
@@ -53,10 +59,12 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       ...(patch.jobId !== undefined && { jobId: patch.jobId }),
       ...(patch.jobName !== undefined && { jobName: patch.jobName }),
       ...(patch.cronExpr !== undefined && { cronExpr: patch.cronExpr }),
+      timezone: nextTimezone,
       ...(patch.scheduleMode !== undefined && { scheduleMode: patch.scheduleMode }),
       ...(patch.runAt !== undefined && { runAt: patch.runAt }),
-      ...(nextScheduleMode === 'once' && patch.runAt !== undefined && { triggeredAt: null, missedAt: null }),
-      ...(patch.scheduleMode === 'recurring' && { runAt: null, triggeredAt: null, missedAt: null }),
+      ...(nextScheduleMode === 'once' && patch.runAt !== undefined && { triggeredAt: null, missedAt: null, pendingRunAt: null, lastTriggeredAt: null }),
+      ...(patch.scheduleMode === 'recurring' && { runAt: null, triggeredAt: null, missedAt: null, pendingRunAt: null, lastTriggeredAt: null }),
+      ...((patch.cronExpr !== undefined || patch.timezone !== undefined) && { pendingRunAt: null, lastTriggeredAt: null }),
       ...(patch.enabled !== undefined && { enabled: patch.enabled }),
       ...(jobChangedWithoutPreflight && { enabled: false }),
       ...(patch.lastRunAt !== undefined && { lastRunAt: patch.lastRunAt }),

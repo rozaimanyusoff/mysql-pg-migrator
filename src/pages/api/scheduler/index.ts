@@ -9,6 +9,8 @@ import { getPreflightStatus } from '../../../lib/migv2/preflight-store';
 import { assessMigrationTables } from '../../../lib/migv2/recurring-validation';
 import { MAX_CHUNK_ROWS } from '../../../lib/migv2/execution-policy';
 import { MAX_NOTIFICATION_RECIPIENTS, normalizeNotificationRecipients } from '../../../lib/migv2/notification-recipients';
+import { normalizeScheduleTimezone, validateCronExpression } from '../../../lib/migv2/cron-schedule';
+import { getSchedulerWorkerStatus } from '../../../lib/migv2/scheduler-worker';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
@@ -31,15 +33,19 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       saveSchedule(updated);
       return updated;
     });
-    return res.status(200).json({ schedules, activeRunJobIds });
+    return res.status(200).json({ schedules, activeRunJobIds, schedulerWorker: getSchedulerWorkerStatus() });
   }
 
   if (req.method === 'POST') {
     if (!requireSchedulerMutationAuth(req, res)) return;
-    const { jobId, jobName, cronExpr, scheduleMode, runAt, notifyEmail, chunkMode, chunkRows } = req.body as Partial<CronSchedule>;
+    const { jobId, jobName, cronExpr, scheduleMode, runAt, notifyEmail, chunkMode, chunkRows, timezone } = req.body as Partial<CronSchedule>;
     if (!jobId || !jobName || !cronExpr) {
       return res.status(400).json({ error: 'jobId, jobName, cronExpr required' });
     }
+    if (!validateCronExpression(cronExpr)) return res.status(400).json({ error: 'A valid five-field cron expression is required' });
+    let normalizedTimezone: string;
+    try { normalizedTimezone = normalizeScheduleTimezone(timezone); }
+    catch (err) { return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid schedule timezone' }); }
     if (chunkMode === 'fixed' && (chunkRows == null || !Number.isFinite(chunkRows) || chunkRows < 100 || chunkRows > MAX_CHUNK_ROWS)) {
       return res.status(400).json({ error: `Manual chunk must be between 100 and ${MAX_CHUNK_ROWS.toLocaleString()} rows` });
     }
@@ -66,8 +72,12 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       jobId, jobName, cronExpr,
       scheduleMode: normalizedMode,
       runAt: normalizedMode === 'once' ? runAt : null,
+      timezone: normalizedTimezone,
       triggeredAt: null,
       missedAt: null,
+      lastTriggeredAt: null,
+      pendingRunAt: null,
+      recoveryAttempts: 0,
       // Schedules may be configured first, but cannot become active until a
       // current Pre-flight has passed for this exact saved-job version.
       enabled: preflightStatus.ready,

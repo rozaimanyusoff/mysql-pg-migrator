@@ -4,8 +4,8 @@ import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
-  Calendar, Check, CheckCircle2,
-  Clock, Copy, Loader2, Pause, Pencil, Play, Timer,
+  Calendar, CheckCircle2,
+  Clock, Loader2, Pause, Pencil, Play, Timer,
   Plus, Terminal, Trash2, X,
   AlertTriangle, CircleDot, ListChecks, RotateCcw, Mail, Info,
   FileSpreadsheet, FileText, MoreVertical, Search, Square, RefreshCw,
@@ -89,6 +89,14 @@ function relativeTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+interface SchedulerWorkerStatus {
+  running: boolean;
+  startedAt: string | null;
+  lastTickAt: string | null;
+  lastError: string | null;
+  intervalMs: number;
+}
+
 // ── Status helpers ─────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: CronSchedule['lastRunStatus'] }) {
@@ -157,7 +165,7 @@ export default function SchedulerPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState<CronSchedule | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [schedulerWorker, setSchedulerWorker] = useState<SchedulerWorkerStatus | null>(null);
   const [runLogSelection, setRunLogSelection] = useState<{ runId: string; tableId: string | null } | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
@@ -186,6 +194,7 @@ export default function SchedulerPage() {
   const [formCron, setFormCron] = useState('0 2 * * *');
   const [formPreset, setFormPreset] = useState('0 2 * * *');
   const [formScheduleMode, setFormScheduleMode] = useState<'once' | 'recurring'>('recurring');
+  const [formTimezone, setFormTimezone] = useState('Asia/Kuala_Lumpur');
   const [formRunDate, setFormRunDate] = useState('');
   const [formRunTime, setFormRunTime] = useState('');
   const [formNotifyEmail, setFormNotifyEmail] = useState('');
@@ -263,12 +272,13 @@ export default function SchedulerPage() {
   const loadAll = async () => {
     try {
       const [schRes, jobRes] = await Promise.all([
-        axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[] }>('/api/scheduler'),
+        axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[]; schedulerWorker: SchedulerWorkerStatus }>('/api/scheduler'),
         axios.get<{ jobs: SchedulerJobSummary[] }>('/api/scheduler/jobs'),
       ]);
       setSchedules(schRes.data.schedules);
       setJobs(jobRes.data.jobs);
       setActiveRunJobIds(new Set(schRes.data.activeRunJobIds ?? []));
+      setSchedulerWorker(schRes.data.schedulerWorker ?? null);
     } catch { /* ignore */ } finally { setLoading(false); }
   };
 
@@ -282,7 +292,7 @@ export default function SchedulerPage() {
   const pollRuns = async () => {
     try {
       const [schRes, runRes] = await Promise.all([
-        axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[] }>('/api/scheduler'),
+        axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[]; schedulerWorker: SchedulerWorkerStatus }>('/api/scheduler'),
         selectedId
           ? axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { jobId: selectedId, limit: 10, compact: 1 } })
           : Promise.resolve(null),
@@ -290,6 +300,7 @@ export default function SchedulerPage() {
       setSchedules(schRes.data.schedules);
       if (runRes) setRuns(runRes.data.runs);
       setActiveRunJobIds(new Set(schRes.data.activeRunJobIds ?? []));
+      setSchedulerWorker(schRes.data.schedulerWorker ?? null);
     } catch { /* ignore */ }
   };
 
@@ -509,13 +520,6 @@ export default function SchedulerPage() {
     });
   };
 
-  const handleCopyCrontab = (s: CronSchedule, appPath: string) => {
-    const line = `${s.cronExpr} cd ${appPath} && node --env-file=.env scripts/run-job.js --schedule-id ${s.id}`;
-    void navigator.clipboard.writeText(line);
-    setCopiedId(s.id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
   // ── Form ──────────────────────────────────────────────────────────────────────
   const openAddForm = (preselectedJobId?: string) => {
     const runOnce = defaultRunOnceParts();
@@ -524,6 +528,7 @@ export default function SchedulerPage() {
     setFormCron('0 2 * * *');
     setFormPreset('0 2 * * *');
     setFormScheduleMode('recurring');
+    setFormTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kuala_Lumpur');
     setFormRunDate(runOnce.date);
     setFormRunTime(runOnce.time);
     setFormNotifyEmail('');
@@ -539,6 +544,7 @@ export default function SchedulerPage() {
     setFormCron(s.cronExpr);
     setFormPreset(CRON_PRESETS.find(p => p.value === s.cronExpr)?.value ?? '__custom__');
     setFormScheduleMode(s.scheduleMode === 'once' ? 'once' : 'recurring');
+    setFormTimezone(s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kuala_Lumpur');
     setFormRunDate(runOnce.date);
     setFormRunTime(runOnce.time);
     setFormNotifyEmail(s.notifyEmail ?? '');
@@ -569,12 +575,12 @@ export default function SchedulerPage() {
       const cronExpr = runDate ? generatedOnceCron : formCron.trim();
       if (editTarget) {
         const { data } = await axios.patch<{ schedule: CronSchedule }>(`/api/scheduler/${editTarget.id}`, {
-          jobId: formJobId, jobName: job.name, cronExpr, scheduleMode: formScheduleMode, runAt, notifyEmail, chunkMode, chunkRows,
+          jobId: formJobId, jobName: job.name, cronExpr, scheduleMode: formScheduleMode, runAt, timezone: formTimezone, notifyEmail, chunkMode, chunkRows,
         });
         setSchedules(prev => prev.map(s => s.id === editTarget.id ? data.schedule : s));
       } else {
         const { data } = await axios.post<{ schedule: CronSchedule }>('/api/scheduler', {
-          jobId: formJobId, jobName: job.name, cronExpr, scheduleMode: formScheduleMode, runAt, notifyEmail, chunkMode, chunkRows,
+          jobId: formJobId, jobName: job.name, cronExpr, scheduleMode: formScheduleMode, runAt, timezone: formTimezone, notifyEmail, chunkMode, chunkRows,
         });
         setSchedules(prev => [...prev, data.schedule]);
         setSelectedId(data.schedule.jobId);
@@ -585,10 +591,6 @@ export default function SchedulerPage() {
       showError('Save failed', msg);
     } finally { setFormSaving(false); }
   };
-
-  // ── App path detection (best-effort) ─────────────────────────────────────────
-  const appPath = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-  const appDir = '/path/to/app'; // user fills this in from the crontab command
 
   return (
     <>
@@ -701,7 +703,7 @@ export default function SchedulerPage() {
                         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                           <CircleDot size={10} className={selectedSchedule.enabled ? 'text-violet-400' : 'text-gray-300 dark:text-slate-600'} />
                           <Clock size={10} className="text-slate-400" />
-                          <span className="text-[12px] text-gray-500 dark:text-slate-400">{selectedSchedule.scheduleMode === 'once' && selectedSchedule.runAt ? `Run once · ${new Date(selectedSchedule.runAt).toLocaleString()}` : describeCron(selectedSchedule.cronExpr)}</span>
+                          <span className="text-[12px] text-gray-500 dark:text-slate-400">{selectedSchedule.scheduleMode === 'once' && selectedSchedule.runAt ? `Run once · ${new Date(selectedSchedule.runAt).toLocaleString()}` : `${describeCron(selectedSchedule.cronExpr)} · ${selectedSchedule.timezone || 'Asia/Kuala_Lumpur'}`}</span>
                           <code className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">({selectedSchedule.cronExpr})</code>
                           <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                             Chunk {selectedSchedule.chunkMode === 'fixed' ? `${(selectedSchedule.chunkRows ?? autoChunkRows).toLocaleString()} requested` : 'Auto'}
@@ -710,9 +712,9 @@ export default function SchedulerPage() {
                             <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500">disabled</span>
                           )}
                           {selectedSchedule.missedAt && !selectedSchedule.triggeredAt && (
-                            <Tooltip content="The one-shot time passed while no run was accepted. Run Now will execute it once and consume this schedule, or edit a new future time." side="bottom">
+                            <Tooltip content="The scheduled time passed before a run was accepted. The server worker will recover and execute it automatically when capacity is available." side="bottom">
                               <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                                <AlertTriangle size={9} />missed
+                                <AlertTriangle size={9} />recovery queued
                               </span>
                             </Tooltip>
                           )}
@@ -847,28 +849,23 @@ export default function SchedulerPage() {
                     </div>
                   )}
 
-                  {/* Crontab command — only when schedule exists */}
+                  {/* Server scheduler status — only when schedule exists */}
                   {selectedSchedule && (
                     <div className="rounded-md bg-slate-900 dark:bg-slate-950 border border-slate-700 dark:border-slate-800 p-3">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                          <Terminal size={11} />
-                          <span className="font-medium uppercase tracking-wider">Crontab command</span>
-                        </div>
-                        <button
-                          onClick={() => handleCopyCrontab(selectedSchedule, '/path/to/app')}
-                          className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200 transition-colors">
-                          {copiedId === selectedSchedule.id ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-                          {copiedId === selectedSchedule.id ? 'Copied!' : 'Copy'}
-                        </button>
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <CircleDot size={11} className={schedulerWorker?.running ? 'text-emerald-400' : 'text-amber-400'} />
+                        <span className="font-medium uppercase tracking-wider text-slate-300">Server-managed scheduler</span>
+                        <span className={`rounded-full px-1.5 py-0.5 font-semibold ${schedulerWorker?.running ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>
+                          {schedulerWorker?.running ? 'active' : 'unavailable'}
+                        </span>
                       </div>
-                      <code className="text-[12px] text-emerald-400 dark:text-emerald-300 font-mono break-all">
-                        {selectedSchedule.cronExpr} cd /path/to/app &amp;&amp; node --env-file=.env scripts/run-job.js --schedule-id {selectedSchedule.id}
-                      </code>
-                      <p className="text-[11px] text-slate-500 mt-1.5">
-                        Replace <code className="text-slate-400">/path/to/app</code> with your app directory. Set <code className="text-slate-400">APP_URL</code> if not on port 3000.
+                      <p className="mt-1.5 text-[11px] text-slate-400">
+                        Runs automatically on the production server. You may close this browser; navigation and remote disconnection do not stop the schedule.
                       </p>
-                      <code className="text-[11px] text-slate-400 font-mono block mt-0.5">APP_URL={appPath}</code>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        {schedulerWorker?.lastTickAt ? `Last scheduler heartbeat ${relativeTime(schedulerWorker.lastTickAt)}.` : 'Waiting for the first scheduler heartbeat.'}
+                        {schedulerWorker?.lastError ? ` Latest issue: ${schedulerWorker.lastError}` : ''}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -1425,7 +1422,7 @@ export default function SchedulerPage() {
                     </label>
                   </div>
                   {formRunAt && !formRunOnceValid && <p className="text-[11px] font-medium text-rose-500">Choose a future date and time.</p>}
-                  <p className="text-[11px] text-gray-400 dark:text-slate-500">Uses cron as the trigger, then auto-disables immediately after the first accepted run. It will not recur.</p>
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500">The production server starts it once at this instant, then auto-disables the schedule. If the server restarts, an overdue run is recovered automatically.</p>
                 </div>
               ) : <>
               <div className="space-y-1">
@@ -1457,6 +1454,17 @@ export default function SchedulerPage() {
                     ? formRunOnceValid ? `One-shot trigger · ${formRunDate} ${formRunTime}` : 'Select a future date and time'
                     : formCron.trim().split(/\s+/).length === 5 ? describeCron(formCron.trim()) : 'min hour dom month dow'}
                 </p>
+              </div>
+
+              {/* Schedule timezone */}
+              <div className="space-y-1">
+                <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">Schedule timezone</label>
+                <input
+                  value={formTimezone}
+                  onChange={event => setFormTimezone(event.target.value)}
+                  placeholder="Asia/Kuala_Lumpur"
+                  className="w-full rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] text-gray-800 focus:outline-none focus:ring-1 focus:ring-violet-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+                <p className="text-[11px] text-gray-400 dark:text-slate-500">IANA timezone used by recurring cron, for example Asia/Kuala_Lumpur. Run-once uses the exact selected instant.</p>
               </div>
 
               {/* Chunk policy */}

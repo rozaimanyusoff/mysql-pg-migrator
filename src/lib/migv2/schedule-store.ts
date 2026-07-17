@@ -34,6 +34,9 @@ export function acceptedScheduleRun(schedule: CronSchedule, runId: string, now: 
   return {
     ...schedule,
     ...(schedule.scheduleMode === 'once' ? { enabled: false, triggeredAt: now, missedAt: null } : {}),
+    lastTriggeredAt: now,
+    pendingRunAt: null,
+    recoveryAttempts: 0,
     lastRunStatus: 'running',
     lastRunId: runId,
     updatedAt: now,

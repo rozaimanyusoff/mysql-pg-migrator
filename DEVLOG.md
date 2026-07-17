@@ -4,6 +4,17 @@
 
 ## 2026-07-17
 
+- **implement / server-managed Scheduler** — Production schedules execute without an open browser or user monitoring.
+  - Added a Next.js Node instrumentation worker that starts with the production server, polls persisted schedules every 15 seconds, evaluates recurring cron in the schedule's IANA timezone, and invokes the migration runner directly without an HTTP callback or browser session.
+  - Run-once schedules are durable catch-up triggers: if their instant passes during a restart or outage, the worker accepts them once after service recovery. Recurring occurrences blocked by an active same-job run or the global concurrency ceiling remain queued for a later tick.
+  - A scheduled run interrupted by a production-process restart is reconciled from its heartbeat and resumed from persisted table offsets automatically, with a bounded default of three recovery attempts. A fresh recurrence is not started while that interrupted run still needs recovery.
+  - The existing global run-start lock remains the duplicate-prevention boundary. Accepted occurrences persist `lastTriggeredAt`; pending recurring occurrences persist `pendingRunAt`; one-shot acceptance still disables the schedule atomically with run creation.
+  - Replaced the misleading manual crontab command in Scheduler with live server-worker status and heartbeat. The schedule form now persists an explicit IANA timezone.
+  - Deployment requirement: run the app as a persistent Next.js Node server and keep `data/migv2` on persistent storage. Set `DISABLE_INTERNAL_SCHEDULER=true` only when an external scheduler owns triggering.
+  - Files: `src/instrumentation.ts`, `src/lib/migv2/{cron-schedule,scheduler-worker,scheduled-run,run-recovery,schedule-store,types}.ts`, `src/pages/api/{scheduler/**,migv2/run/resume}.ts`, `src/pages/scheduler.tsx`, `tests/scheduler-hardening.test.ts`.
+  - Verification: TypeScript, 46 integration tests, and `git diff --check` pass. Production build reaches optimization and remains blocked only by the environment failing to fetch Google Fonts `Inter`.
+  - Status: implemented.
+
 - **fix / Scheduler form controls** — Explicit run-once picker, multiple notification recipients, and real manual chunk override.
   - Replaced the single browser-dependent `datetime-local` field with separate visible Date and Time pickers, a future-time validation message, and a read-only generated one-shot cron preview.
   - Notification email accepts up to 20 comma-separated recipients. UI and both Scheduler create/update APIs normalize duplicates, reject malformed addresses, and persist the normalized recipient list for Nodemailer delivery.

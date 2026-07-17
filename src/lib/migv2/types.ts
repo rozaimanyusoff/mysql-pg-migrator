@@ -95,10 +95,18 @@ export interface CronSchedule {
   scheduleMode?: 'once' | 'recurring';
   /** Exact requested wall-clock instant for one-shot schedules. */
   runAt?: string | null;
+  /** IANA timezone used when evaluating recurring cron expressions. */
+  timezone?: string | null;
   /** Set atomically when a one-shot trigger is accepted. */
   triggeredAt?: string | null;
   /** Set when the requested one-shot instant passed without an accepted run. */
   missedAt?: string | null;
+  /** Last occurrence accepted by the server-managed scheduler. */
+  lastTriggeredAt?: string | null;
+  /** Recurring occurrence queued while capacity or another run is active. */
+  pendingRunAt?: string | null;
+  /** Automatic checkpoint recovery attempts for the current scheduled run. */
+  recoveryAttempts?: number;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
