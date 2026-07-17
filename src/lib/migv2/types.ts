@@ -105,9 +105,9 @@ export interface CronSchedule {
   lastRunAt: string | null;
   lastRunStatus: 'completed' | 'completed_with_issues' | 'failed' | 'running' | 'paused' | null;
   lastRunId: string | null;
-  notifyEmail?: string | null;   // email to notify on completion/failure (optional)
+  notifyEmail?: string | null;   // normalized comma-separated recipients (optional)
   chunkMode?: 'auto' | 'fixed';
-  chunkRows?: number | null;     // requested rows; runtime policy clamps to current Pre-flight ceiling
+  chunkRows?: number | null;     // requested rows; manual runtime policy clamps to the single-run ceiling
 }
 
 // ── Job ───────────────────────────────────────────────────────────────────────
@@ -200,6 +200,9 @@ export interface RunExecutionPolicy {
   mode: 'auto' | 'fixed';
   chunkRows: number;
   recommendedChunkRows: number;
+  /** Ceiling used by Auto after accounting for other simultaneous runs. */
+  concurrentCeilingRows?: number;
+  /** Effective ceiling for this run; fixed overrides may use the single-run ceiling. */
   safeCeilingRows: number;
   /** Audit context captured from Pre-flight; absent on legacy run files. */
   singleRunCeilingRows?: number;

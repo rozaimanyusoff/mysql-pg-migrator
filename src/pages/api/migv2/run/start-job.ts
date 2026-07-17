@@ -8,7 +8,7 @@ import { prepareRunTables } from '../../../../lib/migv2/run-tables';
 import type { MigRun, MigRunTableState } from '../../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../../lib/scheduler-security';
 import { getPreflightResult, getPreflightStatus, preflightRequiredMessage } from '../../../../lib/migv2/preflight-store';
-import { createRunExecutionPolicy } from '../../../../lib/migv2/execution-policy';
+import { createRunExecutionPolicy, MAX_CHUNK_ROWS } from '../../../../lib/migv2/execution-policy';
 import { acceptedScheduleRun, listSchedules, saveSchedule } from '../../../../lib/migv2/schedule-store';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -17,8 +17,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const { jobId, chunkRows } = req.body as { jobId?: string; chunkRows?: number | null };
   if (!jobId) return res.status(400).json({ error: 'jobId is required' });
-  if (chunkRows != null && (!Number.isFinite(chunkRows) || chunkRows <= 0)) {
-    return res.status(400).json({ error: 'chunkRows must be a positive number' });
+  if (chunkRows != null && (!Number.isFinite(chunkRows) || chunkRows < 100 || chunkRows > MAX_CHUNK_ROWS)) {
+    return res.status(400).json({ error: `chunkRows must be between 100 and ${MAX_CHUNK_ROWS.toLocaleString()}` });
   }
 
   const job = loadJob(jobId);

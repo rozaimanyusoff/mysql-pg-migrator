@@ -13,15 +13,18 @@ export function createRunExecutionPolicy(
   capability?: TransferCapabilityReport | null,
   requestedChunkRows?: number | null,
 ): RunExecutionPolicy {
-  const safeCeilingRows = clamp(capability?.concurrencyAdjustedMaxChunkRows ?? capability?.maxSafeBatchRows ?? MAX_CHUNK_ROWS);
-  const recommendedChunkRows = clamp(capability?.recommendedBatchRows ?? DEFAULT_CHUNK_ROWS, safeCeilingRows);
   const fixed = requestedChunkRows != null && Number.isFinite(requestedChunkRows);
+  const concurrentCeilingRows = clamp(capability?.concurrencyAdjustedMaxChunkRows ?? capability?.maxSafeBatchRows ?? MAX_CHUNK_ROWS);
+  const singleRunCeilingRows = clamp(capability?.singleRunMaxChunkRows ?? MAX_CHUNK_ROWS);
+  const safeCeilingRows = fixed ? singleRunCeilingRows : concurrentCeilingRows;
+  const recommendedChunkRows = clamp(capability?.recommendedBatchRows ?? DEFAULT_CHUNK_ROWS, concurrentCeilingRows);
   return {
     mode: fixed ? 'fixed' : 'auto',
     chunkRows: fixed ? clamp(requestedChunkRows, safeCeilingRows) : recommendedChunkRows,
     recommendedChunkRows,
+    concurrentCeilingRows,
     safeCeilingRows,
-    singleRunCeilingRows: clamp(capability?.singleRunMaxChunkRows ?? MAX_CHUNK_ROWS),
+    singleRunCeilingRows,
     assumedConcurrentRuns: capability?.assumedConcurrentRuns ?? 1,
     maxConcurrentTables: Math.max(1, Math.min(5, capability?.recommendedConcurrentTables ?? 5)),
     writerMethod: capability?.currentWriter ?? 'copy-staging',

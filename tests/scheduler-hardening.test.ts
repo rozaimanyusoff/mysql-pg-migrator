@@ -26,6 +26,7 @@ import { isTransientMigrationError, MAX_TRANSIENT_RETRIES, transientRetryDelayMs
 import type { PreflightReport } from '../src/lib/migv2/preflight.ts';
 import type { MigJob, MigRun, TableMap } from '../src/lib/migv2/types.ts';
 import columnsBulkHandler, { MAX_TABLES_PER_REQUEST } from '../src/pages/api/migv2/columns-bulk.ts';
+import { MAX_NOTIFICATION_RECIPIENTS, normalizeNotificationRecipients } from '../src/lib/migv2/notification-recipients.ts';
 
 const runFiles: string[] = [];
 const jobFiles: string[] = [];
@@ -565,7 +566,9 @@ test('run execution policy snapshots and clamps Pre-flight chunk recommendations
 
   const fixed = createRunExecutionPolicy(capability, 2_000);
   assert.equal(fixed.mode, 'fixed');
-  assert.equal(fixed.chunkRows, 900);
+  assert.equal(fixed.concurrentCeilingRows, 900);
+  assert.equal(fixed.safeCeilingRows, 5_000);
+  assert.equal(fixed.chunkRows, 2_000);
   assert.equal(runChunkRows({ ...fixed, chunkRows: 50 }), 100);
   assert.equal(runChunkRows(undefined), 1_000);
 });
@@ -609,9 +612,19 @@ test('chunk capability lowers the effective ceiling for concurrent wide-row runs
   assert.ok(capability.chunkRecommendationReasons.some(reason => reason.includes('Concurrency reduces the ceiling')));
 
   const policy = createRunExecutionPolicy(capability as Parameters<typeof createRunExecutionPolicy>[0], 5_000);
-  assert.equal(policy.chunkRows, capability.concurrencyAdjustedMaxChunkRows);
+  assert.equal(policy.concurrentCeilingRows, capability.concurrencyAdjustedMaxChunkRows);
+  assert.equal(policy.chunkRows, capability.singleRunMaxChunkRows);
   assert.equal(policy.singleRunCeilingRows, capability.singleRunMaxChunkRows);
   assert.equal(policy.assumedConcurrentRuns, 5);
+});
+
+test('notification recipients accept comma-separated addresses, normalize duplicates, and reject invalid input', () => {
+  const normalized = normalizeNotificationRecipients('ops@example.com, Owner@example.com, ops@example.com');
+  assert.deepEqual(normalized.recipients, ['ops@example.com', 'Owner@example.com']);
+  assert.equal(normalized.value, 'ops@example.com, Owner@example.com');
+  assert.deepEqual(normalized.invalid, []);
+  assert.equal(normalizeNotificationRecipients('valid@example.com, invalid').invalid[0], 'invalid');
+  assert.equal(normalizeNotificationRecipients(Array.from({ length: MAX_NOTIFICATION_RECIPIENTS + 1 }, (_, index) => `user${index}@example.com`).join(',')).tooMany, true);
 });
 
 test('full scan upsert is available when recurring tables have no tracking column', () => {

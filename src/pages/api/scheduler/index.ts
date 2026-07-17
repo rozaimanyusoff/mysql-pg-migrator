@@ -7,6 +7,8 @@ import { requireSchedulerMutationAuth } from '../../../lib/scheduler-security';
 import { loadJob } from '../../../lib/migv2/job-store';
 import { getPreflightStatus } from '../../../lib/migv2/preflight-store';
 import { assessMigrationTables } from '../../../lib/migv2/recurring-validation';
+import { MAX_CHUNK_ROWS } from '../../../lib/migv2/execution-policy';
+import { MAX_NOTIFICATION_RECIPIENTS, normalizeNotificationRecipients } from '../../../lib/migv2/notification-recipients';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
@@ -38,9 +40,12 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     if (!jobId || !jobName || !cronExpr) {
       return res.status(400).json({ error: 'jobId, jobName, cronExpr required' });
     }
-    if (chunkMode === 'fixed' && (chunkRows == null || !Number.isFinite(chunkRows) || chunkRows <= 0)) {
-      return res.status(400).json({ error: 'A positive chunkRows value is required for fixed chunk mode' });
+    if (chunkMode === 'fixed' && (chunkRows == null || !Number.isFinite(chunkRows) || chunkRows < 100 || chunkRows > MAX_CHUNK_ROWS)) {
+      return res.status(400).json({ error: `Manual chunk must be between 100 and ${MAX_CHUNK_ROWS.toLocaleString()} rows` });
     }
+    const recipients = normalizeNotificationRecipients(notifyEmail);
+    if (recipients.invalid.length) return res.status(400).json({ error: `Invalid notification email${recipients.invalid.length === 1 ? '' : 's'}: ${recipients.invalid.join(', ')}` });
+    if (recipients.tooMany) return res.status(400).json({ error: `A maximum of ${MAX_NOTIFICATION_RECIPIENTS} notification recipients is allowed` });
     const job = loadJob(jobId);
     if (!job) return res.status(404).json({ error: 'Job not found' });
     const setupIssues = assessMigrationTables(job.tables).recurringIssues;
@@ -68,7 +73,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       enabled: preflightStatus.ready,
       createdAt: now, updatedAt: now,
       lastRunAt: null, lastRunStatus: null, lastRunId: null,
-      notifyEmail: notifyEmail ?? null,
+      notifyEmail: recipients.value,
       chunkMode: chunkMode === 'fixed' ? 'fixed' : 'auto',
       chunkRows: chunkMode === 'fixed' ? chunkRows : null,
     };

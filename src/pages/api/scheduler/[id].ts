@@ -4,6 +4,8 @@ import type { CronSchedule } from '../../../lib/migv2/types';
 import { requireSchedulerMutationAuth } from '../../../lib/scheduler-security';
 import { loadJob } from '../../../lib/migv2/job-store';
 import { getPreflightStatus, preflightRequiredMessage } from '../../../lib/migv2/preflight-store';
+import { MAX_CHUNK_ROWS } from '../../../lib/migv2/execution-policy';
+import { MAX_NOTIFICATION_RECIPIENTS, normalizeNotificationRecipients } from '../../../lib/migv2/notification-recipients';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const { id } = req.query as { id: string };
@@ -28,9 +30,12 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     }
     const nextChunkMode = patch.chunkMode ?? s.chunkMode ?? 'auto';
     const nextChunkRows = patch.chunkRows !== undefined ? patch.chunkRows : s.chunkRows;
-    if (nextChunkMode === 'fixed' && (nextChunkRows == null || !Number.isFinite(nextChunkRows) || nextChunkRows <= 0)) {
-      return res.status(400).json({ error: 'A positive chunkRows value is required for fixed chunk mode' });
+    if (nextChunkMode === 'fixed' && (nextChunkRows == null || !Number.isFinite(nextChunkRows) || nextChunkRows < 100 || nextChunkRows > MAX_CHUNK_ROWS)) {
+      return res.status(400).json({ error: `Manual chunk must be between 100 and ${MAX_CHUNK_ROWS.toLocaleString()} rows` });
     }
+    const recipients = normalizeNotificationRecipients(patch.notifyEmail !== undefined ? patch.notifyEmail : s.notifyEmail);
+    if (recipients.invalid.length) return res.status(400).json({ error: `Invalid notification email${recipients.invalid.length === 1 ? '' : 's'}: ${recipients.invalid.join(', ')}` });
+    if (recipients.tooMany) return res.status(400).json({ error: `A maximum of ${MAX_NOTIFICATION_RECIPIENTS} notification recipients is allowed` });
     const jobChangedWithoutPreflight = nextJobId !== s.jobId && !preflightStatus.ready;
     const nextScheduleMode = patch.scheduleMode ?? s.scheduleMode ?? 'recurring';
     const nextRunAt = patch.runAt !== undefined ? patch.runAt : s.runAt;
@@ -57,7 +62,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       ...(patch.lastRunAt !== undefined && { lastRunAt: patch.lastRunAt }),
       ...(patch.lastRunStatus !== undefined && { lastRunStatus: patch.lastRunStatus }),
       ...(patch.lastRunId !== undefined && { lastRunId: patch.lastRunId }),
-      ...(patch.notifyEmail !== undefined && { notifyEmail: patch.notifyEmail }),
+      ...(patch.notifyEmail !== undefined && { notifyEmail: recipients.value }),
       ...((patch.chunkMode !== undefined || patch.chunkRows !== undefined) && {
         chunkMode: nextChunkMode,
         chunkRows: nextChunkMode === 'fixed' ? nextChunkRows : null,

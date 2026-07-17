@@ -4,6 +4,14 @@
 
 ## 2026-07-17
 
+- **fix / Scheduler form controls** — Explicit run-once picker, multiple notification recipients, and real manual chunk override.
+  - Replaced the single browser-dependent `datetime-local` field with separate visible Date and Time pickers, a future-time validation message, and a read-only generated one-shot cron preview.
+  - Notification email accepts up to 20 comma-separated recipients. UI and both Scheduler create/update APIs normalize duplicates, reject malformed addresses, and persist the normalized recipient list for Nodemailer delivery.
+  - Auto chunk remains constrained by the concurrency-adjusted ceiling. Manual Run Now and scheduled overrides may now exceed that recommendation up to the Pre-flight single-run ceiling (product maximum 5,000 rows); the captured execution policy records both ceilings and warns about resource contention.
+  - Files: `src/pages/scheduler.tsx`, `src/pages/api/{scheduler/**,migv2/run/start-job}.ts`, `src/lib/migv2/{execution-policy,notification-recipients,types}.ts`, `tests/scheduler-hardening.test.ts`.
+  - Verification: TypeScript, 44 integration tests, and `git diff --check` pass. Browser-plugin QA was unavailable because the session exposed no browser backend.
+  - Status: implemented.
+
 - **fix / large Copy Source mapping** — Scale metadata inspection for databases with 1,500+ tables and preserve actionable failure detail.
   - Replaced one `/columns` request per source table with `/columns-bulk` batches of 200 tables. The server reads column, PK/unique, and FK metadata in set-based queries with a hard 250-table request ceiling.
   - Bulk mapping now renders live progress, applies successful batches once, preserves partial results, and retries only unresolved tables. Network, timeout, HTTP, and server messages are shown with affected table samples instead of an empty error dialog.

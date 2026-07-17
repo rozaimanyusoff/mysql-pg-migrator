@@ -17,6 +17,19 @@ import type { CronSchedule, SchedulerJobSummary, MigRun, MigRunTableState } from
 import type { PreflightReport } from '../lib/migv2/preflight';
 import type { PreflightStatus } from '../lib/migv2/preflight-store';
 import { describePreflightFailure, type PreflightFailure } from '../lib/migv2/preflight-client-error';
+import { MAX_CHUNK_ROWS } from '../lib/migv2/execution-policy';
+import { MAX_NOTIFICATION_RECIPIENTS, normalizeNotificationRecipients } from '../lib/migv2/notification-recipients';
+
+function localDateTimeParts(date: Date): { date: string; time: string } {
+  const local = date.toLocaleString('sv-SE');
+  return { date: local.slice(0, 10), time: local.slice(11, 16) };
+}
+
+function defaultRunOnceParts(): { date: string; time: string } {
+  const next = new Date(Date.now() + 60 * 60 * 1000);
+  next.setMinutes(Math.ceil(next.getMinutes() / 15) * 15, 0, 0);
+  return localDateTimeParts(next);
+}
 
 function fmtDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -165,13 +178,16 @@ export default function SchedulerPage() {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const highlightHandledRef = useRef(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const runDateInputRef = useRef<HTMLInputElement>(null);
+  const runTimeInputRef = useRef<HTMLInputElement>(null);
 
   // ── Form state ───────────────────────────────────────────────────────────────
   const [formJobId, setFormJobId] = useState('');
   const [formCron, setFormCron] = useState('0 2 * * *');
   const [formPreset, setFormPreset] = useState('0 2 * * *');
   const [formScheduleMode, setFormScheduleMode] = useState<'once' | 'recurring'>('recurring');
-  const [formRunAt, setFormRunAt] = useState('');
+  const [formRunDate, setFormRunDate] = useState('');
+  const [formRunTime, setFormRunTime] = useState('');
   const [formNotifyEmail, setFormNotifyEmail] = useState('');
   const [formChunkMode, setFormChunkMode] = useState<'auto' | 'fixed'>('auto');
   const [formChunkRows, setFormChunkRows] = useState(1_000);
@@ -212,6 +228,14 @@ export default function SchedulerPage() {
   const activeCapability = preflight?.report?.capabilities ?? lastPreflightReport?.capabilities ?? null;
   const autoChunkRows = activeCapability?.recommendedBatchRows ?? 1_000;
   const effectiveChunkCeiling = activeCapability?.concurrencyAdjustedMaxChunkRows ?? activeCapability?.maxSafeBatchRows ?? 5_000;
+  const manualChunkCeiling = activeCapability?.singleRunMaxChunkRows ?? MAX_CHUNK_ROWS;
+  const formRunAt = formRunDate && formRunTime ? `${formRunDate}T${formRunTime}` : '';
+  const formRunDateTime = formRunAt ? new Date(formRunAt) : null;
+  const formRunOnceValid = Boolean(formRunDateTime && Number.isFinite(formRunDateTime.getTime()) && formRunDateTime.getTime() > Date.now());
+  const generatedOnceCron = formRunDateTime && Number.isFinite(formRunDateTime.getTime())
+    ? `${formRunDateTime.getMinutes()} ${formRunDateTime.getHours()} ${formRunDateTime.getDate()} ${formRunDateTime.getMonth() + 1} *`
+    : '';
+  const formRecipients = normalizeNotificationRecipients(formNotifyEmail);
   const hasCompatibilityWarnings = Boolean(preflight?.report?.tables.some(table =>
     table.issues.some(issue => issue.code === 'target_schema_compatibility')
   ));
@@ -494,12 +518,14 @@ export default function SchedulerPage() {
 
   // ── Form ──────────────────────────────────────────────────────────────────────
   const openAddForm = (preselectedJobId?: string) => {
+    const runOnce = defaultRunOnceParts();
     setEditTarget(null);
     setFormJobId(preselectedJobId ?? jobs[0]?.id ?? '');
     setFormCron('0 2 * * *');
     setFormPreset('0 2 * * *');
     setFormScheduleMode('recurring');
-    setFormRunAt('');
+    setFormRunDate(runOnce.date);
+    setFormRunTime(runOnce.time);
     setFormNotifyEmail('');
     setFormChunkMode('auto');
     setFormChunkRows(autoChunkRows);
@@ -507,12 +533,14 @@ export default function SchedulerPage() {
   };
 
   const openEditForm = (s: CronSchedule) => {
+    const runOnce = s.runAt ? localDateTimeParts(new Date(s.runAt)) : defaultRunOnceParts();
     setEditTarget(s);
     setFormJobId(s.jobId);
     setFormCron(s.cronExpr);
     setFormPreset(CRON_PRESETS.find(p => p.value === s.cronExpr)?.value ?? '__custom__');
     setFormScheduleMode(s.scheduleMode === 'once' ? 'once' : 'recurring');
-    setFormRunAt(s.runAt ? new Date(s.runAt).toLocaleString('sv-SE').slice(0, 16) : '');
+    setFormRunDate(runOnce.date);
+    setFormRunTime(runOnce.time);
     setFormNotifyEmail(s.notifyEmail ?? '');
     setFormChunkMode(s.chunkMode === 'fixed' ? 'fixed' : 'auto');
     setFormChunkRows(s.chunkRows ?? autoChunkRows);
@@ -520,19 +548,25 @@ export default function SchedulerPage() {
   };
 
   const handleFormSave = async () => {
-    if (!formJobId || (formScheduleMode === 'recurring' ? !formCron.trim() : !formRunAt)) return;
+    if (!formJobId || (formScheduleMode === 'recurring' ? !formCron.trim() : !formRunOnceValid)) return;
+    if (formRecipients.invalid.length) {
+      showError('Invalid notification email', formRecipients.invalid.join(', '));
+      return;
+    }
+    if (formRecipients.tooMany) {
+      showError('Too many notification recipients', `A maximum of ${MAX_NOTIFICATION_RECIPIENTS} recipients is allowed.`);
+      return;
+    }
     setFormSaving(true);
     try {
       const job = jobs.find(j => j.id === formJobId);
       if (!job) throw new Error('Job not found');
-      const notifyEmail = formNotifyEmail.trim() || null;
+      const notifyEmail = formRecipients.value;
       const chunkMode = formChunkMode;
       const chunkRows = chunkMode === 'fixed' ? formChunkRows : null;
       const runAt = formScheduleMode === 'once' ? new Date(formRunAt).toISOString() : null;
       const runDate = formScheduleMode === 'once' ? new Date(formRunAt) : null;
-      const cronExpr = runDate
-        ? `${runDate.getMinutes()} ${runDate.getHours()} ${runDate.getDate()} ${runDate.getMonth() + 1} *`
-        : formCron.trim();
+      const cronExpr = runDate ? generatedOnceCron : formCron.trim();
       if (editTarget) {
         const { data } = await axios.patch<{ schedule: CronSchedule }>(`/api/scheduler/${editTarget.id}`, {
           jobId: formJobId, jobName: job.name, cronExpr, scheduleMode: formScheduleMode, runAt, notifyEmail, chunkMode, chunkRows,
@@ -1222,14 +1256,14 @@ export default function SchedulerPage() {
                               {runChunkMode === 'fixed' && (
                                 <div className="w-36 space-y-1">
                                   <label className="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Rows</label>
-                                  <input type="number" min={100} max={r.capabilities.concurrencyAdjustedMaxChunkRows ?? r.capabilities.maxSafeBatchRows}
+                                  <input type="number" min={100} max={r.capabilities.singleRunMaxChunkRows ?? MAX_CHUNK_ROWS}
                                     value={runChunkRows}
-                                    onChange={event => setRunChunkRows(Math.max(100, Math.min(r.capabilities.concurrencyAdjustedMaxChunkRows ?? r.capabilities.maxSafeBatchRows, Number(event.target.value) || 100)))}
+                                    onChange={event => setRunChunkRows(Math.max(100, Math.min(r.capabilities.singleRunMaxChunkRows ?? MAX_CHUNK_ROWS, Number(event.target.value) || 100)))}
                                     className="w-full rounded border border-blue-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 dark:border-blue-900 dark:bg-slate-900 dark:text-slate-200" />
                                 </div>
                               )}
                             </div>
-                            <p className="mt-1 text-[10px] text-slate-400">Applies only to the next Run Now. Manual values cannot exceed the concurrent ceiling. Configure recurring runs separately in Add/Edit Schedule.</p>
+                            <p className="mt-1 text-[10px] text-slate-400">Applies only to the next Run Now. Manual may exceed the concurrent ceiling up to the single-run ceiling and can increase resource contention. Configure recurring runs separately in Add/Edit Schedule.</p>
                           </div>
                         )}
                         {r.capabilities.limitingFactors.length > 0 && (
@@ -1370,8 +1404,27 @@ export default function SchedulerPage() {
               {formScheduleMode === 'once' ? (
                 <div className="space-y-1">
                   <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">Run date &amp; time</label>
-                  <input type="datetime-local" value={formRunAt} min={new Date().toLocaleString('sv-SE').slice(0, 16)} onChange={event => setFormRunAt(event.target.value)}
-                    className="w-full rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] text-gray-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1">
+                      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400"><Calendar size={10} />Date</span>
+                      <span className="relative block">
+                        <input ref={runDateInputRef} type="date" value={formRunDate} min={localDateTimeParts(new Date()).date} onChange={event => setFormRunDate(event.target.value)}
+                          className="w-full rounded border border-gray-200 bg-white px-2.5 py-1.5 pr-8 text-[13px] text-gray-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+                        <button type="button" aria-label="Open date picker" onClick={() => { try { runDateInputRef.current?.showPicker(); } catch { runDateInputRef.current?.focus(); } }}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-gray-100 hover:text-violet-500 dark:hover:bg-slate-700"><Calendar size={13} /></button>
+                      </span>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400"><Clock size={10} />Time</span>
+                      <span className="relative block">
+                        <input ref={runTimeInputRef} type="time" value={formRunTime} step={60} onChange={event => setFormRunTime(event.target.value)}
+                          className="w-full rounded border border-gray-200 bg-white px-2.5 py-1.5 pr-8 text-[13px] text-gray-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+                        <button type="button" aria-label="Open time picker" onClick={() => { try { runTimeInputRef.current?.showPicker(); } catch { runTimeInputRef.current?.focus(); } }}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-gray-100 hover:text-violet-500 dark:hover:bg-slate-700"><Clock size={13} /></button>
+                      </span>
+                    </label>
+                  </div>
+                  {formRunAt && !formRunOnceValid && <p className="text-[11px] font-medium text-rose-500">Choose a future date and time.</p>}
                   <p className="text-[11px] text-gray-400 dark:text-slate-500">Uses cron as the trigger, then auto-disables immediately after the first accepted run. It will not recur.</p>
                 </div>
               ) : <>
@@ -1392,14 +1445,17 @@ export default function SchedulerPage() {
 
               {/* Cron expression */}
               <div className="space-y-1">
-                <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">Cron Expression</label>
+                <label className="text-[12px] font-medium text-gray-600 dark:text-slate-400">{formScheduleMode === 'once' ? 'Generated cron trigger' : 'Cron Expression'}</label>
                 <input
-                  value={formCron}
+                  value={formScheduleMode === 'once' ? generatedOnceCron : formCron}
+                  readOnly={formScheduleMode === 'once'}
                   onChange={e => { setFormCron(e.target.value); setFormPreset('__custom__'); }}
                   placeholder="* * * * *"
-                  className="w-full px-2.5 py-1.5 rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[13px] font-mono text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-400" />
+                  className="w-full px-2.5 py-1.5 rounded border border-gray-200 dark:border-slate-700 bg-white read-only:bg-gray-50 dark:bg-slate-800 dark:read-only:bg-slate-900 text-[13px] font-mono text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-400" />
                 <p className="text-[11px] text-gray-400 dark:text-slate-500 font-mono">
-                  {formCron.trim().split(/\s+/).length === 5 ? describeCron(formCron.trim()) : 'min hour dom month dow'}
+                  {formScheduleMode === 'once'
+                    ? formRunOnceValid ? `One-shot trigger · ${formRunDate} ${formRunTime}` : 'Select a future date and time'
+                    : formCron.trim().split(/\s+/).length === 5 ? describeCron(formCron.trim()) : 'min hour dom month dow'}
                 </p>
               </div>
 
@@ -1412,11 +1468,11 @@ export default function SchedulerPage() {
                     <option value="auto">Auto · {autoChunkRows.toLocaleString()}</option>
                     <option value="fixed">Manual override</option>
                   </select>
-                  <input type="number" min={100} max={effectiveChunkCeiling} disabled={formChunkMode === 'auto'} value={formChunkMode === 'auto' ? autoChunkRows : formChunkRows}
-                    onChange={event => setFormChunkRows(Math.max(100, Math.min(effectiveChunkCeiling, Number(event.target.value) || 100)))}
+                  <input type="number" min={100} max={manualChunkCeiling} disabled={formChunkMode === 'auto'} value={formChunkMode === 'auto' ? autoChunkRows : formChunkRows}
+                    onChange={event => setFormChunkRows(Math.max(100, Math.min(manualChunkCeiling, Number(event.target.value) || 100)))}
                     className="w-full rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] text-gray-800 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
                 </div>
-                <p className="text-[11px] text-gray-400 dark:text-slate-500">Auto uses the latest Pre-flight recommendation. Manual is capped at the current concurrent ceiling of {effectiveChunkCeiling.toLocaleString()} rows.</p>
+                <p className="text-[11px] text-gray-400 dark:text-slate-500">Auto stays within the current concurrent ceiling of {effectiveChunkCeiling.toLocaleString()} rows. Manual may override it up to the single-run ceiling of {manualChunkCeiling.toLocaleString()} rows and can increase resource contention.</p>
               </div>
 
               {/* Notify email */}
@@ -1425,13 +1481,16 @@ export default function SchedulerPage() {
                   <Mail size={12} />Notify on completion <span className="font-normal text-gray-400">(optional)</span>
                 </label>
                 <input
-                  type="email"
+                  type="text"
                   value={formNotifyEmail}
                   onChange={e => setFormNotifyEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full px-2.5 py-1.5 rounded border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[13px] text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-400" />
+                  placeholder="ops@example.com, owner@example.com"
+                  aria-invalid={formRecipients.invalid.length > 0 || formRecipients.tooMany}
+                  className={`w-full px-2.5 py-1.5 rounded border bg-white dark:bg-slate-800 text-[13px] text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-1 ${formRecipients.invalid.length || formRecipients.tooMany ? 'border-rose-400 focus:ring-rose-400' : 'border-gray-200 dark:border-slate-700 focus:ring-violet-400'}`} />
+                {formRecipients.invalid.length > 0 && <p className="text-[11px] font-medium text-rose-500">Invalid: {formRecipients.invalid.join(', ')}</p>}
+                {formRecipients.tooMany && <p className="text-[11px] font-medium text-rose-500">Maximum {MAX_NOTIFICATION_RECIPIENTS} recipients.</p>}
                 <p className="text-[11px] text-gray-400 dark:text-slate-500">
-                  Emails a run summary when this job finishes or fails. Requires email config in Settings.
+                  Separate multiple recipients with commas. Emails a run summary when this job finishes or fails. Requires email config in Settings.
                 </p>
               </div>
 
@@ -1442,7 +1501,7 @@ export default function SchedulerPage() {
                   Cancel
                 </button>
                 <button
-                  disabled={formSaving || !formJobId || (formScheduleMode === 'recurring' ? !formCron.trim() : !formRunAt)}
+                  disabled={formSaving || !formJobId || (formScheduleMode === 'recurring' ? !formCron.trim() : !formRunOnceValid)}
                   onClick={() => void handleFormSave()}
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-violet-600 text-white text-[13px] font-medium hover:bg-violet-700 disabled:opacity-40 transition-colors">
                   {formSaving && <Loader2 size={12} className="animate-spin" />}
