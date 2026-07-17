@@ -111,7 +111,7 @@ export interface CronSchedule {
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
-  lastRunStatus: 'completed' | 'completed_with_issues' | 'failed' | 'running' | 'paused' | null;
+  lastRunStatus: 'completed' | 'completed_with_issues' | 'failed' | 'interrupted' | 'running' | 'paused' | null;
   lastRunId: string | null;
   notifyEmail?: string | null;   // normalized comma-separated recipients (optional)
   chunkMode?: 'auto' | 'fixed';
@@ -201,8 +201,8 @@ export interface SchedulerJobSummary {
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
-export type RunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'completed_with_issues' | 'failed' | 'rolled_back' | 'aborted';
-export type TableRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'completed_with_issues' | 'failed' | 'rolled_back' | 'aborted';
+export type RunStatus = 'pending' | 'running' | 'paused' | 'interrupted' | 'completed' | 'completed_with_issues' | 'failed' | 'rolled_back' | 'aborted';
+export type TableRunStatus = 'pending' | 'running' | 'paused' | 'interrupted' | 'completed' | 'completed_with_issues' | 'failed' | 'rolled_back' | 'aborted';
 
 export interface RunExecutionPolicy {
   mode: 'auto' | 'fixed';
@@ -291,11 +291,11 @@ export interface MigRun {
   // Version marker: absent runs may have used persistent ALTER TABLE trigger
   // changes and need legacy cleanup before resume.
   constraintBypassMode?: 'transaction';
-  // Liveness: server-driven runs stamp this each advance loop. Used to detect
-  // orphaned runs (process restart mid-run) so they can be resumed.
+  // Liveness: server-driven runs renew this independently from database chunks.
   heartbeatAt?: string | null;
-  // true when a 'running' run was reconciled as orphaned (stale heartbeat).
-  // Such runs are marked 'failed' but remain resumable from saved offsets.
+  leaseExpiresAt?: string | null;
+  executionId?: string | null;
+  // true when a run was reconciled as orphaned (expired execution lease).
   interrupted?: boolean;
   // Immutable execution controls captured when the run is created. Optional
   // only for backward compatibility with run files created before this field.

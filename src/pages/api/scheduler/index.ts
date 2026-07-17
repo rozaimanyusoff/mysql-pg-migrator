@@ -27,7 +27,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       const updated: CronSchedule = {
         ...normalized,
         lastRunAt: lastRun?.completedAt ?? reconciled?.completedAt ?? schedule.lastRunAt,
-        lastRunStatus: lastRun?.status === 'completed' ? 'completed' : lastRun?.status === 'completed_with_issues' ? 'completed_with_issues' : 'failed',
+        lastRunStatus: lastRun?.status === 'completed' ? 'completed' : lastRun?.status === 'completed_with_issues' ? 'completed_with_issues' : (lastRun?.status === 'interrupted' || lastRun?.interrupted) ? 'interrupted' : 'failed',
         updatedAt: new Date().toISOString(),
       };
       saveSchedule(updated);

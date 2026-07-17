@@ -55,7 +55,7 @@ export async function resumeInterruptedRun(runId: string): Promise<{ runId: stri
     run.completedAt = null;
     run.heartbeatAt = new Date().toISOString();
     for (const table of run.tableStates) {
-      if (table.status === 'running' || table.status === 'failed') table.status = 'pending';
+      if (table.status === 'running' || table.status === 'failed' || table.status === 'interrupted') table.status = 'pending';
     }
     if (recoveredConstraintLog) run.logs.push(recoveredConstraintLog);
     run.logs.push(`[${new Date().toISOString()}] Run resumed from saved offsets (failed tables retried).`);

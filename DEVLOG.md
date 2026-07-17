@@ -4,6 +4,13 @@
 
 ## 2026-07-17
 
+- **fix / execution lease and interrupted-state consistency** — Long table chunks no longer look like dead production processes, and recovery cannot leave a job failed while its tables appear running.
+  - Server and browser-driven advances now claim an execution lease and renew heartbeat independently every 10 seconds. Lease ownership prevents a second recovery driver from taking over while the original execution is alive.
+  - Expired leases transition the run to `interrupted`, clear ownership, and transition in-flight table states to `interrupted`; resume reopens only interrupted/failed table checkpoints. Recovery exhaustion remains visible as an interrupted run requiring explicit resume.
+  - Migration and Scheduler recognize interrupted jobs consistently and offer checkpoint resume instead of presenting a generic Run Now while child tables still show running.
+  - External `scripts/run-job.js` recognizes the new interrupted status for checkpoint recovery.
+  - Added regression coverage for expired lease state propagation. Verification: TypeScript, 47 integration tests, and `git diff --check` pass.
+
 - **implement / server-managed Scheduler** — Production schedules execute without an open browser or user monitoring.
   - Added a Next.js Node instrumentation worker that starts with the production server, polls persisted schedules every 15 seconds, evaluates recurring cron in the schedule's IANA timezone, and invokes the migration runner directly without an HTTP callback or browser session.
   - Run-once schedules are durable catch-up triggers: if their instant passes during a restart or outage, the worker accepts them once after service recovery. Recurring occurrences blocked by an active same-job run or the global concurrency ceiling remain queued for a later tick.

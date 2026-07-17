@@ -5,6 +5,8 @@ import { loadSchedule, saveSchedule } from './schedule-store';
 import { sendEmail } from '../mailer';
 import type { MigConn, MigRun } from './types';
 import { canPersistWatermark } from './run-outcome';
+import { claimRunExecution, refreshRunLease, releaseRunExecution, RUN_LEASE_MS } from './run-store';
+import { randomUUID } from 'crypto';
 
 const TERMINAL = new Set(['completed', 'completed_with_issues', 'failed', 'aborted', 'rolled_back']);
 
@@ -58,8 +60,8 @@ async function notify(run: MigRun, notifyEmail: string | null | undefined) {
 }
 
 /**
- * Drive a run to a terminal state in the background. Stamps `heartbeatAt` each
- * loop so an orphaned run (process restart) can be detected and resumed. On
+ * Drive a run to a terminal state in the background. Renews an execution lease
+ * independently from database chunks so an orphaned run can be detected and resumed. On
  * terminal, persists incremental watermarks, updates the owning schedule, and
  * sends an optional completion/failure email.
  */
@@ -69,13 +71,19 @@ export async function driveRun(
   target: MigConn,
   scheduleId: string | null,
 ): Promise<void> {
-  let run = initial;
+  const executionId = randomUUID();
+  const claimed = await claimRunExecution(initial.id, executionId);
+  if (!claimed) return;
+  let run = claimed;
+  const heartbeatTimer = setInterval(() => { void refreshRunLease(run.id, executionId); }, 10_000);
+  heartbeatTimer.unref?.();
   try {
     while (!TERMINAL.has(run.status)) {
       // Re-read persisted control state so table pause/stop requests made by
       // another API request are observed by this background driver.
       const persisted = loadRun(run.id);
       if (persisted) run = persisted;
+      if (run.executionId !== executionId) return;
       if (TERMINAL.has(run.status)) break;
       if (run.status === 'paused') return;
       // A run with only paused/terminal tables remains resumable, but should
@@ -99,6 +107,7 @@ export async function driveRun(
       // A control request can arrive while a DB chunk is in flight. Preserve
       // that request instead of overwriting it with this chunk's stale state.
       const controlled = loadRun(run.id);
+      if (controlled?.executionId && controlled.executionId !== executionId) return;
       if (controlled) {
         if (controlled.status === 'aborted') run.status = 'aborted';
         if (controlled.status === 'paused') run.status = 'paused';
@@ -111,7 +120,9 @@ export async function driveRun(
           }
         }
       }
-      run.heartbeatAt = new Date().toISOString();
+      const leaseHeartbeat = new Date();
+      run.heartbeatAt = leaseHeartbeat.toISOString();
+      run.leaseExpiresAt = new Date(leaseHeartbeat.getTime() + RUN_LEASE_MS).toISOString();
       saveRun(run);
       persistWatermarks(run);
     }
@@ -121,6 +132,9 @@ export async function driveRun(
     run.completedAt = new Date().toISOString();
     run.heartbeatAt = new Date().toISOString();
     saveRun(run);
+  } finally {
+    clearInterval(heartbeatTimer);
+    await releaseRunExecution(run.id, executionId);
   }
 
   let notifyEmail: string | null | undefined;
@@ -131,7 +145,7 @@ export async function driveRun(
       saveSchedule({
         ...schedule,
         lastRunAt: new Date().toISOString(),
-        lastRunStatus: run.status === 'completed' ? 'completed' : run.status === 'completed_with_issues' ? 'completed_with_issues' : 'failed',
+        lastRunStatus: run.status === 'completed' ? 'completed' : run.status === 'completed_with_issues' ? 'completed_with_issues' : run.status === 'interrupted' ? 'interrupted' : 'failed',
         lastRunId: run.id,
         updatedAt: new Date().toISOString(),
       });

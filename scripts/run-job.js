@@ -77,6 +77,7 @@ function statusIcon(status) {
   switch (status) {
     case 'completed': return '✓';
     case 'failed': return '✗';
+    case 'interrupted': return '⚠';
     case 'running': return '▶';
     case 'pending': return '…';
     case 'aborted': return '■';
@@ -154,7 +155,7 @@ async function main() {
     const run = statusRes.body?.run;
     if (!run) continue;
 
-    if (run.status === 'failed' && run.interrupted && recoveryAttempts < Math.max(0, autoResumeAttempts)) {
+    if ((run.status === 'interrupted' || run.status === 'failed') && run.interrupted && recoveryAttempts < Math.max(0, autoResumeAttempts)) {
       recoveryAttempts += 1;
       console.error(`[run-job] Server interruption detected; resuming run ${runId} from its saved checkpoint (${recoveryAttempts}/${autoResumeAttempts}).`);
       try {

@@ -4,6 +4,8 @@ import { loadRun, saveRun } from '../../../../lib/migv2/run-store';
 import { loadJob, saveJobRuntimeState } from '../../../../lib/migv2/job-store';
 import type { MigConn } from '../../../../lib/migv2/types';
 import { canPersistWatermark } from '../../../../lib/migv2/run-outcome';
+import { claimRunExecution, releaseRunExecution, refreshRunLease, RUN_LEASE_MS } from '../../../../lib/migv2/run-store';
+import { randomUUID } from 'crypto';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -13,13 +15,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const run = loadRun(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (run.status === 'completed' || run.status === 'completed_with_issues' || run.status === 'rolled_back' || run.status === 'aborted') {
+  if (run.status === 'completed' || run.status === 'completed_with_issues' || run.status === 'rolled_back' || run.status === 'aborted' || run.status === 'interrupted') {
     return res.status(200).json({ run });
   }
 
+  const executionId = randomUUID();
+  const claimed = await claimRunExecution(runId, executionId);
+  if (!claimed) return res.status(409).json({ error: 'This run is already being driven by another execution. Wait for its checkpoint or resume it after interruption.' });
+  const heartbeatTimer = setInterval(() => { void refreshRunLease(runId, executionId); }, 10_000);
+  heartbeatTimer.unref?.();
   try {
-    const advanced = await advanceRun(run, source, target, pausedTableIds);
-    advanced.heartbeatAt = new Date().toISOString();
+    const advanced = await advanceRun(claimed, source, target, pausedTableIds);
+    const heartbeatAt = new Date();
+    advanced.heartbeatAt = heartbeatAt.toISOString();
+    advanced.leaseExpiresAt = new Date(heartbeatAt.getTime() + RUN_LEASE_MS).toISOString();
     saveRun(advanced);
 
     // Persist incremental watermarks to the separate runtime store.
@@ -45,5 +54,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     run.completedAt = new Date().toISOString();
     saveRun(run);
     return res.status(200).json({ run });
+  } finally {
+    clearInterval(heartbeatTimer);
+    await releaseRunExecution(runId, executionId);
   }
 }

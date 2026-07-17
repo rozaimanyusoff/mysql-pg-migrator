@@ -116,6 +116,11 @@ function StatusBadge({ status }: { status: CronSchedule['lastRunStatus'] }) {
       <AlertTriangle size={9} />failed
     </span>
   );
+  if (status === 'interrupted') return (
+    <span className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 font-semibold">
+      <AlertTriangle size={9} />interrupted
+    </span>
+  );
   if (status === 'running') return (
     <span className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 font-semibold">
       <Loader2 size={9} className="animate-spin" />running
@@ -134,6 +139,7 @@ function RunStatusBadge({ status }: { status: MigRun['status'] }) {
     completed: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400',
     completed_with_issues: 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400',
     failed: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400',
+    interrupted: 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400',
     running: 'bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400',
     pending: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400',
     aborted: 'bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',
@@ -146,6 +152,7 @@ function RunStatusBadge({ status }: { status: MigRun['status'] }) {
       {status === 'completed' && <CheckCircle2 size={9} />}
       {status === 'completed_with_issues' && <AlertTriangle size={9} />}
       {status === 'failed' && <AlertTriangle size={9} />}
+      {status === 'interrupted' && <AlertTriangle size={9} />}
       {status === 'paused' && <Pause size={9} />}
       {status === 'completed_with_issues' ? 'completed with issues' : status}
     </span>
@@ -230,7 +237,9 @@ export default function SchedulerPage() {
     (selectedHistoryRun.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') &&
     selectedHistoryTableStates.some(t => t.status === 'pending' || t.status === 'paused')
   );
-  const runNowLabel = canResumePausedRun ? 'Resume Run' : 'Run Now';
+  const canResumeInterruptedRun = Boolean(selectedHistoryRun?.status === 'interrupted' || selectedHistoryRun?.interrupted || selectedSchedule?.lastRunStatus === 'interrupted');
+  const canResumeExistingRun = canResumePausedRun || canResumeInterruptedRun;
+  const runNowLabel = canResumeExistingRun ? 'Resume Run' : 'Run Now';
   const primaryJobAction = isCurrentRunRunning ? 'pause' : 'run';
   const primaryJobLabel = isCurrentRunRunning ? 'Pause Run' : runNowLabel;
   const preflightBlockers = preflightIssueCount(lastPreflightReport, 'error');
@@ -251,8 +260,8 @@ export default function SchedulerPage() {
   const hasReviewablePreflight = Boolean(lastPreflightReport && preflightStatus && preflightStatus.reason !== 'job_changed');
   const runJobTooltip = primaryJobAction === 'pause'
     ? 'Pause this migration job only'
-    : canResumePausedRun
-      ? 'Resume pending or paused tables for this job only'
+    : canResumeExistingRun
+      ? 'Resume this interrupted or paused migration from its last checkpoint'
       : selectedJob && !selectedJob.scheduleReady
         ? `Complete ${selectedJob.scheduleIssues} Migration setup issue${selectedJob.scheduleIssues !== 1 ? 's' : ''} before using Scheduler execution`
         : preflightStatus?.reason === 'failed'
@@ -265,7 +274,8 @@ export default function SchedulerPage() {
     (primaryJobAction === 'pause'
       ? !hasPausableJobTables
       : (!selectedJob || !selectedJob.scheduleReady ||
-        ((selectedHistoryRun?.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') && !canResumePausedRun)))
+        ((selectedHistoryRun?.status === 'paused' || selectedSchedule?.lastRunStatus === 'paused') && !canResumePausedRun) ||
+        (canResumeInterruptedRun && !selectedHistoryRun)))
   );
 
   // ── Data fetching ─────────────────────────────────────────────────────────────
@@ -885,7 +895,7 @@ export default function SchedulerPage() {
                         <MoreVertical size={13} />
                       </button>
                       {showStatusFilter && <div className="absolute right-0 top-8 z-20 w-56 rounded-md border border-gray-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
-                        {['all', 'completed', 'completed_with_issues', 'failed', 'running', 'paused', 'aborted', 'pending'].map(status => (
+                        {['all', 'completed', 'completed_with_issues', 'failed', 'interrupted', 'running', 'paused', 'aborted', 'pending'].map(status => (
                           <button key={status} type="button" onClick={() => { setTableStatusFilter(status); setShowStatusFilter(false); }}
                             className={`block w-full rounded px-2 py-1.5 text-left text-[11px] capitalize ${tableStatusFilter === status ? 'bg-violet-50 text-violet-600 dark:bg-violet-950/40' : 'text-slate-500 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
                             {status === 'aborted' ? 'stopped' : status === 'completed_with_issues' ? 'completed with issues' : status}
@@ -894,7 +904,7 @@ export default function SchedulerPage() {
                         {selectedHistoryRun && <>
                           <div className="my-2 border-t border-gray-100 dark:border-slate-800" />
                           <div className="space-y-1 px-1 text-[10px] text-slate-500">
-                            {(['completed', 'completed_with_issues', 'failed', 'running', 'paused', 'aborted', 'pending'] as const).map(status => {
+                            {(['completed', 'completed_with_issues', 'failed', 'interrupted', 'running', 'paused', 'aborted', 'pending'] as const).map(status => {
                               const count = selectedHistoryTableStates.filter(t => t.status === status).length;
                               const pct = selectedHistoryTableStates.length ? Math.round(count / selectedHistoryTableStates.length * 100) : 0;
                               return <div key={status} className="flex justify-between capitalize"><span>{status === 'aborted' ? 'stopped' : status === 'completed_with_issues' ? 'completed with issues' : status}</span><span>{pct}% ({count})</span></div>;
@@ -907,7 +917,7 @@ export default function SchedulerPage() {
                               className="h-3.5 w-3.5 accent-violet-600" />
                           </label>
                           <div className="mt-2 flex gap-1 border-t border-gray-100 pt-2 dark:border-slate-800">
-                            {(selectedHistoryRun.status === 'failed' || selectedHistoryRun.status === 'aborted') &&
+                            {(selectedHistoryRun.status === 'failed' || selectedHistoryRun.status === 'interrupted' || selectedHistoryRun.status === 'aborted') &&
                               <button type="button" onClick={() => void handleResume(selectedHistoryRun.id)} className="flex-1 rounded border border-violet-300 px-2 py-1 text-[10px] text-violet-600">Resume run</button>}
                             <button type="button" onClick={() => void handleRestart(selectedHistoryRun.id, false)} className="flex-1 rounded border border-amber-300 px-2 py-1 text-[10px] text-amber-600">Restart</button>
                             <button type="button" onClick={() => void handleRestart(selectedHistoryRun.id, true)} className="flex-1 rounded border border-rose-300 px-2 py-1 text-[10px] text-rose-600">Truncate</button>
@@ -954,7 +964,7 @@ export default function SchedulerPage() {
                           <span className="text-[12px] text-gray-500 dark:text-slate-400 shrink-0">
                             {completedPct}% · {run.tableStates.length} tables · {totalRows.toLocaleString()} rows
                           </span>
-                          {(run.status === 'failed' || run.status === 'aborted') && (
+                          {(run.status === 'failed' || run.status === 'interrupted' || run.status === 'aborted') && (
                             <Tooltip content="Continue from last saved offset — retries failed tables" side="top">
                               <button
                                 onClick={e => { e.stopPropagation(); void handleResume(run.id); }}
@@ -965,7 +975,7 @@ export default function SchedulerPage() {
                               </button>
                             </Tooltip>
                           )}
-                          {(run.status === 'failed' || run.status === 'aborted' || run.status === 'completed' || run.status === 'completed_with_issues') && (
+                          {(run.status === 'failed' || run.status === 'interrupted' || run.status === 'aborted' || run.status === 'completed' || run.status === 'completed_with_issues') && (
                             <>
                               <Tooltip content="Re-run all tables from row 0 — skips duplicates via ON CONFLICT" side="top">
                                 <button
@@ -1067,8 +1077,8 @@ export default function SchedulerPage() {
                                     {ts.status === 'running' && <Loader2 size={12} className="mr-1 animate-spin text-violet-500" aria-label="Running" />}
                                     {ts.status === 'pending' && <button type="button" title="Run table" onClick={() => void handleTableAction(run.id, ts.id, 'run')} className="rounded p-1 text-emerald-500 hover:bg-emerald-50"><Play size={12} /></button>}
                                     {(ts.status === 'running' || ts.status === 'pending') && <button type="button" title="Pause table" onClick={() => void handleTableAction(run.id, ts.id, 'pause')} className="rounded p-1 text-amber-500 hover:bg-amber-50"><Pause size={12} /></button>}
-                                    {ts.status === 'paused' && <button type="button" title="Resume table" onClick={() => void handleTableAction(run.id, ts.id, 'resume')} className="rounded p-1 text-violet-500 hover:bg-violet-50"><Play size={12} /></button>}
-                                    {!['completed', 'completed_with_issues', 'rolled_back', 'aborted'].includes(ts.status) && <button type="button" title="Stop table" onClick={() => void handleTableAction(run.id, ts.id, 'stop')} className="rounded p-1 text-rose-500 hover:bg-rose-50"><Square size={11} /></button>}
+                                    {(ts.status === 'paused' || ts.status === 'interrupted') && <button type="button" title="Resume table from checkpoint" onClick={() => void handleTableAction(run.id, ts.id, 'resume')} className="rounded p-1 text-violet-500 hover:bg-violet-50"><Play size={12} /></button>}
+                                    {!['completed', 'completed_with_issues', 'rolled_back', 'aborted', 'interrupted'].includes(ts.status) && <button type="button" title="Stop table" onClick={() => void handleTableAction(run.id, ts.id, 'stop')} className="rounded p-1 text-rose-500 hover:bg-rose-50"><Square size={11} /></button>}
                                     {['completed', 'completed_with_issues', 'failed', 'aborted'].includes(ts.status) && <button type="button" title={ts.status === 'completed_with_issues' ? 'Restart table to retry unresolved rows' : 'Restart table'} onClick={() => void handleTableAction(run.id, ts.id, 'restart')} className="rounded p-1 text-blue-500 hover:bg-blue-50"><RefreshCw size={12} /></button>}
                                     {tableActionKey?.startsWith(`${run.id}:${ts.id}:`) && <Loader2 size={11} className="animate-spin text-slate-400" />}
                                     <button type="button" onClick={() => setRunLogSelection(isLogSelected ? null : { runId: run.id, tableId: ts.id })}

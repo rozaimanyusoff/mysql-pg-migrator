@@ -58,7 +58,7 @@ async function tick(): Promise<void> {
     const maxRecoveryAttempts = Number.isFinite(configuredRecoveryAttempts) ? Math.max(0, configuredRecoveryAttempts) : 3;
     for (const candidate of listSchedules()) {
       const interruptedRun = candidate.lastRunId ? loadRun(candidate.lastRunId) : null;
-      if (!interruptedRun?.interrupted || interruptedRun.status !== 'failed') continue;
+      if (!interruptedRun?.interrupted || !['interrupted', 'failed'].includes(interruptedRun.status)) continue;
       blockedRecoveryJobIds.add(candidate.jobId);
       const attempts = candidate.recoveryAttempts ?? 0;
       if (attempts >= maxRecoveryAttempts) {

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isSchedulerRequestAuthorized } from '../src/lib/scheduler-security.ts';
-import { acquireRunLock, activeRunForJob, getRunActivitySnapshot, listRunsForStatus, loadRun, saveRun } from '../src/lib/migv2/run-store.ts';
+import { acquireRunLock, activeRunForJob, claimRunExecution, getRunActivitySnapshot, listRunsForStatus, loadRun, reconcileStaleRuns, refreshRunLease, releaseRunExecution, saveRun } from '../src/lib/migv2/run-store.ts';
 import { buildWhere } from '../src/lib/migv2/cursor-query.ts';
 import { prepareRunTables } from '../src/lib/migv2/run-tables.ts';
 import { runSequentially } from '../src/lib/migv2/sequential-executor.ts';
@@ -109,6 +109,48 @@ test('same-job active-run lookup blocks overlapping runs', () => {
   runFiles.push(file);
   saveRun(makeRun(id, jobId));
   assert.equal(activeRunForJob(jobId)?.id, id);
+});
+
+test('expired execution lease interrupts the run and all in-flight tables consistently', async () => {
+  const id = `lease-${randomUUID()}`;
+  const jobId = `job-${id}`;
+  const file = path.join(process.cwd(), 'data', 'migv2', 'runs', `${id}.json`);
+  runFiles.push(file);
+  const run = makeRun(id, jobId);
+  run.heartbeatAt = new Date(Date.now() - 120_000).toISOString();
+  run.leaseExpiresAt = new Date(Date.now() - 60_000).toISOString();
+  run.executionId = 'dead-process';
+  run.tableStates = [{
+    id: 'table-1', sourceKey: 'source.table_1', targetKey: 'target.table_1', status: 'running',
+    rowsSource: 10, rowsMigrated: 5, rowsSkipped: 0, rowsErrored: 0, offset: 5, hasMore: true,
+    error: null, insertedPks: [], pkOverflow: false, targetPkCol: null,
+  }];
+  saveRun(run);
+  reconcileStaleRuns();
+  const reconciled = loadRun(id);
+  assert.equal(reconciled?.status, 'interrupted');
+  assert.equal(reconciled?.tableStates[0]?.status, 'interrupted');
+  assert.match(reconciled?.errors[0] ?? '', /execution lease expired/i);
+  const claimed = await claimRunExecution(id, 'new-process');
+  assert.equal(claimed, null);
+  // Resume endpoints reopen the run explicitly; a dead lease cannot be claimed
+  // as a fresh execution while its status is interrupted.
+  await releaseRunExecution(id, 'new-process');
+});
+
+test('active execution lease prevents reconciliation while work is in flight', async () => {
+  const id = `live-lease-${randomUUID()}`;
+  const file = path.join(process.cwd(), 'data', 'migv2', 'runs', `${id}.json`);
+  runFiles.push(file);
+  const run = makeRun(id, `job-${id}`);
+  run.status = 'running';
+  saveRun(run);
+  const claimed = await claimRunExecution(id, 'live-process');
+  assert.equal(claimed?.executionId, 'live-process');
+  assert.equal(await refreshRunLease(id, 'live-process'), true);
+  reconcileStaleRuns();
+  assert.equal(loadRun(id)?.status, 'running');
+  await releaseRunExecution(id, 'live-process');
 });
 
 test('run-once cron is consumed while recurring cron stays enabled', () => {

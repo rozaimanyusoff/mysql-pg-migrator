@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import type { MigRun } from './types';
 
 const RUN_DIR = path.join(process.cwd(), 'data', 'migv2', 'runs');
@@ -96,22 +97,67 @@ function listAllRuns(): MigRun[] {
     .filter((r): r is MigRun => !!r);
 }
 
-// A server-driven run stamps heartbeatAt every advance loop (~8s). If a run is
-// still 'running' but its heartbeat is older than this, the driving process died
-// (deploy, crash, OOM) and the run is orphaned.
-const HEARTBEAT_STALE_MS = 90_000;
+// Lease liveness is renewed independently from database chunks. A long query
+// must not look like a dead process, while a crashed process is reclaimed soon.
+export const RUN_LEASE_MS = 45_000;
+
+export async function claimRunExecution(runId: string, executionId: string = randomUUID()): Promise<MigRun | null> {
+  const release = await acquireRunLock(runId);
+  try {
+    const run = loadRun(runId);
+    if (!run || !['pending', 'running'].includes(run.status)) return null;
+    const leaseUntil = run.leaseExpiresAt ? Date.parse(run.leaseExpiresAt) : 0;
+    if (run.executionId && run.executionId !== executionId && leaseUntil > Date.now()) return null;
+    const now = Date.now();
+    run.executionId = executionId;
+    run.heartbeatAt = new Date(now).toISOString();
+    run.leaseExpiresAt = new Date(now + RUN_LEASE_MS).toISOString();
+    saveRun(run);
+    return run;
+  } finally { release(); }
+}
+
+export async function refreshRunLease(runId: string, executionId: string): Promise<boolean> {
+  const release = await acquireRunLock(runId);
+  try {
+    const run = loadRun(runId);
+    if (!run || run.executionId !== executionId || !['pending', 'running'].includes(run.status)) return false;
+    const now = Date.now();
+    run.heartbeatAt = new Date(now).toISOString();
+    run.leaseExpiresAt = new Date(now + RUN_LEASE_MS).toISOString();
+    saveRun(run);
+    return true;
+  } finally { release(); }
+}
+
+export async function releaseRunExecution(runId: string, executionId: string): Promise<void> {
+  const release = await acquireRunLock(runId);
+  try {
+    const run = loadRun(runId);
+    if (!run || run.executionId !== executionId) return;
+    run.executionId = null;
+    run.leaseExpiresAt = null;
+    saveRun(run);
+  } finally { release(); }
+}
 
 function reconcileRuns(runs: MigRun[]): MigRun[] {
   const now = Date.now();
   const reconciled: MigRun[] = [];
   for (const run of runs) {
-    if (run.status !== 'running') continue;
+    if (!['running', 'pending'].includes(run.status)) continue;
     const beat = run.heartbeatAt ?? run.startedAt ?? run.createdAt;
-    if (now - new Date(beat).getTime() < HEARTBEAT_STALE_MS) continue;
-    run.status = 'failed';
+    const leaseUntil = run.leaseExpiresAt ? Date.parse(run.leaseExpiresAt) : 0;
+    if (leaseUntil > now || (leaseUntil === 0 && now - new Date(beat).getTime() < RUN_LEASE_MS * 2)) continue;
+    run.status = 'interrupted';
     run.interrupted = true;
     run.completedAt = new Date().toISOString();
-    run.errors.push('Run interrupted (server process restarted mid-run). Resume to continue from the last saved offset.');
+    run.executionId = null;
+    run.leaseExpiresAt = null;
+    for (const table of run.tableStates) {
+      if (table.status === 'running') table.status = 'interrupted';
+    }
+    run.errors.push('Run interrupted because its execution lease expired. Resume to continue from the last saved offset.');
     run.logs.push(`[${new Date().toISOString()}] Run reconciled as interrupted — heartbeat stale.`);
     saveRun(run);
     reconciled.push(run);

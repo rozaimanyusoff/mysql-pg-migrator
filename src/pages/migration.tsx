@@ -135,6 +135,7 @@ function StatusBadge({ status }: { status: string }) {
     completed_with_issues: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
     empty: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
     failed: 'bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300',
+    interrupted: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
     rolled_back: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
     aborted: 'bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300',
   };
@@ -143,6 +144,7 @@ function StatusBadge({ status }: { status: string }) {
     : status === 'completed_with_issues' ? AlertTriangle
     : status === 'empty' ? Info
     : status === 'failed' ? AlertTriangle
+    : status === 'interrupted' ? AlertTriangle
     : status === 'rolled_back' ? Undo2
     : status === 'aborted' ? X
     : Clock;
@@ -3197,7 +3199,8 @@ export default function Migration() {
                         );
                         const accumState = [...accumulatedTableStates].reverse().find(ts => ts.targetKey === `${t.schema}.${t.name}`);
                         const effectiveState = runState ?? accumState ?? null;
-                        const isRunning = runState?.status === 'running';
+                        const isInterrupted = runState?.status === 'interrupted' || currentRun?.status === 'interrupted';
+                        const isRunning = runState?.status === 'running' && !isInterrupted;
                         const isPaused = runState?.status === 'paused';
                         const totalProcessed = (effectiveState?.rowsMigrated ?? 0) + (effectiveState?.rowsSkipped ?? 0);
                         const pct = effectiveState && effectiveState.rowsSource > 0
@@ -3283,7 +3286,7 @@ export default function Migration() {
                                       : effectiveState?.status === 'completed_with_issues' ? 'bg-amber-500'
                                       : effectiveState?.status === 'failed' ? 'bg-rose-500'
                                       : effectiveState?.status === 'aborted' || effectiveState?.status === 'rolled_back' ? 'bg-amber-500'
-                                      : isPaused ? 'bg-amber-400' : 'bg-violet-500'
+                                      : isInterrupted ? 'bg-amber-400' : isPaused ? 'bg-amber-400' : 'bg-violet-500'
                                     }`} style={{ width: `${pct}%` }} />
                                     <span className="absolute inset-0 flex items-center justify-center text-[10px] font-mono font-semibold text-white [text-shadow:0_0_3px_rgba(0,0,0,0.6)]">{pct}%</span>
                                   </div>
@@ -3317,7 +3320,9 @@ export default function Migration() {
                                   {/* highlighted pair: full controls (play/pause/stop/restart/rollback) */}
                                   {isTarget ? (
                                     <>
-                                      {isRunning && !isPaused ? (
+                                      {isInterrupted ? (
+                                        <span className="rounded border border-amber-400 px-1 py-0.5 text-[9px] font-semibold text-amber-600 dark:text-amber-400">interrupted · resume from checkpoint</span>
+                                      ) : isRunning && !isPaused ? (
                                         <>
                                           <button onClick={() => void controlTableInRun(mapping.id, 'pause')}
                                             title="Pause" className="p-0.5 rounded border border-slate-300 dark:border-slate-500 text-slate-600 dark:text-slate-200 hover:text-amber-500 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors">
@@ -4377,6 +4382,7 @@ export default function Migration() {
                   const latestJobRun = latestRunByJob.get(job.id);
                   const isJobRunning = latestJobRun?.status === 'running' || latestJobRun?.status === 'pending' || activeRunJobIds.has(job.id) || (polling && activeJobId === job.id) || schedule?.lastRunStatus === 'running';
                   const isJobPaused = latestJobRun?.status === 'paused' || schedule?.lastRunStatus === 'paused';
+                  const isJobInterrupted = latestJobRun?.status === 'interrupted' || latestJobRun?.interrupted || schedule?.lastRunStatus === 'interrupted';
                   const isJobTerminal = !!latestJobRun && ['completed', 'completed_with_issues', 'failed', 'aborted', 'rolled_back'].includes(latestJobRun.status);
                   const isActiveJob = activeJobId === job.id;
                   const advisories = isActiveJob ? liveJobAssessment.notices : (job.advisories ?? []);
@@ -4418,6 +4424,11 @@ export default function Migration() {
                           {isJobRunning && (
                             <Tooltip content="Migration job is running" side="top">
                               <Loader2 size={12} className="shrink-0 animate-spin text-violet-500" aria-label="Migration job running" />
+                            </Tooltip>
+                          )}
+                          {isJobInterrupted && (
+                            <Tooltip content="Migration was interrupted; resume from the last saved checkpoint" side="top">
+                              <span className="inline-flex items-center gap-0.5 rounded border border-amber-300 px-1 py-0.5 text-[9px] font-semibold text-amber-600 dark:border-amber-700 dark:text-amber-400"><AlertTriangle size={9} /> interrupted</span>
                             </Tooltip>
                           )}
                           <Tooltip content={schedule
@@ -4554,6 +4565,14 @@ export default function Migration() {
                         )}
                         {isJobPaused && (
                           <Tooltip content="Resume from the last persisted source cursor" side="top">
+                            <button type="button" onClick={() => void handleSavedJobAction(job, 'resume')} disabled={!!jobActionKey}
+                              className="rounded p-1 text-violet-600 hover:bg-violet-50 disabled:opacity-40 dark:hover:bg-violet-950/30">
+                              {jobActionKey === `${job.id}:resume` ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                            </button>
+                          </Tooltip>
+                        )}
+                        {isJobInterrupted && (
+                          <Tooltip content="Resume this interrupted migration from its last persisted checkpoint" side="top">
                             <button type="button" onClick={() => void handleSavedJobAction(job, 'resume')} disabled={!!jobActionKey}
                               className="rounded p-1 text-violet-600 hover:bg-violet-50 disabled:opacity-40 dark:hover:bg-violet-950/30">
                               {jobActionKey === `${job.id}:resume` ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
