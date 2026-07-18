@@ -23,7 +23,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const claimed = await claimRunExecution(runId, executionId);
   if (!claimed) return res.status(409).json({ error: 'This run is already being driven by another execution. Wait for its checkpoint or resume it after interruption.' });
   const heartbeatTimer = setInterval(() => {
-    void refreshRunLease(runId, executionId).catch(err => {
+    void refreshRunLease(runId, executionId).then(refreshed => {
+      if (!refreshed) console.error(`[migration] lease heartbeat rejected for run ${runId}; execution ownership changed`);
+    }).catch(err => {
       console.error('[migration] lease heartbeat failed', err);
     });
   }, 10_000);

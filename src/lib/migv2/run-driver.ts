@@ -5,7 +5,7 @@ import { loadSchedule, saveSchedule } from './schedule-store';
 import { sendEmail } from '../mailer';
 import type { MigConn, MigRun } from './types';
 import { canPersistWatermark } from './run-outcome';
-import { claimRunExecution, refreshRunLease, releaseRunExecution, RUN_LEASE_MS } from './run-store';
+import { claimRunExecution, hasRunExecutionLease, refreshRunLease, releaseRunExecution, RUN_LEASE_MS } from './run-store';
 import { randomUUID } from 'crypto';
 
 const TERMINAL = new Set(['completed', 'completed_with_issues', 'failed', 'aborted', 'rolled_back']);
@@ -78,7 +78,9 @@ export async function driveRun(
   // Keep this timer referenced: a background migration must keep the server
   // execution alive after the initiating HTTP request has returned.
   const heartbeatTimer = setInterval(() => {
-    void refreshRunLease(run.id, executionId).catch(err => {
+    void refreshRunLease(run.id, executionId).then(refreshed => {
+      if (!refreshed) console.error(`[migration] lease heartbeat rejected for run ${run.id}; execution ownership changed`);
+    }).catch(err => {
       console.error('[migration] lease heartbeat failed', err);
     });
   }, 10_000);
@@ -88,7 +90,7 @@ export async function driveRun(
       // another API request are observed by this background driver.
       const persisted = loadRun(run.id);
       if (persisted) run = persisted;
-      if (run.executionId !== executionId) return;
+      if (!hasRunExecutionLease(run.id, executionId)) return;
       if (TERMINAL.has(run.status)) break;
       if (run.status === 'paused') return;
       // A run with only paused/terminal tables remains resumable, but should
@@ -112,7 +114,7 @@ export async function driveRun(
       // A control request can arrive while a DB chunk is in flight. Preserve
       // that request instead of overwriting it with this chunk's stale state.
       const controlled = loadRun(run.id);
-      if (controlled?.executionId && controlled.executionId !== executionId) return;
+      if (!hasRunExecutionLease(run.id, executionId)) return;
       if (controlled) {
         if (controlled.status === 'aborted') run.status = 'aborted';
         if (controlled.status === 'paused') run.status = 'paused';

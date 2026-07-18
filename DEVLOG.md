@@ -4,6 +4,14 @@
 
 ## 2026-07-18
 
+- **fix / long-running migration lease heartbeat** — Large table work no longer becomes falsely interrupted when the full run checkpoint is stale or expensive to serialize.
+  - Moved the 10-second execution heartbeat into a small atomic `.lease` sidecar instead of reading and rewriting the entire run JSON on every beat.
+  - The sidecar is now the execution-ownership and reconciliation authority, while embedded heartbeat fields remain as backward-compatible metadata for older runs.
+  - A stale worker checkpoint can no longer overwrite a fresh heartbeat or make the active driver abandon its ownership. Expired/crashed leases still reconcile to `interrupted` and remain resumable from saved table offsets.
+  - Added explicit production-console diagnostics for rejected/failed heartbeats and regression coverage for a stale full checkpoint written after a fresh heartbeat.
+  - Verification: TypeScript, 49 integration tests and `git diff --check` pass.
+  - Status: implemented.
+
 - **implement / production operations visibility and navigation** — Resizable workspaces, direct module switching, server telemetry, DB assessment and live job status.
   - Replace fixed/collapsible Saved Jobs rails with persistent drag-resizable panels in Migration, Scheduler, Normalizer, Data Maintenance and Schema Studio.
   - Add `Home > Current module` navigation with a direct module switcher in the global navbar.

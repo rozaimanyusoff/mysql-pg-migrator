@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { MigRun } from './types';
@@ -11,6 +12,42 @@ const LOCK_STALE_MS = 120_000;
 
 function ensureDir() { fs.mkdirSync(RUN_DIR, { recursive: true }); }
 function runPath(id: string) { return path.join(RUN_DIR, `${id}.json`); }
+function leasePath(id: string) { return `${runPath(id)}.lease`; }
+
+interface ExecutionLease {
+  runId: string;
+  executionId: string;
+  heartbeatAt: string;
+  leaseExpiresAt: string;
+  owner: string;
+}
+
+function readExecutionLease(id: string): ExecutionLease | null {
+  try { return JSON.parse(fs.readFileSync(leasePath(id)).toString('utf8')) as ExecutionLease; }
+  catch { return null; }
+}
+
+function writeExecutionLease(id: string, executionId: string, now = Date.now()): ExecutionLease {
+  ensureDir();
+  const lease: ExecutionLease = {
+    runId: id,
+    executionId,
+    heartbeatAt: new Date(now).toISOString(),
+    leaseExpiresAt: new Date(now + RUN_LEASE_MS).toISOString(),
+    owner: `${os.hostname()}:${process.pid}`,
+  };
+  const destination = leasePath(id);
+  const temp = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(lease));
+  fs.renameSync(temp, destination);
+  return lease;
+}
+
+function deleteExecutionLease(id: string, executionId?: string): void {
+  const current = readExecutionLease(id);
+  if (executionId && current?.executionId !== executionId) return;
+  try { fs.unlinkSync(leasePath(id)); } catch { /* already absent */ }
+}
 
 function readRunFile(filePath: string): MigRun | null {
   try {
@@ -108,12 +145,16 @@ export async function claimRunExecution(runId: string, executionId: string = ran
   try {
     const run = loadRun(runId);
     if (!run || !['pending', 'running'].includes(run.status)) return null;
-    const leaseUntil = run.leaseExpiresAt ? Date.parse(run.leaseExpiresAt) : 0;
-    if (run.executionId && run.executionId !== executionId && leaseUntil > Date.now()) return null;
+    const persistedLease = readExecutionLease(runId);
+    const sidecarLeaseUntil = persistedLease ? Date.parse(persistedLease.leaseExpiresAt) : 0;
+    const legacyLeaseUntil = run.leaseExpiresAt ? Date.parse(run.leaseExpiresAt) : 0;
+    if (persistedLease?.executionId !== executionId && sidecarLeaseUntil > Date.now()) return null;
+    if (!persistedLease && run.executionId && run.executionId !== executionId && legacyLeaseUntil > Date.now()) return null;
     const now = Date.now();
+    const lease = writeExecutionLease(runId, executionId, now);
     run.executionId = executionId;
-    run.heartbeatAt = new Date(now).toISOString();
-    run.leaseExpiresAt = new Date(now + RUN_LEASE_MS).toISOString();
+    run.heartbeatAt = lease.heartbeatAt;
+    run.leaseExpiresAt = lease.leaseExpiresAt;
     saveRun(run);
     return run;
   } finally { release(); }
@@ -122,12 +163,9 @@ export async function claimRunExecution(runId: string, executionId: string = ran
 export async function refreshRunLease(runId: string, executionId: string): Promise<boolean> {
   const release = await acquireRunLock(runId);
   try {
-    const run = loadRun(runId);
-    if (!run || run.executionId !== executionId || !['pending', 'running'].includes(run.status)) return false;
-    const now = Date.now();
-    run.heartbeatAt = new Date(now).toISOString();
-    run.leaseExpiresAt = new Date(now + RUN_LEASE_MS).toISOString();
-    saveRun(run);
+    const lease = readExecutionLease(runId);
+    if (!lease || lease.executionId !== executionId) return false;
+    writeExecutionLease(runId, executionId);
     return true;
   } finally { release(); }
 }
@@ -136,11 +174,18 @@ export async function releaseRunExecution(runId: string, executionId: string): P
   const release = await acquireRunLock(runId);
   try {
     const run = loadRun(runId);
-    if (!run || run.executionId !== executionId) return;
-    run.executionId = null;
-    run.leaseExpiresAt = null;
-    saveRun(run);
+    if (run?.executionId === executionId) {
+      run.executionId = null;
+      run.leaseExpiresAt = null;
+      saveRun(run);
+    }
+    deleteExecutionLease(runId, executionId);
   } finally { release(); }
+}
+
+export function hasRunExecutionLease(runId: string, executionId: string): boolean {
+  const lease = readExecutionLease(runId);
+  return Boolean(lease && lease.executionId === executionId && Date.parse(lease.leaseExpiresAt) > Date.now());
 }
 
 function reconcileRuns(runs: MigRun[]): MigRun[] {
@@ -148,9 +193,11 @@ function reconcileRuns(runs: MigRun[]): MigRun[] {
   const reconciled: MigRun[] = [];
   for (const run of runs) {
     if (!['running', 'pending'].includes(run.status)) continue;
-    const beat = run.heartbeatAt ?? run.startedAt ?? run.createdAt;
-    const leaseUntil = run.leaseExpiresAt ? Date.parse(run.leaseExpiresAt) : 0;
+    const sidecarLease = readExecutionLease(run.id);
+    const beat = sidecarLease?.heartbeatAt ?? run.heartbeatAt ?? run.startedAt ?? run.createdAt;
+    const leaseUntil = sidecarLease ? Date.parse(sidecarLease.leaseExpiresAt) : run.leaseExpiresAt ? Date.parse(run.leaseExpiresAt) : 0;
     if (leaseUntil > now || (leaseUntil === 0 && now - new Date(beat).getTime() < RUN_LEASE_MS * 2)) continue;
+    deleteExecutionLease(run.id);
     run.status = 'interrupted';
     run.interrupted = true;
     run.completedAt = new Date().toISOString();
@@ -160,7 +207,7 @@ function reconcileRuns(runs: MigRun[]): MigRun[] {
       if (table.status === 'running') table.status = 'interrupted';
     }
     run.errors.push('Run interrupted because its execution lease expired. Resume to continue from the last saved offset.');
-    run.logs.push(`[${new Date().toISOString()}] Run reconciled as interrupted — heartbeat stale.`);
+    run.logs.push(`[${new Date().toISOString()}] Run reconciled as interrupted — heartbeat stale. Last heartbeat: ${beat}; owner: ${sidecarLease?.owner ?? 'legacy/unknown'}.`);
     saveRun(run);
     reconciled.push(run);
   }

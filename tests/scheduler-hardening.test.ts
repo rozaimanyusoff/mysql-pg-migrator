@@ -48,6 +48,7 @@ test.after(() => {
   for (const file of runFiles) {
     try { fs.unlinkSync(file); } catch { /* cleaned */ }
     try { fs.unlinkSync(`${file}.lock`); } catch { /* cleaned */ }
+    try { fs.unlinkSync(`${file}.lease`); } catch { /* cleaned */ }
   }
   for (const file of jobFiles) {
     try { fs.unlinkSync(file); } catch { /* cleaned */ }
@@ -151,6 +152,29 @@ test('active execution lease prevents reconciliation while work is in flight', a
   reconcileStaleRuns();
   assert.equal(loadRun(id)?.status, 'running');
   await releaseRunExecution(id, 'live-process');
+});
+
+test('sidecar heartbeat survives a stale full run checkpoint write', async () => {
+  const id = `sidecar-lease-${randomUUID()}`;
+  const file = path.join(process.cwd(), 'data', 'migv2', 'runs', `${id}.json`);
+  runFiles.push(file);
+  const run = makeRun(id, `job-${id}`);
+  saveRun(run);
+  const claimed = await claimRunExecution(id, 'sidecar-process');
+  assert.equal(claimed?.executionId, 'sidecar-process');
+  assert.equal(await refreshRunLease(id, 'sidecar-process'), true);
+
+  // Simulate an in-flight worker persisting an old, large checkpoint after the
+  // heartbeat. The sidecar remains authoritative and must keep the run alive.
+  const stale = loadRun(id)!;
+  stale.executionId = null;
+  stale.heartbeatAt = new Date(Date.now() - 300_000).toISOString();
+  stale.leaseExpiresAt = new Date(Date.now() - 180_000).toISOString();
+  saveRun(stale);
+  reconcileStaleRuns();
+  assert.equal(loadRun(id)?.status, 'running');
+  await releaseRunExecution(id, 'sidecar-process');
+  assert.equal(fs.existsSync(`${file}.lease`), false);
 });
 
 test('run-once cron is consumed while recurring cron stays enabled', () => {
