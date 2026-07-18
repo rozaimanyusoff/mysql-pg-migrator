@@ -28,7 +28,10 @@ module.exports = {
       min_uptime: '10s',     // must stay up at least this long to count as stable
 
       // ── Memory guard ─────────────────────────────────────────────────────
-      max_memory_restart: '512M',
+      // Migration workers retain bounded row chunks and rollback evidence in
+      // memory. Keep enough headroom for four concurrent table workers while
+      // still letting PM2 recover a genuinely runaway process.
+      max_memory_restart: '1G',
 
       // ── Logging ──────────────────────────────────────────────────────────
       out_file: './logs/pm2-out.log',

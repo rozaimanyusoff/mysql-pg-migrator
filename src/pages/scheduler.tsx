@@ -185,6 +185,7 @@ export default function SchedulerPage() {
   const [editTarget, setEditTarget] = useState<CronSchedule | null>(null);
   const [schedulerWorker, setSchedulerWorker] = useState<SchedulerWorkerStatus | null>(null);
   const [runLogSelection, setRunLogSelection] = useState<{ runId: string; tableId: string | null } | null>(null);
+  const [tableRunLogs, setTableRunLogs] = useState<Record<string, { logs: string[]; errors: string[] }>>({});
   const [resuming, setResuming] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
   const [tableSearch, setTableSearch] = useState('');
@@ -308,6 +309,24 @@ export default function SchedulerPage() {
       const { data } = await axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { jobId, limit: 10, compact: 1 } });
       setRuns(data.runs);
     } catch { /* ignore */ }
+  };
+
+  const toggleTableRunLog = async (runId: string, tableId: string) => {
+    const key = `${runId}:${tableId}`;
+    if (runLogSelection?.runId === runId && runLogSelection.tableId === tableId) {
+      setRunLogSelection(null);
+      return;
+    }
+    setRunLogSelection({ runId, tableId });
+    if (tableRunLogs[key]) return;
+    try {
+      const { data } = await axios.get<{ logs: string[]; errors: string[] }>('/api/migv2/run/status', {
+        params: { id: runId, tableLogId: tableId },
+      });
+      setTableRunLogs(previous => ({ ...previous, [key]: data }));
+    } catch {
+      setTableRunLogs(previous => ({ ...previous, [key]: { logs: [], errors: ['Unable to load table run log.'] } }));
+    }
   };
 
   const pollRuns = async () => {
@@ -1103,7 +1122,7 @@ export default function SchedulerPage() {
                                     {!['completed', 'completed_with_issues', 'rolled_back', 'aborted', 'interrupted'].includes(ts.status) && <button type="button" title="Stop table" onClick={() => void handleTableAction(run.id, ts.id, 'stop')} className="rounded p-1 text-rose-500 hover:bg-rose-50"><Square size={11} /></button>}
                                     {['completed', 'completed_with_issues', 'failed', 'aborted'].includes(ts.status) && <button type="button" title={ts.status === 'completed_with_issues' ? 'Restart table to retry unresolved rows' : 'Restart table'} onClick={() => void handleTableAction(run.id, ts.id, 'restart')} className="rounded p-1 text-blue-500 hover:bg-blue-50"><RefreshCw size={12} /></button>}
                                     {tableActionKey?.startsWith(`${run.id}:${ts.id}:`) && <Loader2 size={11} className="animate-spin text-slate-400" />}
-                                    <button type="button" onClick={() => setRunLogSelection(isLogSelected ? null : { runId: run.id, tableId: ts.id })}
+                                    <button type="button" onClick={() => void toggleTableRunLog(run.id, ts.id)}
                                       className={`rounded p-1 ${isLogSelected ? 'bg-violet-100 text-violet-600 dark:bg-violet-950/50' : ts.rowsErrored > 0 ? 'text-rose-500 hover:bg-rose-50' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`} title="View table run log">
                                       <Terminal size={12} />
                                     </button>
@@ -1111,11 +1130,11 @@ export default function SchedulerPage() {
                                   </div>
 
                                   {isLogSelected && (() => {
-                                    const tableKeys = [ts.sourceKey, ts.targetKey];
-                                    const visibleLogs = run.logs.filter(line => tableKeys.some(key => line.includes(`[${key}]`)));
+                                    const logDetail = tableRunLogs[`${run.id}:${ts.id}`];
+                                    const visibleLogs = logDetail?.logs ?? [];
                                     const extraErrors = [
                                       ...(ts.error ? [ts.error] : []),
-                                      ...run.errors.filter(error => tableKeys.some(key => error.includes(key))),
+                                      ...(logDetail?.errors ?? []),
                                     ].filter((error, index, all) => all.indexOf(error) === index && !visibleLogs.some(line => line.includes(error)));
                                     return (
                                       <div className="mt-1 overflow-hidden rounded-md border border-slate-700 bg-slate-950 shadow-inner">
