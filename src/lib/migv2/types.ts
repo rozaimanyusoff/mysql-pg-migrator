@@ -136,6 +136,8 @@ export interface MigJob {
   syncStrategy?: 'incremental' | 'full_upsert' | 'full_insert';
   /** Saved for the operator-triggered initial run only; Scheduler never consumes it. */
   initialRunOptions?: { skipConstraints?: boolean };
+  /** Number of source tables inspected per Copy Source metadata request. */
+  copySourceBatchSize?: 100 | 250 | 500 | 1000;
   tables: TableMap[];
   // Global row-range filter applied to every table in this job
   filterCol?: string | null;    // timestamp/date column name (must exist in all source tables)
@@ -177,6 +179,7 @@ export interface MigJobSummary {
   tableCount: number;
   mappingMode?: 'copy_source' | 'existing_target';
   syncStrategy?: 'incremental' | 'full_upsert' | 'full_insert';
+  copySourceBatchSize?: 100 | 250 | 500 | 1000;
   tables: MigJobTableSummary[];
   scheduleReady: boolean;
   scheduleIssues: number;

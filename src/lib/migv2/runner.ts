@@ -58,6 +58,38 @@ async function withMysql<T>(conn: MigConn, fn: (c: mysql.Connection) => Promise<
   try { return await fn(c); } finally { await c.end(); }
 }
 
+/** Explicit maintenance operation used only by Saved Job reset. */
+export async function dropTargetTables(
+  conn: MigConn,
+  tables: Array<{ schema: string; table: string }>,
+): Promise<string[]> {
+  const unique = [...new Map(tables
+    .filter(item => item.schema.trim() && item.table.trim())
+    .map(item => [`${item.schema}\u0000${item.table}`, item] as const)).values()];
+  if (!unique.length) return [];
+  if (conn.type === 'postgresql') {
+    return withPg(conn, async c => {
+      await c.query('BEGIN');
+      try {
+        for (const item of unique) {
+          await c.query(`DROP TABLE IF EXISTS "${item.schema.replace(/"/g, '""')}"."${item.table.replace(/"/g, '""')}"`);
+        }
+        await c.query('COMMIT');
+        return unique.map(item => `${item.schema}.${item.table}`);
+      } catch (error) {
+        await c.query('ROLLBACK').catch(() => {});
+        throw error;
+      }
+    });
+  }
+  return withMysql(conn, async c => {
+    for (const item of unique) {
+      await c.query(`DROP TABLE IF EXISTS \`${item.schema.replace(/`/g, '``')}\`.\`${item.table.replace(/`/g, '``')}\``);
+    }
+    return unique.map(item => `${item.schema}.${item.table}`);
+  });
+}
+
 // ── Row reading ───────────────────────────────────────────────────────────────
 
 

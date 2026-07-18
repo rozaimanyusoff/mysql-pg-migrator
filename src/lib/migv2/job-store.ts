@@ -23,6 +23,9 @@ function normalizeJob(job: MigJob): MigJob {
     initialRunOptions: normalizedMappingMode === 'copy_source'
       ? { skipConstraints: job.initialRunOptions?.skipConstraints === true }
       : undefined,
+    copySourceBatchSize: normalizedMappingMode === 'copy_source'
+      ? ([100, 250, 500, 1000] as const).includes(job.copySourceBatchSize ?? 500) ? job.copySourceBatchSize ?? 500 : 500
+      : undefined,
     tables: job.tables.map(table => ({
       ...table,
       targetMode: table.targetMode ?? (table.target.table === table.source.table ? 'source_clone' : 'existing'),
@@ -73,6 +76,7 @@ function listJobSummaries(includeRuntime: boolean): MigJobSummary[] {
           tableCount: j.tables.length,
           mappingMode: j.mappingMode,
           syncStrategy: j.syncStrategy,
+          copySourceBatchSize: j.copySourceBatchSize,
           tables: j.tables.map(t => ({ id: t.id, include: t.include, source: t.source, sourceDatabase: t.sourceDatabase, target: t.target, targetAlias: t.targetAlias, syncMode: t.syncMode, fullSyncStrategy: t.fullSyncStrategy, incrementalCol: t.incrementalCol, lastSyncedValue: t.lastSyncedValue, truncateBeforeMigrate: t.truncateBeforeMigrate })),
           scheduleReady: assessment.recurringReady,
           scheduleIssues: assessment.recurringIssues.length,

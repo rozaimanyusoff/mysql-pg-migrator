@@ -310,6 +310,7 @@ export default function Migration() {
   // ── Mapping ───────────────────────────────────────────────────────────────────
   const [tableMaps, setTableMaps] = useState<TableMap[]>([]);
   const [mappingMode, setMappingMode] = useState<'copy_source' | 'existing_target'>('existing_target');
+  const [copySourceBatchSize, setCopySourceBatchSize] = useState<100 | 250 | 500 | 1000>(500);
   const [globalSyncStrategy, setGlobalSyncStrategy] = useState<'incremental' | 'full_upsert' | 'full_insert'>('full_insert');
   const [globalSkipConstraints, setGlobalSkipConstraints] = useState(false);
   const [runOnceOptions, setRunOnceOptions] = useState<Record<string, RunOnceTableOptions>>({});
@@ -706,8 +707,8 @@ export default function Migration() {
 
         for (const [database, maps] of byDatabase) {
           const connection = connectionRow ? connRowToMigConn(connectionRow, database) : { ...srcConn, database };
-          for (let offset = 0; offset < maps.length; offset += 200) {
-            const chunk = maps.slice(offset, offset + 200);
+          for (let offset = 0; offset < maps.length; offset += copySourceBatchSize) {
+            const chunk = maps.slice(offset, offset + copySourceBatchSize);
             try {
               const { data } = await axios.post<{ columnsByTable: Record<string, MigColumnInfo[]> }>('/api/migv2/columns-bulk', {
                 conn: connection,
@@ -1518,6 +1519,7 @@ export default function Migration() {
         mappingMode,
         syncStrategy: mappingMode === 'copy_source' ? globalSyncStrategy : undefined,
         initialRunOptions: mappingMode === 'copy_source' ? { skipConstraints: globalSkipConstraints } : undefined,
+        copySourceBatchSize: mappingMode === 'copy_source' ? copySourceBatchSize : undefined,
         tables,
         filterCol: filterCol.trim() || null,
         filterFrom: filterFrom.trim() || null,
@@ -1657,6 +1659,7 @@ export default function Migration() {
 
       const firstIncluded = job.tables.find(m => m.include);
       setMappingMode(job.mappingMode === 'copy_source' ? 'copy_source' : 'existing_target');
+      setCopySourceBatchSize(job.copySourceBatchSize ?? 500);
       setGlobalSyncStrategy(job.syncStrategy ?? 'full_insert');
       setGlobalSkipConstraints(job.initialRunOptions?.skipConstraints === true);
 
@@ -1941,6 +1944,26 @@ export default function Migration() {
           await loadJobs();
           if (activeJobId === id) { setActiveJobId(null); setSaveJobName(''); setSaveJobDesc(''); }
         } catch { /* ignore */ }
+      },
+    });
+  };
+
+  const handleResetSavedJob = (id: string, name: string) => {
+    showWarning({
+      title: `Drop target tables and delete "${name}"?`,
+      description: 'This permanently deletes the saved job and drops every included target table recorded by it. Other tables are not touched. Stop any active run first. This cannot be undone.',
+      confirmLabel: 'Drop Tables & Delete',
+      onConfirm: async () => {
+        try {
+          const { data } = await axios.delete<{ ok: boolean; droppedTables?: string[] }>(`/api/migv2/jobs/${id}?dropTargets=1`);
+          await loadJobs();
+          if (activeJobId === id) {
+            setActiveJobId(null); setSaveJobName(''); setSaveJobDesc(''); setCurrentRun(null); setPolling(false);
+          }
+          toast.success(`Job deleted · ${data.droppedTables?.length ?? 0} target table(s) dropped`);
+        } catch (error) {
+          showError('Reset saved job failed', requestErrorDetail(error));
+        }
       },
     });
   };
@@ -2818,6 +2841,16 @@ export default function Migration() {
                 </select>
               </div>
               {mappingMode === 'copy_source' && <>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Table batch</span>
+                  <select value={copySourceBatchSize} onChange={event => { setCopySourceBatchSize(Number(event.target.value) as 100 | 250 | 500 | 1000); setDirty(true); }}
+                    className="rounded border border-gray-200 bg-white px-2 py-1 text-[12px] text-gray-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    <option value={100}>100 tables</option>
+                    <option value={250}>250 tables</option>
+                    <option value={500}>500 tables</option>
+                    <option value={1000}>1,000 tables</option>
+                  </select>
+                </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sync strategy</span>
                   <select value={globalSyncStrategy} onChange={event => applyGlobalSyncStrategy(event.target.value as 'incremental' | 'full_upsert' | 'full_insert')}
@@ -4491,6 +4524,12 @@ export default function Migration() {
                             <button onClick={() => handleDeleteJob(job.id, job.name)}
                               className="rounded p-0.5 text-gray-300 transition-colors hover:bg-rose-50 hover:text-rose-500 dark:text-slate-600 dark:hover:bg-rose-950/30">
                               <Trash2 size={12} />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Drop included target tables and delete job" side="top">
+                            <button onClick={() => handleResetSavedJob(job.id, job.name)}
+                              className="rounded p-0.5 text-gray-300 transition-colors hover:bg-rose-50 hover:text-rose-700 dark:text-slate-600 dark:hover:bg-rose-950/30">
+                              <Database size={12} />
                             </button>
                           </Tooltip>
                           <button
