@@ -2,6 +2,19 @@
 
 ---
 
+## 2026-07-18
+
+- **implement / production operations visibility and navigation** — Resizable workspaces, direct module switching, server telemetry, DB assessment and live job status.
+  - Replace fixed/collapsible Saved Jobs rails with persistent drag-resizable panels in Migration, Scheduler, Normalizer, Data Maintenance and Schema Studio.
+  - Add `Home > Current module` navigation with a direct module switcher in the global navbar.
+  - Report application-host CPU, memory, hostname and server time/timezone in the footer; do not present browser-local time as production-server time.
+  - Add on-demand saved-connection assessment for DB latency, version, connection pressure, database size, relevant settings and actionable warnings. Remote DB-host CPU/RAM still requires an OS agent or SSH integration.
+  - Keep live migration run state visible on every Saved Job / Scheduler job row without selecting the job first.
+  - Verification: TypeScript, 48 integration tests and `git diff --check` pass. Production build completes TypeScript and reaches optimized compilation; Turbopack does not finish in the current environment.
+  - Status: implemented.
+
+---
+
 ## 2026-07-17
 
 - **fix / execution lease and interrupted-state consistency** — Long table chunks no longer look like dead production processes, and recovery cannot leave a job failed while its tables appear running.

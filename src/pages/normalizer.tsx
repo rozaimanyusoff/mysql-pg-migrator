@@ -10,6 +10,7 @@ import {
   BarChart2, Hash, Layers, Save, Trash2, Clock, Play, Terminal,
 } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
+import ResizableJobPanel from '../components/ResizableJobPanel';
 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -956,17 +957,15 @@ function SavedJobsPanel({
   saveError: string | null;
 }) {
   return (
-    <div className={`shrink-0 border-l border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex flex-col overflow-hidden transition-[width] duration-200 ${open ? 'w-60' : 'w-8'}`}>
+    <ResizableJobPanel storageKey="panel_width_normalizer_jobs" defaultWidth={240}
+      className="border-l border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
 
       {/* Header / toggle */}
       <div className="shrink-0 flex items-center border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/40 min-h-[41px]">
         {open ? (
           <>
             <span className="flex-1 px-3 text-[13px] font-semibold text-gray-600 dark:text-slate-300 uppercase tracking-wider">Saved Jobs</span>
-            <button onClick={onToggle}
-              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
-              <ChevronRight size={15} />
-            </button>
+            <span className="pr-2 text-[10px] text-gray-400" title="Drag the left edge to resize">resize</span>
           </>
         ) : (
           <button onClick={onToggle} className="w-full h-full flex items-center justify-center py-3">
@@ -1030,7 +1029,7 @@ function SavedJobsPanel({
           </span>
         </div>
       )}
-    </div>
+    </ResizableJobPanel>
   );
 }
 
@@ -1404,7 +1403,7 @@ export default function NormalizerPage() {
             )}
           </div>
 
-          {/* ── Right collapsible: Saved Jobs ─────────────────────────────── */}
+          {/* ── Right resizable: Saved Jobs ───────────────────────────────── */}
           <SavedJobsPanel
             open={savedJobsOpen}
             onToggle={() => setSavedJobsOpen(o => !o)}

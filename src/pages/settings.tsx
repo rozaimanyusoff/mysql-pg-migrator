@@ -6,10 +6,11 @@ import {
   Settings2, Database, Server, CheckCircle2, XCircle, Loader2, Save,
   ChevronRight, Eye, EyeOff, Plus, Pencil, Trash2,
   ToggleLeft, ToggleRight, X, Mail, ScrollText, Send, RefreshCw,
-  ChevronDown,
+  ChevronDown, Gauge, AlertTriangle,
 } from 'lucide-react';
 import type { ConnectionRow } from './api/connections/index';
 import type { AuditLogEntry } from '../lib/audit-logger';
+import type { DatabaseCapability } from '../lib/migv2/server-capabilities';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,8 @@ export default function SettingsPage() {
   const [formError, setFormError] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [activatingId, setActivatingId] = useState<number | null>(null);
+  const [assessingId, setAssessingId] = useState<number | null>(null);
+  const [assessments, setAssessments] = useState<Record<number, DatabaseCapability>>({});
 
   // ── Email config state ───────────────────────────────────────────────────────
   const [emailForm, setEmailForm] = useState<EmailForm>({
@@ -293,6 +296,20 @@ export default function SettingsPage() {
     finally { setDeletingId(null); }
   };
 
+  const handleAssess = async (id: number) => {
+    setAssessingId(id);
+    try {
+      const { data } = await axios.get<{ capability: DatabaseCapability }>(`/api/connections/${id}/assess`);
+      setAssessments(previous => ({ ...previous, [id]: data.capability }));
+    } catch (err) {
+      const capability = axios.isAxiosError(err) ? err.response?.data?.capability as DatabaseCapability | undefined : undefined;
+      setAssessments(previous => ({ ...previous, [id]: capability ?? {
+        type: 'postgresql', version: null, latencyMs: null, settings: {}, metrics: {}, permissions: {}, warnings: [],
+        error: axios.isAxiosError(err) ? (err.response?.data?.error ?? err.message) : String(err),
+      } }));
+    } finally { setAssessingId(null); }
+  };
+
   // ── Render ───────────────────────────────────────────────────────────────────
 
   const handleSaveEmail = async () => {
@@ -458,6 +475,10 @@ export default function SettingsPage() {
                 </button>
               )}
 
+              <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] text-gray-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                Use the gauge button on a saved connection to assess DB latency, current connections, database size and tuning settings. Remote DB-host CPU, RAM and free disk require an OS agent or SSH access and are not inferred here.
+              </p>
+
               {/* Connection list */}
               <div className="space-y-2">
                 {loadingConns ? (
@@ -485,6 +506,21 @@ export default function SettingsPage() {
                           {c.username}@{c.host}:{c.port} / {c.database_name}
                           {c.ssl_enabled && ' · SSL'}
                         </p>
+                        {assessments[c.id] && (
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                            {assessments[c.id].error ? (
+                              <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400"><XCircle size={11} />{assessments[c.id].error}</span>
+                            ) : <>
+                              <span className={`font-semibold ${(assessments[c.id].latencyMs ?? 999) <= 10 ? 'text-emerald-600' : (assessments[c.id].latencyMs ?? 999) <= 30 ? 'text-amber-600' : 'text-rose-600'}`}>
+                                Latency {assessments[c.id].latencyMs} ms
+                              </span>
+                              <span className="text-gray-500 dark:text-slate-400">Connections {assessments[c.id].metrics.currentConnections ?? '—'}{assessments[c.id].settings.max_connections ? ` / ${assessments[c.id].settings.max_connections}` : ''}</span>
+                              {assessments[c.id].metrics.databaseSizeMb != null && <span className="text-gray-500 dark:text-slate-400">DB {assessments[c.id].metrics.databaseSizeMb.toLocaleString()} MB</span>}
+                              <span className="max-w-[280px] truncate text-gray-400" title={assessments[c.id].version ?? ''}>{assessments[c.id].version}</span>
+                              {assessments[c.id].warnings.length > 0 && <span className="inline-flex items-center gap-1 font-semibold text-amber-600" title={assessments[c.id].warnings.join('\n')}><AlertTriangle size={11} />{assessments[c.id].warnings.length} warning{assessments[c.id].warnings.length === 1 ? '' : 's'}</span>}
+                            </>}
+                          </div>
+                        )}
                       </div>
 
                       {c.is_active && (
@@ -504,6 +540,13 @@ export default function SettingsPage() {
                           ? <Loader2 size={19} className="animate-spin" />
                           : c.is_active ? <ToggleRight size={20} className="text-blue-600 dark:text-blue-400" /> : <ToggleLeft size={20} />
                         }
+                      </button>
+
+                      {/* Edit */}
+                      <button type="button" onClick={() => void handleAssess(c.id)} disabled={assessingId === c.id}
+                        title="Assess database latency, capacity settings and current usage"
+                        className="text-gray-400 dark:text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 transition-colors">
+                        {assessingId === c.id ? <Loader2 size={16} className="animate-spin" /> : <Gauge size={16} />}
                       </button>
 
                       {/* Edit */}

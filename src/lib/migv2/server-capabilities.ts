@@ -146,7 +146,7 @@ function runtimeCapability(): RuntimeCapability {
 
 async function pgCapability(conn: MigConn, targetSchemas: string[]): Promise<DatabaseCapability> {
   const result: DatabaseCapability = { type: 'postgresql', version: null, latencyMs: null, settings: {}, metrics: {}, permissions: {}, warnings: [] };
-  const client = new PgClient({ host: conn.host, port: conn.port, database: conn.database, user: conn.username, password: conn.password, connectionTimeoutMillis: 10_000 });
+  const client = new PgClient({ host: conn.host, port: conn.port, database: conn.database, user: conn.username, password: conn.password, ssl: conn.ssl ? { rejectUnauthorized: false } : undefined, connectionTimeoutMillis: 10_000 });
   try {
     await client.connect();
     const timings: number[] = [];
@@ -210,6 +210,10 @@ async function mysqlCapability(conn: MigConn): Promise<DatabaseCapability> {
 
 async function databaseCapability(conn: MigConn, targetSchemas: string[] = []): Promise<DatabaseCapability> {
   return conn.type === 'postgresql' ? pgCapability(conn, targetSchemas) : mysqlCapability(conn);
+}
+
+export async function inspectDatabaseCapability(conn: MigConn): Promise<DatabaseCapability> {
+  return databaseCapability(conn);
 }
 
 export async function inspectServerCapabilities(job: MigJob, source: MigConn, target: MigConn): Promise<TransferCapabilityReport> {

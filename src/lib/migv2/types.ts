@@ -9,6 +9,7 @@ export interface MigConn {
   database: string;
   username: string;
   password: string;
+  ssl?: boolean;
 }
 
 // ── Column / Table mapping ────────────────────────────────────────────────────
@@ -195,6 +196,9 @@ export interface SchedulerJobSummary {
   tableCount: number;
   scheduleReady: boolean;
   scheduleIssues: number;
+  currentStatus: RunStatus | null;
+  currentRunId: string | null;
+  currentStatusAt: string | null;
   executionTables: Array<{
     id: string;
     sourceKey: string;

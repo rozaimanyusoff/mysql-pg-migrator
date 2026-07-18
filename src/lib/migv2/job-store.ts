@@ -3,6 +3,7 @@ import path from 'path';
 import type { MigJob, MigJobSummary, SchedulerJobSummary } from './types';
 import { assessMigrationTables } from './recurring-validation.ts';
 import { deleteJobRuntime, hydrateJobRuntime, reconcileJobRuntime, saveJobRuntimeCursors } from './job-runtime-store.ts';
+import { listRunsForStatus } from './run-store.ts';
 
 const JOB_DIR = path.join(process.cwd(), 'data', 'migv2', 'jobs');
 
@@ -95,6 +96,10 @@ export function listJobs(): MigJobSummary[] {
 export function listSchedulerJobs(): SchedulerJobSummary[] {
   // Scheduler rows never display incremental cursors, so avoid a second
   // runtime-file read for every saved job.
+  const latestRuns = new Map<string, ReturnType<typeof listRunsForStatus>[number]>();
+  for (const run of listRunsForStatus(undefined, Number.MAX_SAFE_INTEGER)) {
+    if (run.jobId && !latestRuns.has(run.jobId)) latestRuns.set(run.jobId, run);
+  }
   return listJobSummaries(false).map(job => ({
     id: job.id,
     name: job.name,
@@ -104,6 +109,9 @@ export function listSchedulerJobs(): SchedulerJobSummary[] {
     tableCount: job.tableCount,
     scheduleReady: job.scheduleReady,
     scheduleIssues: job.scheduleIssues,
+    currentStatus: latestRuns.get(job.id)?.status ?? null,
+    currentRunId: latestRuns.get(job.id)?.id ?? null,
+    currentStatusAt: latestRuns.get(job.id)?.heartbeatAt ?? latestRuns.get(job.id)?.completedAt ?? latestRuns.get(job.id)?.startedAt ?? latestRuns.get(job.id)?.createdAt ?? null,
     executionTables: job.tables.filter(table => table.include).map(table => ({
       id: table.id,
       sourceKey: `${table.source.schema}.${table.source.table}`,

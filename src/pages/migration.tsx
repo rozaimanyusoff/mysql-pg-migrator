@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { Tooltip } from '../components/Tooltip';
+import ResizableJobPanel from '../components/ResizableJobPanel';
 import { useAlert } from '../lib/alert-context';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { suggestTargetType } from '../lib/migv2/type-map';
@@ -4345,8 +4346,9 @@ export default function Migration() {
           )}
           </div>{/* end main workspace wrapper */}
 
-          {/* ── JOBS PANEL (collapsible) ────────────────────────────────── */}
-          <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${jobsOpen ? 'w-80' : 'w-9'}`}>
+          {/* ── JOBS PANEL (drag its left edge to resize) ────────────────── */}
+          <ResizableJobPanel storageKey="panel_width_migration_jobs" defaultWidth={320}
+            className="flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
             <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
               {jobsOpen && <Save size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />}
               {jobsOpen && (
@@ -4399,10 +4401,7 @@ export default function Migration() {
                   className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
                 />
               )}
-              <button onClick={() => setJobsOpen(o => !o)}
-                className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ml-auto">
-                {jobsOpen ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-              </button>
+              <span className="ml-auto shrink-0 text-[10px] text-gray-400" title="Drag the left edge to resize">resize</span>
             </div>
 
             {jobsOpen && (dirty || completedMigratedStates.length > 0) && (
@@ -4503,6 +4502,16 @@ export default function Migration() {
                             <Tooltip content="Migration was interrupted; resume from the last saved checkpoint" side="top">
                               <span className="inline-flex items-center gap-0.5 rounded border border-amber-300 px-1 py-0.5 text-[9px] font-semibold text-amber-600 dark:border-amber-700 dark:text-amber-400"><AlertTriangle size={9} /> interrupted</span>
                             </Tooltip>
+                          )}
+                          {latestJobRun && !isJobInterrupted && (
+                            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${isJobRunning
+                              ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300'
+                              : isJobPaused ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                                : latestJobRun.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : latestJobRun.status === 'completed_with_issues' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                                    : 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'}`}>
+                              {latestJobRun.status.replaceAll('_', ' ')}
+                            </span>
                           )}
                           <Tooltip content={schedule
                             ? `${schedule.enabled ? 'Active schedule' : 'Schedule disabled'}: ${schedule.cronExpr}. Manage schedules in Scheduler.`
@@ -4841,7 +4850,7 @@ export default function Migration() {
                 </span>
               </div>
             )}
-          </div>
+          </ResizableJobPanel>
         </div>
 
       </div>

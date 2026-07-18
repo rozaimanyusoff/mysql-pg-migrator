@@ -12,8 +12,9 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Download,
 } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
+import ResizableJobPanel from '../components/ResizableJobPanel';
 import { useAlert } from '../lib/alert-context';
-import type { CronSchedule, SchedulerJobSummary, MigRun, MigRunTableState } from '../lib/migv2/types';
+import type { CronSchedule, SchedulerJobSummary, MigRun, MigRunTableState, RunStatus } from '../lib/migv2/types';
 import type { PreflightReport } from '../lib/migv2/preflight';
 import type { PreflightStatus } from '../lib/migv2/preflight-store';
 import { describePreflightFailure, type PreflightFailure } from '../lib/migv2/preflight-client-error';
@@ -132,6 +133,16 @@ function StatusBadge({ status }: { status: CronSchedule['lastRunStatus'] }) {
     </span>
   );
   return null;
+}
+
+function CurrentJobStatus({ status }: { status: RunStatus }) {
+  const tone = status === 'running' || status === 'pending'
+    ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300'
+    : status === 'paused' || status === 'interrupted' || status === 'completed_with_issues'
+      ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+      : status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+        : 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300';
+  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${tone}`}>{status.replaceAll('_', ' ')}</span>;
 }
 
 function RunStatusBadge({ status }: { status: MigRun['status'] }) {
@@ -301,13 +312,15 @@ export default function SchedulerPage() {
 
   const pollRuns = async () => {
     try {
-      const [schRes, runRes] = await Promise.all([
+      const [schRes, jobRes, runRes] = await Promise.all([
         axios.get<{ schedules: CronSchedule[]; activeRunJobIds: string[]; schedulerWorker: SchedulerWorkerStatus }>('/api/scheduler'),
+        axios.get<{ jobs: SchedulerJobSummary[] }>('/api/scheduler/jobs'),
         selectedId
           ? axios.get<{ runs: MigRun[] }>('/api/migv2/run/status', { params: { jobId: selectedId, limit: 10, compact: 1 } })
           : Promise.resolve(null),
       ]);
       setSchedules(schRes.data.schedules);
+      setJobs(jobRes.data.jobs);
       if (runRes) setRuns(runRes.data.runs);
       setActiveRunJobIds(new Set(schRes.data.activeRunJobIds ?? []));
       setSchedulerWorker(schRes.data.schedulerWorker ?? null);
@@ -622,8 +635,9 @@ export default function SchedulerPage() {
         {/* Body */}
         <div className="flex h-[calc(100vh-6rem)] overflow-hidden">
 
-          {/* Right — collapsible migration jobs list */}
-          <aside className={`${jobsPanelCollapsed ? 'w-10' : 'w-72'} order-2 shrink-0 border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden transition-[width] duration-200`}>
+          {/* Right — resizable migration jobs list */}
+          <ResizableJobPanel storageKey="panel_width_scheduler_jobs" defaultWidth={288}
+            className="order-2 border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden">
             <div className={`${jobsPanelCollapsed ? 'justify-center px-1' : 'justify-between px-3'} flex items-center py-2 border-b border-gray-100 dark:border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500`}>
               {!jobsPanelCollapsed && <span>MIGRATION JOBS</span>}
               <div className="flex items-center gap-2">
@@ -632,12 +646,7 @@ export default function SchedulerPage() {
                   className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
                   <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
                 </button>}
-                <button type="button" onClick={() => setJobsPanelCollapsed(value => !value)}
-                  title={jobsPanelCollapsed ? 'Expand migration jobs' : 'Collapse migration jobs'}
-                  aria-label={jobsPanelCollapsed ? 'Expand migration jobs' : 'Collapse migration jobs'}
-                  className="rounded p-0.5 text-slate-400 transition-colors hover:bg-gray-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
-                  {jobsPanelCollapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-                </button>
+                <span className="text-[10px] font-normal normal-case tracking-normal text-slate-400" title="Drag the left edge to resize">resize</span>
               </div>
             </div>
             {!jobsPanelCollapsed && <div className="flex-1 overflow-y-auto">
@@ -669,6 +678,7 @@ export default function SchedulerPage() {
                           <Loader2 size={11} className="shrink-0 animate-spin text-violet-500" aria-label="Migration job running" />
                         </Tooltip>
                       )}
+                      {job.currentStatus && <CurrentJobStatus status={job.currentStatus} />}
                       <span className="text-[11px] text-gray-400 dark:text-slate-500 shrink-0">{job.tableCount} tables</span>
                     </div>
                     {/* Schedule info or "not scheduled" */}
@@ -692,7 +702,7 @@ export default function SchedulerPage() {
                 );
               })}
             </div>}
-          </aside>
+          </ResizableJobPanel>
 
           {/* Main — selected job detail */}
           <div className="order-1 flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-950">

@@ -22,6 +22,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useAlert } from '../lib/alert-context';
+import ResizableJobPanel from '../components/ResizableJobPanel';
 import type { ConnectionRow } from './api/connections/index';
 import type { ExplorerConn } from '../lib/explorer-db';
 import type { SchemaInfo } from './api/schema-explorer/schemas';
@@ -2585,7 +2586,7 @@ function GuidePopover() {
                 <ul className="space-y-1 pl-3 border-l-2 border-gray-100 dark:border-slate-800 ml-1">
                   <li><strong>Left panel</strong> — mode toggle (Create / Import SQL) + schema & table tree.</li>
                   <li><strong>Middle panel</strong> — DDL strip (selected table's SQL) + column editor.</li>
-                  <li><strong>Right panel</strong> — Saved Jobs history. Click the notch on its left edge to collapse or expand.</li>
+                  <li><strong>Right panel</strong> — Saved Jobs history. Drag its left edge to resize it; the width is remembered.</li>
                 </ul>
               </div>
             </div>
@@ -2985,7 +2986,7 @@ function SchemaDesignerInner() {
   const [loadingJobs, setLoadingJobs] = useState(false);
   // Migration jobs (global reference — read-only in this module)
 
-  // Right panel (collapsible) — tabs: 'jobs' | 'suggest' | 'alter'
+  // Right panel (resizable) — tabs: 'jobs' | 'suggest' | 'alter'
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [rightPanelTab, setRightPanelTab] = useState<'jobs' | 'suggest' | 'alter'>('jobs');
 
@@ -4136,8 +4137,9 @@ function SchemaDesignerInner() {
               </div>
             </div>
 
-            {/* ── Right: Saved Jobs / ALTER SQL (collapsible) ── */}
-            <div className={`relative z-10 shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${rightPanelOpen ? 'w-64' : 'w-9'}`}>
+            {/* ── Right: Saved Jobs / ALTER SQL (resizable) ── */}
+            <ResizableJobPanel storageKey="panel_width_schema_studio_jobs" defaultWidth={256}
+              className="z-10 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
 
               {/* Header row — always visible, contains toggle */}
               <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
@@ -4166,12 +4168,7 @@ function SchemaDesignerInner() {
                     {groupedJobs.length > 0 && <span className="text-[12px] text-gray-400 shrink-0">{groupedJobs.length}</span>}
                   </>
                 )}
-                <button
-                  onClick={() => setRightPanelOpen(o => !o)}
-                  className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ml-auto"
-                >
-                  {rightPanelOpen ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-                </button>
+                <span className="ml-auto shrink-0 text-[10px] text-gray-400" title="Drag the left edge to resize">resize</span>
               </div>
 
               {/* Panel content — only when open */}
@@ -4362,7 +4359,7 @@ function SchemaDesignerInner() {
                   ))}
                 </div>
               )}
-            </div>
+            </ResizableJobPanel>
 
         </div>
       </div>

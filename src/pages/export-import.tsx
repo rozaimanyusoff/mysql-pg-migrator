@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAlert } from '../lib/alert-context';
 import { Tooltip } from '../components/Tooltip';
+import ResizableJobPanel from '../components/ResizableJobPanel';
 import type { ConnectionRow } from './api/connections/index';
 import type { ConnCfg, ExportInclude, ConflictStrategy } from '../lib/sql-exporter';
 import type { HistoryEntry } from './api/export-import/history';
@@ -925,7 +926,7 @@ function GuidePopover() {
                   <li><strong>Panel 2</strong> — databases. Header Import creates a new database; hover a row for its maintenance gear.</li>
                   <li><strong>Panel 3</strong> — schemas (PostgreSQL only). Header Import creates a new schema; hover a row for its maintenance gear.</li>
                   <li><strong>Panel 4</strong> — tables. Header Import creates a new table; hover a row for its maintenance gear. Result / log appear below.</li>
-                  <li><strong>Saved Jobs</strong> (right, collapsible) — history of past operations.</li>
+                  <li><strong>Saved Jobs</strong> (right, resizable) — history of past operations. Drag its left edge to change the width.</li>
                 </ul>
               </div>
             </div>
@@ -979,7 +980,7 @@ function GuidePopover() {
             <div>
               <p className={h3}><Clock size={14} className="text-slate-500 dark:text-slate-400" /> Saved Jobs</p>
               <div className={sec}>
-                <p>Every completed Export, Import, or Sync operation is saved automatically. Click the chevron notch on the right edge to collapse/expand the panel.</p>
+                <p>Every completed Export, Import, or Sync operation is saved automatically. Drag the panel&apos;s left edge to resize it; the width is remembered.</p>
                 <p>Each entry shows status, timestamp, source/target databases, table count, format, and conflict strategy. Click {pill('×')} to delete an entry.</p>
               </div>
             </div>
@@ -1491,7 +1492,7 @@ function SchemaPanel({ conn, database, value, onChange, tgtConn, tgtDatabase, tg
   );
 }
 
-// ── Panel 5: Saved Jobs (collapsible) ─────────────────────────────────────────
+// ── Panel 5: Saved Jobs (resizable) ───────────────────────────────────────────
 
 const OP_BADGE: Record<string, string> = {
   export:  'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400',
@@ -1593,16 +1594,14 @@ function SavedJobsPanel({ collapsed, onToggle, refreshKey }: {
   const visible = filter === 'all' ? history : history.filter(h => h.operation === filter);
 
   return (
-    <div className={`shrink-0 flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden transition-[width] duration-200 ease-in-out ${collapsed ? 'w-9' : 'w-80'}`}>
+    <ResizableJobPanel storageKey="panel_width_data_maintenance_jobs" defaultWidth={320}
+      className="flex flex-col border-l border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
       {/* Header — always visible */}
       <div className="shrink-0 flex items-center gap-1.5 px-2 py-2.5 border-b border-gray-200 dark:border-slate-800">
         {!collapsed && <Save size={13} className="text-slate-500 dark:text-slate-400 shrink-0" />}
         {!collapsed && <span className="text-[13px] font-semibold text-gray-700 dark:text-slate-300 flex-1 truncate">Saved Jobs</span>}
         {!collapsed && history.length > 0 && <span className="text-[12px] text-gray-400 shrink-0">{visible.length}/{history.length}</span>}
-        <button onClick={onToggle}
-          className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ml-auto">
-          {collapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-        </button>
+        <span className="ml-auto shrink-0 text-[10px] text-gray-400" title="Drag the left edge to resize">resize</span>
       </div>
 
       {!collapsed && (
@@ -1635,7 +1634,7 @@ function SavedJobsPanel({ collapsed, onToggle, refreshKey }: {
           </div>
         </>
       )}
-    </div>
+    </ResizableJobPanel>
   );
 }
 
